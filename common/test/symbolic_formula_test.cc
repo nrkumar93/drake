@@ -3,6 +3,7 @@
 #include <exception>
 #include <limits>
 #include <map>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
@@ -15,6 +16,7 @@
 #include "drake/common/drake_copyable.h"
 #include "drake/common/drake_throw.h"
 #include "drake/common/symbolic.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/common/test_utilities/is_memcpy_movable.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
 
@@ -803,6 +805,9 @@ TEST_F(SymbolicFormulaTest, Forall2) {
 }
 
 TEST_F(SymbolicFormulaTest, PSD_Exception) {
+  auto non_square = Eigen::Matrix<Expression, 2, 3>::Zero().eval();
+  EXPECT_THROW(positive_semidefinite(non_square), runtime_error);
+
   Eigen::Matrix<Expression, 3, 3> m;
   // clang-format off
   m << 1.0, 2.0, 3.0,
@@ -1200,7 +1205,7 @@ TEST_F(SymbolicFormulaTest, Isinf) {
 
   // Note that constructing isinf with an expression including NaN does *not*
   // throw.
-  EXPECT_NO_THROW(isinf(Expression::NaN()));
+  DRAKE_EXPECT_NO_THROW(isinf(Expression::NaN()));
 
   // For NaN, symbolic::isinf will throw an exception when evaluated while
   // std::isfinite returns false.
@@ -1220,7 +1225,7 @@ TEST_F(SymbolicFormulaTest, Isfinite) {
 
   // Note that constructing isfinite with an expression including NaN does *not*
   // throw.
-  EXPECT_NO_THROW(isfinite(Expression::NaN()));
+  DRAKE_EXPECT_NO_THROW(isfinite(Expression::NaN()));
 
   // For NaN, symbolic::isfinite will throw an exception when evaluated while
   // std::isfinite returns false.
@@ -1343,6 +1348,79 @@ TEST_F(SymbolicFormulaTest, MemcpyKeepsFomrulaIntact) {
         not_f_or_, f_forall_, f_isnan_, f_psd_static_2x2_, f_psd_dynamic_2x2_,
         f_psd_static_3x3_}) {
     EXPECT_TRUE(IsMemcpyMovable(formula));
+  }
+}
+
+// This function checks if the following commute diagram works for given a
+// symbolic formula `f`, a symbolic environment `env`, and a `random generator`.
+//
+//                         Substitute Random Variables
+// +---------------------+     with Sampled Values     +--------------------+
+// |       Formula       |                             |       Formula      |
+// |with Random Variables+---------------------------->+w/o Random Variables|
+// +----------+----------+                             +---------+----------+
+//            |                                                  |
+//            v                                                  v
+//        Evaluate                                            Evaluate
+// with a Random Generator                             w/o a Random Generator
+//            +                                                  +
+//            |                                                  |
+//            v                                                  v
+// +----------+----------+                             +---------+----------+
+// |      bool value     +-----------  ==  ------------+     bool value     |
+// +---------------------+                             +--------------------+
+::testing::AssertionResult CheckFormulaWithRandomVariables(
+    const Formula& f, const Environment& env,
+    RandomGenerator* const random_generator) {
+  RandomGenerator random_generator_copy(*random_generator);
+  const bool b1{f.Evaluate(env, random_generator)};
+
+  const Environment env_extended{PopulateRandomVariables(
+      env, f.GetFreeVariables(), &random_generator_copy)};
+  const bool b2{f.Evaluate(env_extended, nullptr)};
+
+  if (b1 == b2) {
+    return ::testing::AssertionSuccess();
+  } else {
+    return ::testing::AssertionFailure()
+           << "Different evaluation results:\n"
+           << "f = " << f << "\n"
+           << "env = " << env << "\n"
+           << "env_extended = " << env_extended << "\n"
+           << "b1 = " << b1 << " and b2 = " << b2;
+  }
+}
+
+TEST_F(SymbolicFormulaTest, EvaluateFormulasIncludingRandomVariables) {
+  const Variable uni1{"uniform1", Variable::Type::RANDOM_UNIFORM};
+  const Variable uni2{"uniform2", Variable::Type::RANDOM_UNIFORM};
+  const Variable gau1{"gaussian1", Variable::Type::RANDOM_GAUSSIAN};
+  const Variable gau2{"gaussian2", Variable::Type::RANDOM_GAUSSIAN};
+  const Variable exp1{"exponential1", Variable::Type::RANDOM_EXPONENTIAL};
+  const Variable exp2{"exponential2", Variable::Type::RANDOM_EXPONENTIAL};
+
+  const vector<Formula> formulas{
+      uni1 > uni2,
+      gau1 < gau2,
+      exp1 == exp2,
+      x_ * sin(uni1) >= cos(uni1) * tan(uni1) + y_,
+      exp1 * pow(abs(x_), exp1) <= exp2,
+      x_ / (1 + exp(abs(gau1 * gau2))) != y_ * pow(exp1, 4 + y_),
+      x_ * uni1 + y_ * uni1 + x_ * gau1 == y_ * gau1 + x_ * exp1 + y_ * exp1,
+  };
+
+  const vector<Environment> environments{
+      {{{var_x_, -1.0}, {var_y_, 3.0}}},
+      {{{var_x_, 1.0}, {var_y_, 1.0}}},
+      {{{var_x_, 2.0}, {var_y_, 1.0}}},
+      {{{var_x_, 2.0}, {var_y_, -2.0}}},
+  };
+
+  RandomGenerator generator{};
+  for (const Formula& f : formulas) {
+    for (const Environment& env : environments) {
+      EXPECT_TRUE(CheckFormulaWithRandomVariables(f, env, &generator));
+    }
   }
 }
 

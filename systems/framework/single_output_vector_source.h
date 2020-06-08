@@ -3,6 +3,7 @@
 #include <memory>
 #include <utility>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_assert.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
@@ -19,7 +20,7 @@ namespace systems {
 /// void DoCalcOutput(const Context<T>&, Eigen::VectorBlock<VectorX<T>>*) const;
 /// @endcode
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
+/// @tparam_default_scalar
 template <typename T>
 class SingleOutputVectorSource : public LeafSystem<T> {
  public:
@@ -93,8 +94,8 @@ class SingleOutputVectorSource : public LeafSystem<T> {
  private:
   // Confirms the single-output invariant when allocating the context.
   void DoValidateAllocatedLeafContext(const LeafContext<T>&) const final {
-    DRAKE_DEMAND(this->get_num_input_ports() == 0);
-    DRAKE_DEMAND(this->get_num_output_ports() == 1);
+    DRAKE_DEMAND(this->num_input_ports() == 0);
+    DRAKE_DEMAND(this->num_output_ports() == 1);
   }
 
   // Converts the parameters to Eigen::VectorBlock form, then delegates to
@@ -108,3 +109,6 @@ class SingleOutputVectorSource : public LeafSystem<T> {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::SingleOutputVectorSource)

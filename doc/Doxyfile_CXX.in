@@ -1,4 +1,4 @@
-# Doxyfile 1.8.11
+# Doxyfile 1.8.15
 
 #---------------------------------------------------------------------------
 # Project related configuration options
@@ -8,23 +8,24 @@ PROJECT_NAME           = Drake
 PROJECT_NUMBER         =
 PROJECT_BRIEF          =
 PROJECT_LOGO           =
-OUTPUT_DIRECTORY       = "@BINARY_DIR@/doxygen_cxx"
+OUTPUT_DIRECTORY       = "@OUTPUT_DIRECTORY@"
 CREATE_SUBDIRS         = NO
 ALLOW_UNICODE_NAMES    = NO
 OUTPUT_LANGUAGE        = English
+OUTPUT_TEXT_DIRECTION  = None
 BRIEF_MEMBER_DESC      = YES
 REPEAT_BRIEF           = YES
-ABBREVIATE_BRIEF       = a \
-                         an \
-                         contains \
+ABBREVIATE_BRIEF       = "The $name class" \
+                         "The $name widget" \
+                         "The $name file" \
                          is \
                          provides \
-                         represents \
                          specifies \
-                         the \
-                         "The $name class" \
-                         "The $name file" \
-                         "The $name widget"
+                         contains \
+                         represents \
+                         a \
+                         an \
+                         the
 ALWAYS_DETAILED_SEC    = NO
 INLINE_INHERITED_MEMB  = NO
 FULL_PATH_NAMES        = YES
@@ -40,15 +41,21 @@ TAB_SIZE               = 2
 ALIASES                = "default=@n @a Default: " \
                          "concept{1}=@ingroup \1\n@par Implemented concepts:\n@ref \1" \
                          "system{3}=<table align=center cellpadding=0 cellspacing=0><tr align=center><td><table cellspacing=0 cellpadding=0>\2</table></td><td align=center style=\"border:solid;padding-left:20px;padding-right:20px\" bgcolor=#F0F0F0>\1</td><td><table cellspacing=0 cellpadding=0>\3</table></td></tr></table>" \
-                         "input_port{1}=<tr><td align=right style=\"padding:5px 0px 5px 0px\">\1 &rarr;</td></tr>"\
-                         "output_port{1}=<tr><td align=left style=\"padding:5px 0px 5px 0px\">&rarr; \1</td></tr>"
-TCL_SUBST              =
+                         "input_port{1}=<tr><td align=right style=\"padding:5px 0px 5px 0px\">\1 &rarr;</td></tr>" \
+                         "output_port{1}=<tr><td align=left style=\"padding:5px 0px 5px 0px\">&rarr; \1</td></tr>" \
+                         "tparam_default_scalar=@tparam T The scalar type, which must be one of the @ref default_scalars \"default scalars\". " \
+                         "tparam_nonsymbolic_scalar=@tparam T The scalar type, which must be one of the @ref default_scalars \"default nonsymbolic scalars\". " \
+                         "tparam_double_only=@tparam T The scalar type, which must be `double`. " \
+                         "pydrake_mkdoc_identifier{1}= " \
+                         "exclude_from_pydrake_mkdoc{1}= "
 OPTIMIZE_OUTPUT_FOR_C  = NO
 OPTIMIZE_OUTPUT_JAVA   = NO
 OPTIMIZE_FOR_FORTRAN   = NO
 OPTIMIZE_OUTPUT_VHDL   = NO
+OPTIMIZE_OUTPUT_SLICE  = NO
 EXTENSION_MAPPING      =
 MARKDOWN_SUPPORT       = YES
+TOC_INCLUDE_HEADINGS   = 0
 AUTOLINK_SUPPORT       = YES
 BUILTIN_STL_SUPPORT    = YES
 CPP_CLI_SUPPORT        = NO
@@ -82,16 +89,16 @@ HIDE_COMPOUND_REFERENCE= NO
 SHOW_INCLUDE_FILES     = YES
 SHOW_GROUPED_MEMB_INC  = NO
 FORCE_LOCAL_INCLUDES   = NO
-INLINE_INFO            = YES
+INLINE_INFO            = NO
 SORT_MEMBER_DOCS       = YES
 SORT_BRIEF_DOCS        = NO
 SORT_MEMBERS_CTORS_1ST = NO
 SORT_GROUP_NAMES       = NO
 SORT_BY_SCOPE_NAME     = NO
 STRICT_PROTO_MATCHING  = NO
-GENERATE_TODOLIST      = YES
-GENERATE_TESTLIST      = YES
-GENERATE_BUGLIST       = YES
+GENERATE_TODOLIST      = NO
+GENERATE_TESTLIST      = NO
+GENERATE_BUGLIST       = NO
 GENERATE_DEPRECATEDLIST= YES
 ENABLED_SECTIONS       =
 MAX_INITIALIZER_LINES  = 30
@@ -111,18 +118,13 @@ WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
 WARN_AS_ERROR          = NO
 WARN_FORMAT            = "$file:$line: $text"
-WARN_LOGFILE           = "@BINARY_DIR@/doxygen_cxx.log"
+WARN_LOGFILE           = "@WARN_LOGFILE@"
 #---------------------------------------------------------------------------
 # Configuration options related to the input files
 #---------------------------------------------------------------------------
 INPUT                  = "@INPUT_ROOT@"
 INPUT_ENCODING         = UTF-8
-FILE_PATTERNS          = *.c \
-                         *.cc \
-                         *.cxx \
-                         *.cpp \
-                         *.c++ \
-                         *.h \
+FILE_PATTERNS          = *.h \
                          *.hh \
                          *.hxx \
                          *.hpp \
@@ -130,8 +132,14 @@ FILE_PATTERNS          = *.c \
 RECURSIVE              = YES
 EXCLUDE                =
 EXCLUDE_SYMLINKS       = NO
-EXCLUDE_PATTERNS       = "@INPUT_ROOT@/*/dev/*"
-EXCLUDE_SYMBOLS        =
+EXCLUDE_PATTERNS       = "@INPUT_ROOT@/*/dev/*" \
+                         "@INPUT_ROOT@/*/test/*" \
+                         "@INPUT_ROOT@/*/MG/*" \
+                         "@INPUT_ROOT@/drake/attic/*"
+EXCLUDE_SYMBOLS        = "*::internal" \
+                         "pybind11"
+# Don't document our (obvious) Eigen overloads like "isinf", etc.
+EXCLUDE_SYMBOLS       += "Eigen"
 EXAMPLE_PATH           =
 EXAMPLE_PATTERNS       =
 EXAMPLE_RECURSIVE      = NO
@@ -152,7 +160,7 @@ REFERENCES_RELATION    = NO
 REFERENCES_LINK_SOURCE = YES
 SOURCE_TOOLTIPS        = YES
 USE_HTAGS              = NO
-VERBATIM_HEADERS       = YES
+VERBATIM_HEADERS       = NO
 #---------------------------------------------------------------------------
 # Configuration options related to the alphabetical class index
 #---------------------------------------------------------------------------
@@ -166,14 +174,15 @@ GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
 HTML_HEADER            =
-HTML_FOOTER            =
+HTML_FOOTER            = "@INPUT_ROOT@/drake/doc/footer.html"
 HTML_STYLESHEET        =
-HTML_EXTRA_STYLESHEET  =
+HTML_EXTRA_STYLESHEET  = "@INPUT_ROOT@/drake/doc/doxygen_extra.css"
 HTML_EXTRA_FILES       =
 HTML_COLORSTYLE_HUE    = 220
 HTML_COLORSTYLE_SAT    = 100
 HTML_COLORSTYLE_GAMMA  = 80
 HTML_TIMESTAMP         = NO
+HTML_DYNAMIC_MENUS     = YES
 HTML_DYNAMIC_SECTIONS  = NO
 HTML_INDEX_NUM_ENTRIES = 100
 GENERATE_DOCSET        = NO
@@ -224,6 +233,7 @@ GENERATE_LATEX         = NO
 LATEX_OUTPUT           = latex
 LATEX_CMD_NAME         = latex
 MAKEINDEX_CMD_NAME     = makeindex
+LATEX_MAKEINDEX_CMD    = \makeindex
 COMPACT_LATEX          = NO
 PAPER_TYPE             = letter
 EXTRA_PACKAGES         = amsmath
@@ -238,6 +248,7 @@ LATEX_HIDE_INDICES     = NO
 LATEX_SOURCE_CODE      = NO
 LATEX_BIB_STYLE        = plain
 LATEX_TIMESTAMP        = YES
+LATEX_EMOJI_DIRECTORY  =
 #---------------------------------------------------------------------------
 # Configuration options related to the RTF output
 #---------------------------------------------------------------------------
@@ -262,6 +273,7 @@ MAN_LINKS              = NO
 GENERATE_XML           = NO
 XML_OUTPUT             = xml
 XML_PROGRAMLISTING     = YES
+XML_NS_MEMB_FILE_SCOPE = NO
 #---------------------------------------------------------------------------
 # Configuration options related to the DOCBOOK output
 #---------------------------------------------------------------------------
@@ -288,14 +300,15 @@ EXPAND_ONLY_PREDEF     = YES
 SEARCH_INCLUDES        = YES
 INCLUDE_PATH           =
 INCLUDE_FILE_PATTERNS  =
-PREDEFINED += DRAKE_DOXYGEN_CXX=1
+PREDEFINED             = DRAKE_DOXYGEN_CXX=1 \
+                         HAVE_SPDLOG=1
 # =============================================================================
 # N.B. The spelling of the macro names between common/drake_copyable.h and this
 # file must be kept in sync!
 # =============================================================================
 # The following macros are carefully crafted to retain good markup when they
-# pass through Doxygen's preprocesor.
-PREDEFINED += DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(X):=" \
+# pass through Doxygen's preprocessor.
+PREDEFINED            += DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(X):=" \
 /** \name Does not allow copy, move, or assignment */ \
 /** \{ */ \
 X(const X&) = delete; \
@@ -303,7 +316,7 @@ X& operator=(const X&) = delete; \
 X(X&&) = delete; \
 X& operator=(X&&) = delete; \
 /** \} */"
-PREDEFINED += DRAKE_DEFAULT_COPY_AND_MOVE_AND_ASSIGN(X):=" \
+PREDEFINED            += DRAKE_DEFAULT_COPY_AND_MOVE_AND_ASSIGN(X):=" \
 /** \name Implements CopyConstructible, CopyAssignable, MoveConstructible, MoveAssignable */ \
 /** \{ */ \
 X(const X&) = default; \
@@ -311,6 +324,18 @@ X& operator=(const X&) = default; \
 X(X&&) = default; \
 X& operator=(X&&) = default; \
 /** \} */"
+PREDEFINED            += DRAKE_DECLARE_COPY_AND_MOVE_AND_ASSIGN(X):=" \
+/** \name Implements CopyConstructible, CopyAssignable, MoveConstructible, MoveAssignable */ \
+/** \{ */ \
+X(const X&) = default; \
+X& operator=(const X&) = default; \
+X(X&&) = default; \
+X& operator=(X&&) = default; \
+/** \} */"
+PREDEFINED            += "DRAKE_DEPRECATED(removal_date,message):= \
+/** (Deprecated.) \deprecated message <br> \
+This will be removed from Drake on or after removal_date. */ \
+"
 # =============================================================================
 EXPAND_AS_DEFINED      =
 SKIP_FUNCTION_MACROS   = YES
@@ -322,12 +347,10 @@ GENERATE_TAGFILE       =
 ALLEXTERNALS           = NO
 EXTERNAL_GROUPS        = YES
 EXTERNAL_PAGES         = YES
-PERL_PATH              =
 #---------------------------------------------------------------------------
 # Configuration options related to the dot tool
 #---------------------------------------------------------------------------
 CLASS_DIAGRAMS         = NO
-MSCGEN_PATH            =
 DIA_PATH               =
 HIDE_UNDOC_RELATIONS   = NO
 HAVE_DOT               = @DOXYGEN_DOT_FOUND@
@@ -350,10 +373,11 @@ DIRECTORY_GRAPH        = YES
 DOT_IMAGE_FORMAT       = svg
 INTERACTIVE_SVG        = YES
 DOT_PATH               = "@DOXYGEN_DOT_EXECUTABLE@"
-DOTFILE_DIRS           =
+DOTFILE_DIRS           = "@INPUT_ROOT@/drake"
 MSCFILE_DIRS           =
 DIAFILE_DIRS           =
 PLANTUML_JAR_PATH      =
+PLANTUML_CFG_FILE      =
 PLANTUML_INCLUDE_PATH  =
 DOT_GRAPH_MAX_NODES    = 100
 MAX_DOT_GRAPH_DEPTH    = 0

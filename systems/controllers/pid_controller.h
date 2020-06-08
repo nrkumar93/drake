@@ -14,6 +14,7 @@ namespace controllers {
 // TODO(siyuanfeng): Lift the assumption that q and v have the same dimension.
 // TODO(siyuanfeng): Generalize "q_d - q", e.g. for rotation.
 
+// N.B. Inheritance order must remain fixed for pydrake (#9243).
 /**
  * Implements the PID controller. Given estimated state `x_in = (q_in, v_in)`,
  * the controlled state `x_c = (q_c, v_c)` is computed by `x_c = P_x * x_in`,
@@ -25,6 +26,11 @@ namespace controllers {
  * </pre>
  * where `P_y` is the output projection matrix.
  *
+ * @system{PidController,
+ *    @input_port{estimated_state, desired_state},
+ *    @output_port{control}
+ * }
+ *
  * This system has one continuous state, which is the integral of position
  * error, two input ports: estimated state `x_in` and desired state `x_d`, and
  * one output port `y`. Note that this class assumes `|q_c| = |v_c|` and
@@ -32,18 +38,12 @@ namespace controllers {
  * typical use case for non-identity `P_x` and `P_y` is to select a subset of
  * state for feedback.
  *
- * @tparam T The vector element type, which must be a valid Eigen scalar.
- *
- * Instantiated templates for the following kinds of T's are provided:
- * - double
- * - AutoDiffXd
- * - symbolic::Expression
- *
+ * @tparam_default_scalar
  * @ingroup control_systems
  */
 template <typename T>
-class PidController : public StateFeedbackControllerInterface<T>,
-                      public LeafSystem<T> {
+class PidController : public LeafSystem<T>,
+                      public StateFeedbackControllerInterface<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(PidController)
 
@@ -183,7 +183,8 @@ class PidController : public StateFeedbackControllerInterface<T>,
    * controller, since the internal wiring is unimportant and hard for human
    * viewers to parse.
    */
-  void GetGraphvizFragment(std::stringstream* dot) const override;
+  void GetGraphvizFragment(int max_depth,
+                           std::stringstream* dot) const override;
 
   void DoCalcTimeDerivatives(const Context<T>& context,
                              ContinuousState<T>* derivatives) const override;

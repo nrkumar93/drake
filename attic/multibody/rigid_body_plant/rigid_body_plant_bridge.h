@@ -2,9 +2,11 @@
 
 #include <vector>
 
+#include "drake/attic_warning.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/geometry/frame_kinematics_vector.h"
 #include "drake/geometry/geometry_ids.h"
+#include "drake/geometry/render/render_label.h"
 #include "drake/geometry/scene_graph.h"
 #include "drake/multibody/rigid_body_tree.h"
 #include "drake/systems/framework/context.h"
@@ -33,6 +35,7 @@ namespace systems {
     - . : No geometry is used, shapes of this type are *ignored*
 
  The columns of the table indicate the SceneGraph roles.
+
    - Proximity: The shape is used in proximity queries (e.g., penetration,
                 distance, ray-casting, etc.)
    - Visual:    The shape is displayed in drake_visualizer.
@@ -48,6 +51,7 @@ namespace systems {
   %MeshPoints | .         | .      | .
   %Plane      | V         | V      | .
   %Sphere     | V         | V      | .
+
  <h4>Table: Level of Support. Indication of what types of shapes (rows) are read
  from the RigidBodyTree, the role they played in the RigidBodyTree, collision or
  visual, (cell values "C", "V", or ".") and how they are used in SceneGraph
@@ -83,6 +87,7 @@ namespace systems {
  @tparam T The scalar type. Must be a valid Eigen scalar.
 
  Instantiated templates for the following kinds of T's are provided:
+
  - double
  - AutoDiffXd
 
@@ -117,15 +122,22 @@ class RigidBodyPlantBridge : public systems::LeafSystem<T> {
   const systems::InputPort<T>& rigid_body_plant_state_input_port()
       const;
 
+  /** Given a render label, reports the index of the RigidBody to which this
+   label was assigned. The RenderLabel::kDontCare label maps to the index of the
+   world body. The other reserved labels return a negative value.
+
+   @throws std::logic_error If the label doesn't otherwise specify a body.  */
+  int BodyForLabel(geometry::render::RenderLabel label) const;
+
+  /** Reports the frame id for the given body. */
+  geometry::FrameId FrameIdFromBody(const RigidBody<T>& body) const {
+    return body_ids_[body.get_body_index()];
+  }
+
  private:
   // Registers `this` system's tree's bodies and geometries to the given
   // geometry system.
   void RegisterTree(geometry::SceneGraph<T>* scene_graph);
-
-  // This is nothing _but_ direct-feedthrough.
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return true;
-  }
 
   // Calculate the frame pose set output port value.
   void CalcFramePoseOutput(const MyContext& context,
@@ -141,10 +153,13 @@ class RigidBodyPlantBridge : public systems::LeafSystem<T> {
   int geometry_pose_port_{-1};
   int plant_state_port_{-1};
 
+  // Maps from a generated render label to the index of the rigid body assigned
+  // that label.
+  std::unordered_map<geometry::render::RenderLabel, int> label_to_index_;
+
   // Registered frames. In this incarnation, body i's frame_id is stored in
-  // element i - 1. This is because *all* frames are currently being registered
-  // (regardless of weldedness or whether it has geometry) and we skip the
-  // world body (index 0).
+  // element i. This is because *all* frames are currently being registered
+  // (regardless of weldedness or whether it has geometry).
   std::vector<geometry::FrameId> body_ids_;
 };
 }  // namespace systems

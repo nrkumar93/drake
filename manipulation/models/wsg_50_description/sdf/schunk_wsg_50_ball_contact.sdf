@@ -102,8 +102,7 @@
       </collision>
     </link>
     <frame name='body_frame'>
-      <link>body</link>
-      <pose frame=''>0 0 0 0 0 0</pose>
+      <pose frame='body'>0 0 0 0 0 0</pose>
     </frame>
     <link name='left_finger'>
       <pose frame=''>-0.008 0.029 0 0 -0 0</pose>
@@ -147,7 +146,7 @@
       </visual>
       <!-- A sequence of spaced spheres the *width* of the finger from the tip
       towards the base. -->
-      <collision name='collision'>
+      <collision name='collision_0'>
         <pose frame=''>0 -0.0209 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -155,7 +154,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_1'>
         <pose frame=''>0 -0.0049 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -163,7 +162,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_2'>
         <pose frame=''>0 0.0112 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -171,7 +170,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_3'>
         <pose frame=''>0 0.0271 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -181,7 +180,7 @@
       </collision>
       <!-- Two more spheres that form a triangle with the tip-most sphere
            above. -->
-      <collision name='collision'>
+      <collision name='collision_4'>
         <pose frame=''>0.0040 0.0375 0.0060 0 0 0</pose>
         <geometry>
           <sphere>
@@ -189,7 +188,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_5'>
         <pose frame=''>0.0040 0.0375 -0.0060 0 0 0</pose>
         <geometry>
           <sphere>
@@ -240,7 +239,7 @@
       </visual>
       <!-- A sequence of spaced spheres the *width* of the finger from the tip
       towards the base. -->
-      <collision name='collision'>
+      <collision name='collision_0'>
         <pose frame=''>0 -0.0209 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -248,7 +247,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_1'>
         <pose frame=''>0 -0.0049 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -256,7 +255,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_2'>
         <pose frame=''>0 0.0112 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -264,7 +263,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_3'>
         <pose frame=''>0 0.0271 0 0 0 0</pose>
         <geometry>
           <sphere>
@@ -274,7 +273,7 @@
       </collision>
       <!-- Two more spheres that form a triangle with the tip-most sphere
            above. -->
-      <collision name='collision'>
+      <collision name='collision_4'>
         <pose frame=''>-0.004 0.0375 0.0060 0 0 0</pose>
         <geometry>
           <sphere>
@@ -282,7 +281,7 @@
           </sphere>
         </geometry>
       </collision>
-      <collision name='collision'>
+      <collision name='collision_5'>
         <pose frame=''>-0.004 0.0375 -0.0060 0 0 0</pose>
         <geometry>
           <sphere>

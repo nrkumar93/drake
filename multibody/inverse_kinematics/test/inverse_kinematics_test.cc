@@ -2,9 +2,15 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/find_resource.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/math/rotation_matrix.h"
 #include "drake/multibody/inverse_kinematics/test/inverse_kinematics_test_utilities.h"
 #include "drake/solvers/create_constraint.h"
+#include "drake/solvers/solve.h"
+
+// TODO(eric.cousineau): Replace manual coordinate indexing with more semantic
+// operations (`CalcRelativeTransform`, `SetFreeBodyPose`).
 
 namespace drake {
 namespace multibody {
@@ -37,8 +43,8 @@ class TwoFreeBodiesTest : public ::testing::Test {
 
   ~TwoFreeBodiesTest() override {}
 
-  void RetrieveSolution() {
-    const auto q_sol = ik_.prog().GetSolution(ik_.q());
+  void RetrieveSolution(const solvers::MathematicalProgramResult& result) {
+    const auto q_sol = result.GetSolution(ik_.q());
     body1_quaternion_sol_ = Vector4ToQuaternion(q_sol.head<4>());
     body1_position_sol_ = q_sol.segment<3>(4);
     body2_quaternion_sol_ = Vector4ToQuaternion(q_sol.segment<4>(7));
@@ -46,7 +52,7 @@ class TwoFreeBodiesTest : public ::testing::Test {
   }
 
  protected:
-  std::unique_ptr<multibody_plant::MultibodyPlant<double>> two_bodies_plant_;
+  std::unique_ptr<MultibodyPlant<double>> two_bodies_plant_;
   const Frame<double>& body1_frame_;
   const Frame<double>& body2_frame_;
   InverseKinematics ik_;
@@ -59,39 +65,58 @@ class TwoFreeBodiesTest : public ::testing::Test {
 
 GTEST_TEST(InverseKinematicsTest, ConstructorWithJointLimits) {
   // Constructs an inverse kinematics problem for IIWA robot, make sure that
-  // the joint limits are imposed.
-  auto plant = ConstructIiwaPlant("iiwa14_no_collision.sdf", 0.01);
+  // the joint limits are imposed when with_joint_limits=true, and the joint
+  // limits are ignored when with_joint_limits=false.
+  auto plant = ConstructIiwaPlant(
+      FindResourceOrThrow(
+          "drake/manipulation/models/iiwa_description/sdf/"
+          "iiwa14_no_collision.sdf"),
+      0.01);
 
-  InverseKinematics ik(*plant);
+  InverseKinematics ik_with_joint_limits(*plant);
+  InverseKinematics ik_without_joint_limits(*plant, false);
   // Now check the joint limits.
-  VectorX<double> lower_limits(7);
-  // The lower and upper joint limits are copied from the SDF file. Please make
-  // sure the values are in sync with the SDF file.
-  lower_limits << -2.96706, -2.0944, -2.96706, -2.0944, -2.96706, -2.0944,
-      -3.05433;
-  VectorX<double> upper_limits(7);
-  upper_limits = -lower_limits;
+  const VectorX<double> lower_limits = plant->GetPositionLowerLimits();
+  const VectorX<double> upper_limits = plant->GetPositionUpperLimits();
   // Check if q_test will satisfy the joint limit constraint imposed from the
   // IK constructor.
-  auto q_test_bound = ik.get_mutable_prog()->AddBoundingBoxConstraint(
-      Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7), ik.q());
-  auto check_q_test = [&ik, &q_test_bound](const Eigen::VectorXd& q_test) {
-    q_test_bound.evaluator()->UpdateLowerBound(q_test);
-    q_test_bound.evaluator()->UpdateUpperBound(q_test);
-    const auto result = ik.get_mutable_prog()->Solve();
-    return result == solvers::SolutionResult::kSolutionFound;
-  };
+  auto q_test_with_joint_limits =
+      ik_with_joint_limits.get_mutable_prog()->AddBoundingBoxConstraint(
+          Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
+          ik_with_joint_limits.q());
+  auto q_test_without_joint_limits =
+      ik_without_joint_limits.get_mutable_prog()->AddBoundingBoxConstraint(
+          Eigen::VectorXd::Zero(7), Eigen::VectorXd::Zero(7),
+          ik_without_joint_limits.q());
+  auto check_q_with_joint_limits =
+      [&ik_with_joint_limits,
+       &q_test_with_joint_limits](const Eigen::VectorXd& q_test) {
+        q_test_with_joint_limits.evaluator()->UpdateLowerBound(q_test);
+        q_test_with_joint_limits.evaluator()->UpdateUpperBound(q_test);
+        return Solve(ik_with_joint_limits.prog()).is_success();
+      };
+  auto check_q_without_joint_limits =
+      [&ik_without_joint_limits,
+       &q_test_without_joint_limits](const Eigen::VectorXd& q_test) {
+        q_test_without_joint_limits.evaluator()->UpdateLowerBound(q_test);
+        q_test_without_joint_limits.evaluator()->UpdateUpperBound(q_test);
+        return Solve(ik_without_joint_limits.prog()).is_success();
+      };
   for (int i = 0; i < 7; ++i) {
     Eigen::VectorXd q_good = Eigen::VectorXd::Zero(7);
     q_good(i) = lower_limits(i) * 0.01 + upper_limits(i) * 0.99;
-    EXPECT_TRUE(check_q_test(q_good));
+    EXPECT_TRUE(check_q_with_joint_limits(q_good));
+    EXPECT_TRUE(check_q_without_joint_limits(q_good));
     q_good(i) = lower_limits(i) * 0.99 + upper_limits(i) * 0.01;
-    EXPECT_TRUE(check_q_test(q_good));
+    EXPECT_TRUE(check_q_with_joint_limits(q_good));
+    EXPECT_TRUE(check_q_without_joint_limits(q_good));
     Eigen::VectorXd q_bad = q_good;
     q_bad(i) = -0.01 * lower_limits(i) + 1.01 * upper_limits(i);
-    EXPECT_FALSE(check_q_test(q_bad));
+    EXPECT_FALSE(check_q_with_joint_limits(q_bad));
+    EXPECT_TRUE(check_q_without_joint_limits(q_bad));
     q_bad(i) = 1.01 * lower_limits(i) - 0.01 * upper_limits(i);
-    EXPECT_FALSE(check_q_test(q_bad));
+    EXPECT_FALSE(check_q_with_joint_limits(q_bad));
+    EXPECT_TRUE(check_q_without_joint_limits(q_bad));
   }
 }
 
@@ -106,9 +131,9 @@ TEST_F(TwoFreeBodiesTest, PositionConstraint) {
                                           Eigen::Vector4d(1, 0, 0, 0));
   ik_.get_mutable_prog()->SetInitialGuess(ik_.q().segment<4>(7),
                                           Eigen::Vector4d(1, 0, 0, 0));
-  const auto result = ik_.get_mutable_prog()->Solve();
-  EXPECT_EQ(result, solvers::SolutionResult::kSolutionFound);
-  RetrieveSolution();
+  const auto result = Solve(ik_.prog());
+  EXPECT_TRUE(result.is_success());
+  RetrieveSolution(result);
   const Eigen::Vector3d p_AQ = body2_quaternion_sol_.inverse() *
                                (body1_quaternion_sol_ * p_BQ +
                                 body1_position_sol_ - body2_position_sol_);
@@ -136,16 +161,15 @@ TEST_F(TwoFreeBodiesTest, OrientationConstraint) {
                                           Eigen::Vector4d(1, 0, 0, 0));
   ik_.get_mutable_prog()->SetInitialGuess(ik_.q().segment<4>(7),
                                           Eigen::Vector4d(1, 0, 0, 0));
-  const auto result = ik_.get_mutable_prog()->Solve();
-  EXPECT_EQ(result, solvers::SolutionResult::kSolutionFound);
-  const auto q_sol = ik_.prog().GetSolution(ik_.q());
-  RetrieveSolution();
-  const Eigen::Matrix3d R_AbarBbar =
-      (body1_quaternion_sol_.inverse() * body2_quaternion_sol_)
-          .toRotationMatrix();
-  const Eigen::Matrix3d R_AB =
-      R_AbarA.matrix().transpose() * R_AbarBbar * R_BbarB.matrix();
-  const double angle = Eigen::AngleAxisd(R_AB).angle();
+  const auto result = Solve(ik_.prog());
+  EXPECT_TRUE(result.is_success());
+  const auto q_sol = result.GetSolution(ik_.q());
+  RetrieveSolution(result);
+  const math::RotationMatrix<double> R_AbarBbar(
+      body1_quaternion_sol_.inverse() * body2_quaternion_sol_);
+  const math::RotationMatrix<double> R_AB =
+      R_AbarA.transpose() * R_AbarBbar * R_BbarB;
+  const double angle = R_AB.ToAngleAxis().angle();
   EXPECT_LE(angle, angle_bound + 1E-6);
 }
 
@@ -162,10 +186,10 @@ TEST_F(TwoFreeBodiesTest, GazeTargetConstraint) {
                                           Eigen::Vector4d(1, 0, 0, 0));
   ik_.get_mutable_prog()->SetInitialGuess(ik_.q().segment<4>(7),
                                           Eigen::Vector4d(1, 0, 0, 0));
-  const auto result = ik_.get_mutable_prog()->Solve();
-  EXPECT_EQ(result, solvers::SolutionResult::kSolutionFound);
+  const auto result = Solve(ik_.prog());
+  EXPECT_TRUE(result.is_success());
 
-  RetrieveSolution();
+  RetrieveSolution(result);
   const Eigen::Vector3d p_WS =
       body1_quaternion_sol_ * p_AS + body1_position_sol_;
   const Eigen::Vector3d p_WT =
@@ -189,10 +213,10 @@ TEST_F(TwoFreeBodiesTest, AngleBetweenVectorsConstraint) {
                                           Eigen::Vector4d(1, 0, 0, 0));
   ik_.get_mutable_prog()->SetInitialGuess(ik_.q().segment<4>(7),
                                           Eigen::Vector4d(1, 0, 0, 0));
-  const auto result = ik_.get_mutable_prog()->Solve();
-  EXPECT_EQ(result, solvers::SolutionResult::kSolutionFound);
+  const auto result = Solve(ik_.prog());
+  EXPECT_TRUE(result.is_success());
 
-  RetrieveSolution();
+  RetrieveSolution(result);
 
   const Eigen::Vector3d n_A_W = body1_quaternion_sol_ * n_A;
   const Eigen::Vector3d n_B_W = body2_quaternion_sol_ * n_B;
@@ -200,6 +224,82 @@ TEST_F(TwoFreeBodiesTest, AngleBetweenVectorsConstraint) {
   const double angle =
       std::acos(n_A_W.dot(n_B_W) / (n_A_W.norm() * n_B_W.norm()));
   EXPECT_NEAR(angle, angle_lower, 1E-6);
+}
+
+TEST_F(TwoFreeBodiesTest, PointToPointDistanceConstraint) {
+  const Eigen::Vector3d p_B1P1(0.2, -0.4, 0.9);
+  const Eigen::Vector3d p_B2P2(1.4, -0.1, 1.8);
+
+  const double distance_lower{0.2};
+  const double distance_upper{0.25};
+
+  ik_.AddPointToPointDistanceConstraint(body1_frame_, p_B1P1, body2_frame_,
+                                        p_B2P2, distance_lower, distance_upper);
+  ik_.get_mutable_prog()->SetInitialGuess(ik_.q().head<4>(),
+                                          Eigen::Vector4d(1, 0, 0, 0));
+  ik_.get_mutable_prog()->SetInitialGuess(ik_.q().segment<4>(7),
+                                          Eigen::Vector4d(1, 0, 0, 0));
+  const auto result = Solve(ik_.prog());
+  EXPECT_TRUE(result.is_success());
+
+  RetrieveSolution(result);
+
+  const Eigen::Vector3d p_WP1 =
+      body1_position_sol_ + body1_quaternion_sol_ * p_B1P1;
+  const Eigen::Vector3d p_WP2 =
+      body2_position_sol_ + body2_quaternion_sol_ * p_B2P2;
+  const double distance_sol = (p_WP1 - p_WP2).norm();
+  EXPECT_GE(distance_sol, distance_lower - 1e-6);
+  EXPECT_LE(distance_sol, distance_upper + 1e-6);
+}
+
+TEST_F(TwoFreeSpheresTest, MinimumDistanceConstraintTest) {
+  const double min_distance = 0.1;
+
+  InverseKinematics ik(*plant_double_, plant_context_double_);
+
+  auto constraint = ik.AddMinimumDistanceConstraint(min_distance);
+
+  // The two spheres are colliding in the initial guess.
+  ik.get_mutable_prog()->SetInitialGuess(ik.q().head<4>(),
+                                         Eigen::Vector4d(1, 0, 0, 0));
+  ik.get_mutable_prog()->SetInitialGuess(ik.q().segment<3>(4),
+                                         Eigen::Vector3d(0, 0, 0.01));
+  ik.get_mutable_prog()->SetInitialGuess(ik.q().segment<4>(7),
+                                         Eigen::Vector4d(1, 0, 0, 0));
+  ik.get_mutable_prog()->SetInitialGuess(ik.q().tail<3>(),
+                                         Eigen::Vector3d(0, 0, -0.01));
+
+  auto solve_and_check = [&]() {
+    const solvers::MathematicalProgramResult result = Solve(ik.prog());
+    EXPECT_TRUE(result.is_success());
+
+    const Eigen::Vector3d p_WB1 = result.GetSolution(ik.q().segment<3>(4));
+    const Eigen::Quaterniond quat_WB1(
+        result.GetSolution(ik.q()(0)), result.GetSolution(ik.q()(1)),
+        result.GetSolution(ik.q()(2)), result.GetSolution(ik.q()(3)));
+    const Eigen::Vector3d p_WB2 = result.GetSolution(ik.q().tail<3>());
+    const Eigen::Quaterniond quat_WB2(
+        result.GetSolution(ik.q()(7)), result.GetSolution(ik.q()(8)),
+        result.GetSolution(ik.q()(9)), result.GetSolution(ik.q()(10)));
+    const Eigen::Vector3d p_WS1 =
+        p_WB1 + quat_WB1.toRotationMatrix() * X_B1S1_.translation();
+    const Eigen::Vector3d p_WS2 =
+        p_WB2 + quat_WB2.toRotationMatrix() * X_B2S2_.translation();
+    // This large error is due to the derivative of the penalty function(i.e.,
+    // the gradient ∂penalty/∂distance) being small near minimum_distance. Hence
+    // a small violation on the penalty leads to a large violation on the
+    // minimum_distance.
+    const double tol = 2e-4;
+    EXPECT_GE((p_WS1 - p_WS2).norm() - radius1_ - radius2_, min_distance - tol);
+  };
+
+  solve_and_check();
+
+  // Now set the two spheres to coincide at the initial guess, and solve again.
+  ik.get_mutable_prog()->SetInitialGuess(
+      ik.q().tail<3>(), ik.prog().initial_guess().segment<3>(4));
+  solve_and_check();
 }
 }  // namespace multibody
 }  // namespace drake

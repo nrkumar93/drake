@@ -1,6 +1,7 @@
 #include "drake/solvers/scs_solver.h"
 
 #include <Eigen/Sparse>
+#include <fmt/format.h>
 
 // clang-format off
 // scs.h should be included before linsys/amatrix.h, since amatrix.h uses types
@@ -296,7 +297,7 @@ void ParseSecondOrderConeConstraints(
     const VectorXDecisionVariable& x = lorentz_cone_constraint.variables();
     const std::vector<int> x_indices = prog.FindDecisionVariableIndices(x);
     const Eigen::SparseMatrix<double> Ai =
-        lorentz_cone_constraint.evaluator()->A().sparseView();
+        lorentz_cone_constraint.evaluator()->A();
     const std::vector<Eigen::Triplet<double>> Ai_triplets =
         math::SparseMatrixToTriplets(Ai);
     for (const auto& Ai_triplet : Ai_triplets) {
@@ -317,7 +318,7 @@ void ParseSecondOrderConeConstraints(
     const VectorXDecisionVariable& x = rotated_lorentz_cone.variables();
     const std::vector<int> x_indices = prog.FindDecisionVariableIndices(x);
     const Eigen::SparseMatrix<double> Ai =
-        rotated_lorentz_cone.evaluator()->A().sparseView();
+        rotated_lorentz_cone.evaluator()->A();
     const Eigen::VectorXd& bi = rotated_lorentz_cone.evaluator()->b();
     const std::vector<Eigen::Triplet<double>> Ai_triplets =
         math::SparseMatrixToTriplets(Ai);
@@ -424,6 +425,45 @@ void ParsePositiveSemidefiniteConstraint(
   }
 }
 
+void ParseExponentialConeConstraint(
+    const MathematicalProgram& prog,
+    std::vector<Eigen::Triplet<double>>* A_triplets, std::vector<double>* b,
+    int* A_row_count, ScsCone* cone) {
+  cone->ep = static_cast<int>(prog.exponential_cone_constraints().size());
+  for (const auto& binding : prog.exponential_cone_constraints()) {
+    // drake::solvers::ExponentialConstraint enforces that z = A * x + b is in
+    // the exponential cone (z₀ ≥ z₁*exp(z₂ / z₁)). This is different from the
+    // exponential cone used in SCS. In SCS, a vector s is in the exponential
+    // cone, if s₂≥ s₁*exp(s₀ / s₁). To transform drake's Exponential cone to
+    // SCS's exponential cone, we use
+    // -[A.row(2); A.row(1); A.row(0)] * x + s = [b(2); b(1); b(0)], and s is
+    // in SCS's exponential cone, where A = binding.evaluator()->A(), b =
+    // binding.evaluator()->b().
+    const int num_bound_variables = binding.variables().rows();
+    for (int i = 0; i < num_bound_variables; ++i) {
+      A_triplets->reserve(A_triplets->size() +
+                          binding.evaluator()->A().nonZeros());
+      const int decision_variable_index =
+          prog.FindDecisionVariableIndex(binding.variables()(i));
+      for (Eigen::SparseMatrix<double>::InnerIterator it(
+               binding.evaluator()->A(), i);
+           it; ++it) {
+        // 2 - it.row() is used for reverse the row order, as mentioned in the
+        // function documentation above.
+        A_triplets->emplace_back(*A_row_count + 2 - it.row(),
+                                 decision_variable_index, -it.value());
+      }
+    }
+    // The exponential cone constraint is on a 3 x 1 vector, hence for each
+    // ExponentialConeConstraint, we append 3 rows to A and b.
+    b->reserve(b->size() + 3);
+    for (int i = 0; i < 3; ++i) {
+      b->push_back(binding.evaluator()->b()(2 - i));
+    }
+    *A_row_count += 3;
+  }
+}
+
 std::string Scs_return_info(scs_int scs_status) {
   switch (scs_status) {
     case SCS_INFEASIBLE_INACCURATE:
@@ -499,9 +539,89 @@ void SetScsProblemData(int A_row_count, int num_vars,
 }
 }  // namespace
 
-bool ScsSolver::available() const { return true; }
+bool ScsSolver::is_available() { return true; }
 
-SolutionResult ScsSolver::Solve(MathematicalProgram& prog) const {
+namespace {
+void SetScsSettings(std::unordered_map<std::string, int>* solver_options_int,
+                    SCS_SETTINGS* scs_settings) {
+  auto it = solver_options_int->find("max_iters");
+  if (it != solver_options_int->end()) {
+    scs_settings->max_iters = it->second;
+    solver_options_int->erase(it);
+  }
+  it = solver_options_int->find("normalize");
+  if (it != solver_options_int->end()) {
+    scs_settings->normalize = it->second;
+    solver_options_int->erase(it);
+  }
+  it = solver_options_int->find("verbose");
+  if (it != solver_options_int->end()) {
+    scs_settings->verbose = it->second;
+    solver_options_int->erase(it);
+  }
+  it = solver_options_int->find("warm_start");
+  if (it != solver_options_int->end()) {
+    scs_settings->warm_start = it->second;
+    solver_options_int->erase(it);
+  }
+  it = solver_options_int->find("acceleration_lookback");
+  if (it != solver_options_int->end()) {
+    scs_settings->acceleration_lookback = it->second;
+    solver_options_int->erase(it);
+  }
+  if (!solver_options_int->empty()) {
+    throw std::invalid_argument("Unsupported SCS solver options.");
+  }
+}
+
+void SetScsSettings(
+    std::unordered_map<std::string, double>* solver_options_double,
+    SCS_SETTINGS* scs_settings) {
+  auto it = solver_options_double->find("scale");
+  if (it != solver_options_double->end()) {
+    scs_settings->scale = it->second;
+    solver_options_double->erase(it);
+  }
+  it = solver_options_double->find("rho_x");
+  if (it != solver_options_double->end()) {
+    scs_settings->rho_x = it->second;
+    solver_options_double->erase(it);
+  }
+  it = solver_options_double->find("eps");
+  if (it != solver_options_double->end()) {
+    scs_settings->eps = it->second;
+    solver_options_double->erase(it);
+  }
+  it = solver_options_double->find("alpha");
+  if (it != solver_options_double->end()) {
+    scs_settings->alpha = it->second;
+    solver_options_double->erase(it);
+  }
+  it = solver_options_double->find("cg_rate");
+  if (it != solver_options_double->end()) {
+    scs_settings->cg_rate = it->second;
+    solver_options_double->erase(it);
+  }
+  if (!solver_options_double->empty()) {
+    throw std::invalid_argument("Unsupported SCS solver options.");
+  }
+}
+}  // namespace
+
+void ScsSolver::DoSolve(
+    const MathematicalProgram& prog,
+    const Eigen::VectorXd& initial_guess,
+    const SolverOptions& merged_options,
+    MathematicalProgramResult* result) const {
+  if (!prog.GetVariableScaling().empty()) {
+    static const logging::Warn log_once(
+      "ScsSolver doesn't support the feature of variable scaling.");
+  }
+
+  // TODO(hongkai.dai): allow warm starting SCS with initial guess on
+  // primal/dual variables and primal residues.
+  unused(initial_guess);
+  // The initial guess for SCS is unused.
   // SCS solves the problem in this form
   // min  cᵀx
   // s.t A x + s = b
@@ -592,6 +712,9 @@ SolutionResult ScsSolver::Solve(MathematicalProgram& prog) const {
   ParsePositiveSemidefiniteConstraint(prog, &A_triplets, &b, &A_row_count,
                                       cone);
 
+  // Parse ExponentialConeConstraint.
+  ParseExponentialConeConstraint(prog, &A_triplets, &b, &A_row_count, cone);
+
   Eigen::SparseMatrix<double> A(A_row_count, num_x);
   A.setFromTriplets(A_triplets.begin(), A_triplets.end());
   A.makeCompressed();
@@ -599,43 +722,67 @@ SolutionResult ScsSolver::Solve(MathematicalProgram& prog) const {
   ScsData* scs_problem_data =
       static_cast<ScsData*>(scs_calloc(1, sizeof(ScsData)));
   SetScsProblemData(A_row_count, num_x, A, b, c, scs_problem_data);
-  scs_problem_data->stgs->verbose = verbose_ ? VERBOSE : 0;
+  std::unordered_map<std::string, int> input_solver_options_int =
+      merged_options.GetOptionsInt(id());
+  std::unordered_map<std::string, double> input_solver_options_double =
+      merged_options.GetOptionsDouble(id());
+  SetScsSettings(&input_solver_options_int, scs_problem_data->stgs);
+  SetScsSettings(&input_solver_options_double, scs_problem_data->stgs);
 
   ScsInfo scs_info{0};
 
   ScsSolution* scs_sol =
       static_cast<ScsSolution*>(scs_calloc(1, sizeof(ScsSolution)));
 
-  scs_int scs_status = scs(scs_problem_data, cone, scs_sol, &scs_info);
+  ScsSolverDetails& solver_details =
+      result->SetSolverDetailsType<ScsSolverDetails>();
+  solver_details.scs_status = scs(scs_problem_data, cone, scs_sol, &scs_info);
+
+  solver_details.iter = scs_info.iter;
+  solver_details.primal_objective = scs_info.pobj;
+  solver_details.dual_objective = scs_info.dobj;
+  solver_details.primal_residue = scs_info.res_pri;
+  solver_details.residue_infeasibility = scs_info.res_infeas;
+  solver_details.residue_unbounded = scs_info.res_unbdd;
+  solver_details.relative_duality_gap = scs_info.rel_gap;
+  solver_details.scs_setup_time = scs_info.setup_time;
+  solver_details.scs_solve_time = scs_info.solve_time;
 
   SolutionResult solution_result{SolutionResult::kUnknownError};
-  SolverResult solver_result(id());
-  if (scs_status == SCS_SOLVED || scs_status == SCS_SOLVED_INACCURATE) {
+  solver_details.y.resize(A_row_count);
+  solver_details.s.resize(A_row_count);
+  for (int i = 0; i < A_row_count; ++i) {
+    solver_details.y(i) = scs_sol->y[i];
+    solver_details.s(i) = scs_sol->s[i];
+  }
+  if (solver_details.scs_status == SCS_SOLVED ||
+      solver_details.scs_status == SCS_SOLVED_INACCURATE) {
     solution_result = SolutionResult::kSolutionFound;
-    solver_result.set_decision_variable_values(
+    result->set_x_val(
         (Eigen::Map<VectorX<scs_float>>(scs_sol->x, prog.num_vars()))
             .cast<double>());
-    solver_result.set_optimal_cost(scs_info.pobj + cost_constant);
-  } else if (scs_status == SCS_UNBOUNDED ||
-             scs_status == SCS_UNBOUNDED_INACCURATE) {
+    result->set_optimal_cost(scs_info.pobj + cost_constant);
+  } else if (solver_details.scs_status == SCS_UNBOUNDED ||
+             solver_details.scs_status == SCS_UNBOUNDED_INACCURATE) {
     solution_result = SolutionResult::kUnbounded;
-    solver_result.set_optimal_cost(MathematicalProgram::kUnboundedCost);
-  } else if (scs_status == SCS_INFEASIBLE ||
-             scs_status == SCS_INFEASIBLE_INACCURATE) {
+    result->set_optimal_cost(MathematicalProgram::kUnboundedCost);
+  } else if (solver_details.scs_status == SCS_INFEASIBLE ||
+             solver_details.scs_status == SCS_INFEASIBLE_INACCURATE) {
     solution_result = SolutionResult::kInfeasibleConstraints;
-    solver_result.set_optimal_cost(MathematicalProgram::kGlobalInfeasibleCost);
+    result->set_optimal_cost(MathematicalProgram::kGlobalInfeasibleCost);
   }
-  if (scs_status != SCS_SOLVED) {
+  if (solver_details.scs_status != SCS_SOLVED) {
     drake::log()->info("SCS returns code {}, with message \"{}\".\n",
-                       scs_status, Scs_return_info(scs_status));
+                       solver_details.scs_status,
+                       Scs_return_info(solver_details.scs_status));
   }
+
+  result->set_solution_result(solution_result);
 
   // Free allocated memory
   scs_free_data(scs_problem_data, cone);
   scs_free_sol(scs_sol);
-
-  prog.SetSolverResult(solver_result);
-  return solution_result;
 }
+
 }  // namespace solvers
 }  // namespace drake

@@ -9,7 +9,7 @@ def _check_invalid_line_endings(filename):
     otherwise.
     """
     # Ask Python to read the file and determine the newlines convention.
-    with open(filename, 'rU') as file:
+    with open(filename, mode='r', encoding='utf-8') as file:
         if not file:
             print("ERROR: unable to open " + filename)
             return 1
@@ -30,25 +30,36 @@ def _check_invalid_line_endings(filename):
 
 def _check_includes(filename):
     """Return 0 if clang-format-includes is a no-op, and 1 otherwise."""
-    tool = IncludeFormatter(filename)
+    try:
+        tool = IncludeFormatter(filename)
+    except Exception as e:
+        print("ERROR: " + filename + ":0: " + str(e))
+        return 1
     tool.format_includes()
     first_difference = tool.get_first_differing_original_index()
     if first_difference is not None:
-        print("ERROR: " + filename + ":" + str(first_difference + 1) + ": " +
+        print(f"ERROR: {filename}:{first_difference + 1}: "
               "the #include ordering is incorrect")
-        print("note: fix via bazel-bin/tools/lint/clang-format-includes " +
-              filename)
+        print("note: fix via bazel-bin/tools/lint/clang-format-includes "
+              + filename)
+        print("note: if that program does not exist, "
+              "you might need to compile it first: "
+              "bazel build //tools/lint/...")
         return 1
     return 0
 
 
-def _check_shebang(filename):
+def _check_shebang(filename, disallow_executable):
     """Return 0 if the filename's executable bit is consistent with the
     presence of a shebang line and the shebang line is in the whitelist of
     acceptable shebang lines, and 1 otherwise.
     """
     is_executable = os.access(filename, os.X_OK)
-    with open(filename, 'r') as file:
+    if is_executable and disallow_executable:
+        print("ERROR: {} is executable, but should not be".format(filename))
+        print("note: fix via chmod a-x '{}'".format(filename))
+        return 1
+    with open(filename, mode='r', encoding='utf8') as file:
         shebang = file.readline().rstrip("\n")
         has_shebang = shebang.startswith("#!")
     if is_executable and not has_shebang:
@@ -61,13 +72,12 @@ def _check_shebang(filename):
         return 1
     shebang_whitelist = {
         "bash": "#!/bin/bash",
-        "directorPython": "#!/usr/bin/env directorPython",
-        "python": "#!/usr/bin/env python2"
+        "python": "#!/usr/bin/env python3",
     }
-    if has_shebang and shebang not in shebang_whitelist.values():
+    if has_shebang and shebang not in list(shebang_whitelist.values()):
         print(("ERROR: shebang '{}' in the file '{}' is not in the shebang "
               "whitelist").format(shebang, filename))
-        for hint, replacement_shebang in shebang_whitelist.iteritems():
+        for hint, replacement_shebang in shebang_whitelist.items():
             if hint in shebang:
                 print(("note: fix by replacing the shebang with "
                       "'{}'").format(replacement_shebang))
@@ -81,13 +91,19 @@ def main():
     Otherwise exit 0.
     """
     total_errors = 0
-    for filename in sys.argv[1:]:
+    if len(sys.argv) > 1 and sys.argv[1] == "--disallow_executable":
+        disallow_executable = True
+        filenames = sys.argv[2:]
+    else:
+        disallow_executable = False
+        filenames = sys.argv[1:]
+    for filename in filenames:
         print("drakelint.py: Linting " + filename)
         total_errors += _check_invalid_line_endings(filename)
         if not filename.endswith((".cc", ".cpp", ".h")):
             # TODO(jwnimmer-tri) We should enable this check for C++ files
             # also, but that runs into some struggle with genfiles.
-            total_errors += _check_shebang(filename)
+            total_errors += _check_shebang(filename, disallow_executable)
         if not filename.endswith(".py"):
             total_errors += _check_includes(filename)
 

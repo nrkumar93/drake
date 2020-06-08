@@ -1,7 +1,7 @@
 #include "drake/systems/sensors/image_to_lcm_image_array_t.h"
 
-#include <gtest/gtest.h>
 #include "robotlocomotion/image_array_t.hpp"
+#include <gtest/gtest.h>
 
 #include "drake/systems/sensors/image.h"
 
@@ -30,26 +30,13 @@ robotlocomotion::image_array_t SetUpInputAndOutput(
   const InputPort<double>& label_image_input_port =
       dut->label_image_input_port();
 
-  auto color_image_value = std::make_unique<Value<ImageRgba8U>>(color_image);
-  auto depth_image_value = std::make_unique<Value<ImageDepth32F>>(depth_image);
-  auto label_image_value = std::make_unique<Value<ImageLabel16I>>(label_image);
-
   std::unique_ptr<Context<double>> context = dut->CreateDefaultContext();
-  context->FixInputPort(color_image_input_port.get_index(),
-                        std::move(color_image_value));
-  context->FixInputPort(depth_image_input_port.get_index(),
-                        std::move(depth_image_value));
-  context->FixInputPort(label_image_input_port.get_index(),
-                        std::move(label_image_value));
+  color_image_input_port.FixValue(context.get(), color_image);
+  depth_image_input_port.FixValue(context.get(), depth_image);
+  label_image_input_port.FixValue(context.get(), label_image);
 
-  auto output = dut->AllocateOutput();
-  dut->CalcOutput(*context, output.get());
-
-  auto output_image_array_t = output->get_data(
-      dut->image_array_t_msg_output_port().get_index())->GetValue<
-        robotlocomotion::image_array_t>();
-
-  return output_image_array_t;
+  return dut->image_array_t_msg_output_port().
+      Eval<robotlocomotion::image_array_t>(*context);
 }
 
 GTEST_TEST(ImageToLcmImageArrayT, ValidTest) {

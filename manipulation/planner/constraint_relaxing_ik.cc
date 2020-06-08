@@ -1,13 +1,12 @@
 #include "drake/manipulation/planner/constraint_relaxing_ik.h"
 
 #include <memory>
+#include <stdexcept>
 
 #include "drake/common/text_logging.h"
-#include "drake/multibody/ik_options.h"
-#include "drake/multibody/joints/floating_base_types.h"
-#include "drake/multibody/parsers/urdf_parser.h"
-#include "drake/multibody/rigid_body_constraint.h"
-#include "drake/multibody/rigid_body_ik.h"
+#include "drake/multibody/inverse_kinematics/inverse_kinematics.h"
+#include "drake/multibody/parsing/parser.h"
+#include "drake/solvers/solve.h"
 
 namespace drake {
 namespace manipulation {
@@ -18,35 +17,37 @@ constexpr int kDefaultRandomSeed = 1234;
 
 ConstraintRelaxingIk::ConstraintRelaxingIk(
     const std::string& model_path,
-    const std::string& end_effector_link_name,
-    const Isometry3<double>& base_to_world)
-    : rand_generator_(kDefaultRandomSeed) {
-  auto base_frame = std::allocate_shared<RigidBodyFrame<double>>(
-      Eigen::aligned_allocator<RigidBodyFrame<double>>(), "world", nullptr,
-      base_to_world);
+    const std::string& end_effector_link_name)
+    : rand_generator_(kDefaultRandomSeed),
+      plant_(0) {
+  const auto model_instance =
+      multibody::Parser(&plant_).AddModelFromFile(model_path);
 
-  robot_ = std::make_unique<RigidBodyTree<double>>();
-  parsers::urdf::AddModelInstanceFromUrdfFile(
-      model_path, multibody::joints::kFixed, base_frame, robot_.get());
+  // Check if our robot is welded to the world.  If not, try welding the first
+  // link.
+  if (plant_.GetBodiesWeldedTo(plant_.world_body()).size() <= 1) {
+    const std::vector<multibody::BodyIndex> bodies =
+        plant_.GetBodyIndices(model_instance);
+    plant_.WeldFrames(plant_.world_frame(),
+                      plant_.get_body(bodies[0]).body_frame());
+  }
+  plant_.Finalize();
 
   SetEndEffector(end_effector_link_name);
 }
 
 bool ConstraintRelaxingIk::PlanSequentialTrajectory(
     const std::vector<IkCartesianWaypoint>& waypoints,
-    const VectorX<double>& q_current, IKResults* ik_res) {
-  DRAKE_DEMAND(ik_res);
+    const VectorX<double>& q_current,
+    std::vector<Eigen::VectorXd>* q_sol_out) {
+  DRAKE_DEMAND(q_sol_out);
   int num_steps = static_cast<int>(waypoints.size());
 
-  VectorX<double> q_prev = q_current;
   VectorX<double> q0 = q_current;
   VectorX<double> q_sol = q_current;
 
-  ik_res->infeasible_constraints.clear();
-  ik_res->info.resize(num_steps + 1);
-  ik_res->q_sol.resize(num_steps + 1);
-  ik_res->info[0] = 1;
-  ik_res->q_sol[0] = q_current;
+  q_sol_out->clear();
+  q_sol_out->push_back(q_current);
 
   int step_ctr = 0;
   int relaxed_ctr = 0;
@@ -79,8 +80,7 @@ bool ConstraintRelaxingIk::PlanSequentialTrajectory(
 
       std::vector<int> info;
       std::vector<std::string> infeasible_constraints;
-      bool res = SolveIk(waypoint, q0, q_prev, pos_tol, rot_tol, &q_sol, &info,
-                         &infeasible_constraints);
+      bool res = SolveIk(waypoint, q0, pos_tol, rot_tol, &q_sol);
 
       if (res) {
         // Breaks if the current tolerance is below given threshold.
@@ -113,7 +113,11 @@ bool ConstraintRelaxingIk::PlanSequentialTrajectory(
       // the constraints for max times.
       if (relaxed_ctr > kMaxNumConstraintRelax) {
         // Make a random initial guess.
-        q0 = robot_->getRandomConfiguration(rand_generator_);
+        std::unique_ptr<systems::Context<double>> context =
+            plant_.CreateDefaultContext();
+        plant_.SetRandomState(*context, &context->get_mutable_state(),
+                              &rand_generator_);
+        q0 = plant_.GetPositions(*context);
         // Resets constraints tolerance.
         pos_tol = kInitialPosTolerance;
         rot_tol = kInitialRotTolerance;
@@ -130,64 +134,53 @@ bool ConstraintRelaxingIk::PlanSequentialTrajectory(
         drake::log()->error("IK FAILED at max random starts: " +
                             std::to_string(random_ctr));
         // Returns information about failure.
-        ik_res->info[step_ctr + 1] = info[0];
-        ik_res->q_sol[step_ctr + 1] = q_sol;
-        ik_res->infeasible_constraints = infeasible_constraints;
+        q_sol_out->push_back(q_sol);
         return false;
       }
     }
 
     // Sets next IK's initial and bias to current solution.
-    q_prev = q_sol;
     q0 = q_sol;
-
-    ik_res->info[step_ctr + 1] = 1;
-    ik_res->q_sol[step_ctr + 1] = q_sol;
+    q_sol_out->push_back(q_sol);
     step_ctr++;
   }
 
+  DRAKE_DEMAND(static_cast<int>(q_sol_out->size()) == num_steps + 1);
   return true;
 }
 
 bool ConstraintRelaxingIk::SolveIk(
     const IkCartesianWaypoint& waypoint,
     const VectorX<double>& q0,
-    const VectorX<double>& q_nom,
     const Vector3<double>& pos_tol, double rot_tol,
-    VectorX<double>* q_res, std::vector<int>* info,
-    std::vector<std::string>* infeasible_constraints) {
+    VectorX<double>* q_res) {
   DRAKE_DEMAND(q_res);
-  DRAKE_DEMAND(info);
-  DRAKE_DEMAND(infeasible_constraints);
 
-  info->resize(1);
-  std::vector<RigidBodyConstraint*> constraint_array;
-  IKoptions ikoptions(robot_.get());
-  ikoptions.setDebug(true);
+  multibody::InverseKinematics ik(plant_);
 
   // Adds a position constraint.
   Vector3<double> pos_lb = waypoint.pose.translation() - pos_tol;
   Vector3<double> pos_ub = waypoint.pose.translation() + pos_tol;
 
-  WorldPositionConstraint pos_con(robot_.get(), end_effector_body_idx_,
-                                  Vector3<double>::Zero(), pos_lb, pos_ub,
-                                  Vector2<double>::Zero());
+  ik.AddPositionConstraint(
+      plant_.get_body(end_effector_body_idx_).body_frame(),
+      Vector3<double>::Zero(),
+      plant_.world_frame(), pos_lb, pos_ub);
 
-  constraint_array.push_back(&pos_con);
-
-  // Adds a rotation constraint.
-  WorldQuatConstraint quat_con(robot_.get(), end_effector_body_idx_,
-    math::RotationMatrix<double>::ToQuaternionAsVector4(waypoint.pose.linear()),
-    rot_tol, Vector2<double>::Zero());
   if (waypoint.constrain_orientation) {
-    constraint_array.push_back(&quat_con);
+    ik.AddOrientationConstraint(
+        plant_.world_frame(), waypoint.pose.rotation(),
+        plant_.get_body(end_effector_body_idx_).body_frame(),
+        math::RotationMatrixd(), rot_tol);
   }
 
-  inverseKin(robot_.get(), q0, q_nom, constraint_array.size(),
-             constraint_array.data(), ikoptions, q_res, info->data(),
-             infeasible_constraints);
+  const auto result = solvers::Solve(ik.prog(), q0);
+  if (!result.is_success()) {
+    return false;
+  }
 
-  return (*info)[0] == 1;
+  *q_res = result.get_x_val();
+  return true;
 }
 
 }  // namespace planner

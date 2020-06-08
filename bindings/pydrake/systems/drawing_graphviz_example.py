@@ -1,33 +1,25 @@
 import matplotlib.pyplot as plt
 
 from pydrake.common import FindResourceOrThrow
-from pydrake.geometry import (ConnectDrakeVisualizer, SceneGraph)
+from pydrake.geometry import ConnectDrakeVisualizer, SceneGraph
 from pydrake.lcm import DrakeLcm
-from pydrake.multibody.multibody_tree import UniformGravityFieldElement
-from pydrake.multibody.multibody_tree.multibody_plant import MultibodyPlant
-from pydrake.multibody.multibody_tree.parsing import AddModelFromSdfFile
-from pydrake.systems.drawing import plot_system_graphviz
+from pydrake.multibody.parsing import Parser
+from pydrake.multibody.plant import MultibodyPlant
+from pydrake.systems.drawing import plot_graphviz, plot_system_graphviz
 from pydrake.systems.framework import DiagramBuilder
-
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--test",
-                    action='store_true',
-                    help="Causes the script to run without blocking for "
-                         "user input.",
-                    default=False)
-args = parser.parse_args()
 
 file_name = FindResourceOrThrow(
     "drake/examples/multibody/cart_pole/cart_pole.sdf")
 builder = DiagramBuilder()
 scene_graph = builder.AddSystem(SceneGraph())
-cart_pole = builder.AddSystem(MultibodyPlant())
-AddModelFromSdfFile(
-    file_name=file_name, plant=cart_pole, scene_graph=scene_graph)
-cart_pole.AddForceElement(UniformGravityFieldElement([0, 0, -9.81]))
-cart_pole.Finalize(scene_graph)
+cart_pole = builder.AddSystem(MultibodyPlant(0.0))
+cart_pole.RegisterAsSourceForSceneGraph(scene_graph)
+Parser(plant=cart_pole).AddModelFromFile(file_name)
+
+plt.figure()
+plot_graphviz(cart_pole.GetTopologyGraphvizString())
+
+cart_pole.Finalize()
 assert cart_pole.geometry_source_is_registered()
 
 builder.Connect(
@@ -36,13 +28,14 @@ builder.Connect(
 builder.Connect(
     cart_pole.get_geometry_poses_output_port(),
     scene_graph.get_source_pose_port(cart_pole.get_source_id()))
+builder.ExportInput(cart_pole.get_actuation_input_port())
 
 ConnectDrakeVisualizer(builder=builder, scene_graph=scene_graph)
 
 diagram = builder.Build()
 diagram.set_name("graphviz_example")
 
-plot_system_graphviz(diagram)
+plt.figure()
+plot_system_graphviz(diagram, max_depth=2)
 
-if not args.test:
-    plt.show()
+plt.show()

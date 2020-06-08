@@ -6,6 +6,7 @@
 #include <Eigen/Dense>
 #include <gtest/gtest.h>
 
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/systems/framework/test_utilities/scalar_conversion.h"
 #include "drake/systems/primitives/integrator.h"
@@ -29,6 +30,7 @@ class TestVectorSystem : public VectorSystem<double> {
   TestVectorSystem() : VectorSystem<double>(kSize, kSize) {}
 
   // Let test code abuse these by making them public.
+  using VectorSystem<double>::DeclareAbstractState;
   using VectorSystem<double>::DeclareContinuousState;
   using VectorSystem<double>::DeclareDiscreteState;
   using VectorSystem<double>::DeclareAbstractInputPort;
@@ -86,38 +88,6 @@ class TestVectorSystem : public VectorSystem<double> {
     }
   }
 
-  // LeafSystem override.
-  std::unique_ptr<DiscreteValues<double>> AllocateDiscreteState()
-      const override {
-    return prototype_discrete_state_->Clone();
-  }
-
-  // LeafSystem override.
-  std::unique_ptr<AbstractValues> AllocateAbstractState() const override {
-    return prototype_abstract_state_->Clone();
-  }
-
-  // Use the given number of discrete state groups for AllocateDiscreteState;
-  // when this has not been called, there will be no discrete state.
-  void set_prototype_discrete_state_count(int count) {
-    std::vector<std::unique_ptr<BasicVector<double>>> vec;
-    for (int i = 0; i < count; ++i) {
-      vec.emplace_back(std::make_unique<BasicVector<double>>(kSize));
-    }
-    prototype_discrete_state_ =
-        std::make_unique<DiscreteValues<double>>(std::move(vec));
-  }
-
-  // Use a single Value<S>(value) for AllocateAbstractState; when this has not
-  // been called, there will be no abstract state.
-  template <typename S>
-  void set_prototype_abstract_state(const S& value) {
-    std::vector<std::unique_ptr<AbstractValue>> vec;
-    vec.emplace_back(std::move(std::make_unique<Value<S>>(value)));
-    prototype_abstract_state_ =
-        std::make_unique<AbstractValues>(std::move(vec));
-  }
-
   // Testing accessors.
   const Context<double>* get_last_context() const { return last_context_; }
   int get_output_count() const { return output_count_; }
@@ -127,16 +97,11 @@ class TestVectorSystem : public VectorSystem<double> {
   }
 
  private:
-  std::unique_ptr<DiscreteValues<double>> prototype_discrete_state_{
-      std::make_unique<DiscreteValues<double>>()};
-  std::unique_ptr<AbstractValues> prototype_abstract_state_{
-      std::make_unique<AbstractValues>()};
   mutable const Context<double>* last_context_{nullptr};
   mutable int output_count_{0};
   mutable int time_derivatives_count_{0};
   mutable int discrete_variable_updates_count_{0};
 };
-constexpr int TestVectorSystem::kSize;
 
 class VectorSystemTest : public ::testing::Test {
   // Not yet needed, but placeholder for future common code.
@@ -148,20 +113,20 @@ TEST_F(VectorSystemTest, Topology) {
   TestVectorSystem dut;
 
   // One input port.
-  ASSERT_EQ(dut.get_num_input_ports(), 1);
+  ASSERT_EQ(dut.num_input_ports(), 1);
   const InputPort<double>& input_port = dut.get_input_port();
   EXPECT_EQ(input_port.get_data_type(), kVectorValued);
   EXPECT_EQ(input_port.size(), TestVectorSystem::kSize);
 
   // One output port.
-  ASSERT_EQ(dut.get_num_output_ports(), 1);
+  ASSERT_EQ(dut.num_output_ports(), 1);
   const OutputPort<double>& output_port = dut.get_output_port();
   EXPECT_EQ(output_port.get_data_type(), kVectorValued);
   EXPECT_EQ(output_port.size(), TestVectorSystem::kSize);
 
   // No state by default ...
   auto context = dut.CreateDefaultContext();
-  ASSERT_EQ(context->get_num_input_ports(), 1);
+  ASSERT_EQ(context->num_input_ports(), 1);
   EXPECT_TRUE(context->is_stateless());
 
   // ... but subclasses may declare it.
@@ -174,14 +139,14 @@ TEST_F(VectorSystemTest, Topology) {
 TEST_F(VectorSystemTest, TopologyFailFast) {
   {  // A second input.
     TestVectorSystem dut;
-    EXPECT_NO_THROW(dut.CreateDefaultContext());
-    dut.DeclareAbstractInputPort();
+    DRAKE_EXPECT_NO_THROW(dut.CreateDefaultContext());
+    dut.DeclareAbstractInputPort(kUseDefaultName, Value<std::string>{});
     EXPECT_THROW(dut.CreateDefaultContext(), std::exception);
   }
 
   {  // A second output.
     TestVectorSystem dut;
-    EXPECT_NO_THROW(dut.CreateDefaultContext());
+    DRAKE_EXPECT_NO_THROW(dut.CreateDefaultContext());
     dut.DeclareAbstractOutputPort(
         []() { return AbstractValue::Make<int>(0); },  // Dummies.
         [](const ContextBase&, AbstractValue*) {});
@@ -197,24 +162,24 @@ TEST_F(VectorSystemTest, TopologyFailFast) {
     // abstract state in VectorSystem, then it would be okay to write the
     // code and tests to support it.
     TestVectorSystem dut;
-    EXPECT_NO_THROW(dut.CreateDefaultContext());
-    dut.set_prototype_abstract_state<double>(1.0);
+    DRAKE_EXPECT_NO_THROW(dut.CreateDefaultContext());
+    dut.DeclareAbstractState(std::make_unique<Value<double>>(1.0));
     EXPECT_THROW(dut.CreateDefaultContext(), std::exception);
   }
 
   {  // More than one discrete state group.
     TestVectorSystem dut;
-    dut.set_prototype_discrete_state_count(1);
-    EXPECT_NO_THROW(dut.CreateDefaultContext());
-    dut.set_prototype_discrete_state_count(2);
+    dut.DeclareDiscreteState(TestVectorSystem::kSize);
+    DRAKE_EXPECT_NO_THROW(dut.CreateDefaultContext());
+    dut.DeclareDiscreteState(TestVectorSystem::kSize);
     EXPECT_THROW(dut.CreateDefaultContext(), std::exception);
   }
 
   {  // Both continuous and discrete state.
     TestVectorSystem dut;
     dut.DeclareContinuousState(1);
-    EXPECT_NO_THROW(dut.CreateDefaultContext());
-    dut.set_prototype_discrete_state_count(1);
+    DRAKE_EXPECT_NO_THROW(dut.CreateDefaultContext());
+    dut.DeclareDiscreteState(TestVectorSystem::kSize);
     EXPECT_THROW(dut.CreateDefaultContext(), std::exception);
   }
 }
@@ -224,14 +189,12 @@ TEST_F(VectorSystemTest, OutputStateless) {
   TestVectorSystem dut;
   auto context = dut.CreateDefaultContext();
   auto& output_port = dut.get_output_port();
-  std::unique_ptr<AbstractValue> output = output_port.Allocate();
   context->FixInputPort(0, {1.0, 2.0});
-  output_port.Calc(*context, output.get());
+  const auto& output = output_port.Eval(*context);
   EXPECT_EQ(dut.get_output_count(), 1);
   EXPECT_EQ(dut.get_last_context(), context.get());
-  const auto& basic = output->GetValueOrThrow<BasicVector<double>>();
-  EXPECT_EQ(basic.GetAtIndex(0), 1.0);
-  EXPECT_EQ(basic.GetAtIndex(1), 2.0);
+  EXPECT_EQ(output[0], 1.0);
+  EXPECT_EQ(output[1], 2.0);
 
   const auto& input = dut.EvalVectorInput(*context);
   EXPECT_EQ(input.size(), 2);
@@ -247,16 +210,14 @@ TEST_F(VectorSystemTest, OutputContinuous) {
   dut.DeclareContinuousState(TestVectorSystem::kSize);
   auto context = dut.CreateDefaultContext();
   auto& output_port = dut.get_output_port();
-  std::unique_ptr<AbstractValue> output = output_port.Allocate();
   context->FixInputPort(0, {1.0, 2.0});
   context->get_mutable_continuous_state_vector().SetFromVector(
       Eigen::Vector2d::Ones());
-  output_port.Calc(*context, output.get());
+  const auto& output = output_port.Eval(*context);
   EXPECT_EQ(dut.get_output_count(), 1);
   EXPECT_EQ(dut.get_last_context(), context.get());
-  const auto& basic = output->GetValueOrThrow<BasicVector<double>>();
-  EXPECT_EQ(basic.GetAtIndex(0), 2.0);
-  EXPECT_EQ(basic.GetAtIndex(1), 3.0);
+  EXPECT_EQ(output[0], 2.0);
+  EXPECT_EQ(output[1], 3.0);
 
   const auto& state = dut.GetVectorState(*context);
   EXPECT_EQ(state.size(), 2);
@@ -267,19 +228,17 @@ TEST_F(VectorSystemTest, OutputContinuous) {
 // Forwarding of CalcOutput with discrete state.
 TEST_F(VectorSystemTest, OutputDiscrete) {
   TestVectorSystem dut;
-  dut.set_prototype_discrete_state_count(1);
+  dut.DeclareDiscreteState(TestVectorSystem::kSize);
   auto context = dut.CreateDefaultContext();
   auto& output_port = dut.get_output_port();
-  std::unique_ptr<AbstractValue> output = output_port.Allocate();
   context->FixInputPort(0, {1.0, 2.0});
   context->get_mutable_discrete_state(0).SetFromVector(
       Eigen::Vector2d::Ones());
-  output_port.Calc(*context, output.get());
+  const auto& output = output_port.Eval(*context);
   EXPECT_EQ(dut.get_output_count(), 1);
   EXPECT_EQ(dut.get_last_context(), context.get());
-  const auto& basic = output->GetValueOrThrow<BasicVector<double>>();
-  EXPECT_EQ(basic.GetAtIndex(0), 2.0);
-  EXPECT_EQ(basic.GetAtIndex(1), 3.0);
+  EXPECT_EQ(output[0], 2.0);
+  EXPECT_EQ(output[1], 3.0);
 
   // Nothing else weird happened.
   EXPECT_EQ(dut.get_discrete_variable_updates_count(), 0);
@@ -313,8 +272,8 @@ TEST_F(VectorSystemTest, TimeDerivatives) {
   dut.CalcTimeDerivatives(*context, derivatives.get());
   EXPECT_EQ(dut.get_last_context(), context.get());
   EXPECT_EQ(dut.get_time_derivatives_count(), 1);
-  EXPECT_EQ(derivatives->get_vector().GetAtIndex(0), 2.0);
-  EXPECT_EQ(derivatives->get_vector().GetAtIndex(1), 3.0);
+  EXPECT_EQ(derivatives->get_vector()[0], 2.0);
+  EXPECT_EQ(derivatives->get_vector()[1], 3.0);
 
   // Nothing else weird happened.
   EXPECT_EQ(dut.get_discrete_variable_updates_count(), 0);
@@ -333,7 +292,7 @@ TEST_F(VectorSystemTest, DiscreteVariableUpdates) {
   EXPECT_EQ(dut.get_discrete_variable_updates_count(), 0);
 
   // Now we have state, so the VectorSystem base should call our DUT.
-  dut.set_prototype_discrete_state_count(1);
+  dut.DeclareDiscreteState(TestVectorSystem::kSize);
   context = dut.CreateDefaultContext();
   context->FixInputPort(0, {1.0, 2.0});
   context->get_mutable_discrete_state(0).SetFromVector(
@@ -342,8 +301,8 @@ TEST_F(VectorSystemTest, DiscreteVariableUpdates) {
   dut.CalcDiscreteVariableUpdates(*context, discrete_updates.get());
   EXPECT_EQ(dut.get_last_context(), context.get());
   EXPECT_EQ(dut.get_discrete_variable_updates_count(), 1);
-  EXPECT_EQ(discrete_updates->get_vector(0).GetAtIndex(0), 2.0);
-  EXPECT_EQ(discrete_updates->get_vector(0).GetAtIndex(1), 3.0);
+  EXPECT_EQ(discrete_updates->get_vector(0)[0], 2.0);
+  EXPECT_EQ(discrete_updates->get_vector(0)[1], 3.0);
 
   // Nothing else weird happened.
   EXPECT_EQ(dut.get_time_derivatives_count(), 0);
@@ -352,11 +311,9 @@ TEST_F(VectorSystemTest, DiscreteVariableUpdates) {
 
 class NoFeedthroughContinuousTimeSystem : public VectorSystem<double> {
  public:
-  NoFeedthroughContinuousTimeSystem() : VectorSystem<double>(1, 1) {
+  NoFeedthroughContinuousTimeSystem() : VectorSystem<double>(1, 1, false) {
     this->DeclareContinuousState(1);
   }
-
-  optional<bool> DoHasDirectFeedthrough(int, int) const final { return false; }
 
  private:
   void DoCalcVectorOutput(
@@ -403,7 +360,7 @@ TEST_F(VectorSystemTest, NoFeedthroughContinuousTimeSystemTest) {
   // The non-connected input is never evaluated.
   auto context = dut.CreateDefaultContext();
   const auto& output = dut.get_output_port();
-  EXPECT_EQ(output.Eval<BasicVector<double>>(*context).GetAtIndex(0), 0.0);
+  EXPECT_EQ(output.Eval(*context)[0], 0.0);
 }
 
 // Symbolic analysis should be able to determine that the system is not direct
@@ -421,7 +378,7 @@ TEST_F(VectorSystemTest, ImplicitlyNoFeedthroughTest) {
   // The non-connected input is never evaluated.
   auto context = dut.CreateDefaultContext();
   const auto& output = dut.get_output_port();
-  EXPECT_EQ(output.Eval<BasicVector<double>>(*context).GetAtIndex(0), 0.0);
+  EXPECT_EQ(output.Eval(*context)[0], 0.0);
 }
 
 // Derivatives and Output methods still work when input size is zero.
@@ -434,10 +391,10 @@ TEST_F(VectorSystemTest, NoInputContinuousTimeSystemTest) {
   std::unique_ptr<ContinuousState<double>> derivatives =
       dut.AllocateTimeDerivatives();
   dut.CalcTimeDerivatives(*context, derivatives.get());
-  EXPECT_EQ(derivatives->get_vector().GetAtIndex(0), -1.0);
+  EXPECT_EQ(derivatives->get_vector()[0], -1.0);
 
   const auto& output = dut.get_output_port();
-  EXPECT_EQ(output.Eval<BasicVector<double>>(*context).GetAtIndex(0), 1.0);
+  EXPECT_EQ(output.Eval(*context)[0], 1.0);
 
   const auto& input = dut.EvalVectorInput(*context);
   EXPECT_EQ(input.size(), 0);
@@ -471,9 +428,9 @@ TEST_F(VectorSystemTest, NoInputNoOutputDiscreteTimeSystemTest) {
 
   auto discrete_updates = dut.AllocateDiscreteVariables();
   dut.CalcDiscreteVariableUpdates(*context, discrete_updates.get());
-  EXPECT_EQ(discrete_updates->get_vector(0).GetAtIndex(0), 8.0);
+  EXPECT_EQ(discrete_updates->get_vector(0)[0], 8.0);
 
-  EXPECT_EQ(dut.get_num_output_ports(), 0);
+  EXPECT_EQ(dut.num_output_ports(), 0);
 }
 
 /// A system that can use any scalar type: AutoDiff, symbolic form, etc.
@@ -483,7 +440,7 @@ class OpenScalarTypeSystem : public VectorSystem<T> {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(OpenScalarTypeSystem);
 
   explicit OpenScalarTypeSystem(int some_number)
-      : VectorSystem<T>(SystemTypeTag<systems::OpenScalarTypeSystem>{}, 1, 1),
+      : VectorSystem<T>(SystemTypeTag<OpenScalarTypeSystem>{}, 1, 1),
         some_number_(some_number) {}
 
   // Scalar-converting copy constructor.
@@ -575,7 +532,7 @@ TEST_F(VectorSystemTest, MissingMethodsContinuousTimeSystemTest) {
 
   const auto& output = dut.get_output_port();
   DRAKE_EXPECT_THROWS_MESSAGE(
-      output.Eval<BasicVector<double>>(*context), std::exception,
+      output.Eval(*context), std::exception,
       ".*Output.*'output->size.. == 0.*failed.*");
 }
 
@@ -603,7 +560,7 @@ TEST_F(VectorSystemTest, MissingMethodsDiscreteTimeSystemTest) {
 
   const auto& output = dut.get_output_port();
   DRAKE_EXPECT_THROWS_MESSAGE(
-      output.Eval<BasicVector<double>>(*context), std::exception,
+      output.Eval(*context), std::exception,
       ".*Output.*'output->size.. == 0.*failed.*");
 }
 

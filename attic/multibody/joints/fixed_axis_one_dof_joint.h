@@ -9,6 +9,7 @@
 
 #include <Eigen/Core>
 
+#include "drake/attic_warning.h"
 #include "drake/common/drake_assert.h"
 #include "drake/common/eigen_types.h"
 #include "drake/common/text_logging.h"
@@ -208,12 +209,6 @@ class FixedAxisOneDoFJoint : public DrakeJointImpl<Derived> {
   std::string get_position_name(int index) const override {
     if (index != 0) throw std::runtime_error("bad index");
     return DrakeJoint::name_;
-  }
-
-// TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use get_position_name().")
-  std::string getPositionName(int index) const override {
-    return get_position_name(index);
   }
 
   const drake::TwistVector<double>& joint_axis() const { return joint_axis_; }

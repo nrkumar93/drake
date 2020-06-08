@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mosek_solver.h"
 
@@ -23,7 +24,8 @@ GTEST_TEST(MoseklmLicenseFileTest, MoseklmLicenseFileSet) {
   const auto x = program.NewContinuousVariables<1>();
   MosekSolver solver;
 
-  EXPECT_NO_THROW(solver.Solve(program));
+  MathematicalProgramResult result;
+  DRAKE_EXPECT_NO_THROW(solver.Solve(program, {}, {}, &result));
 }
 
 GTEST_TEST(MoseklmLicenseFileTest, MoseklmLicenseFileUnset) {
@@ -40,13 +42,15 @@ GTEST_TEST(MoseklmLicenseFileTest, MoseklmLicenseFileUnset) {
   MosekSolver solver;
 
   try {
-    solver.Solve(program);
+    MathematicalProgramResult result;
+    solver.Solve(program, {}, {}, &result);
     ADD_FAILURE() << "Expected exception of type std::runtime_error.";
-  } catch (const std::runtime_error& err) {
-    EXPECT_EQ(err.what(), std::string("Could not locate MOSEK license file "
-        "because MOSEKLM_LICENSE_FILE environment variable was not set."));
+  } catch (const std::exception& err) {
+    EXPECT_EQ(err.what(), std::string(
+        "drake::solvers::MosekSolver::is_enabled() is false; "
+        "see its documentation for how to enable."));
   } catch (...) {
-    ADD_FAILURE() << "Expected exception of type std::runtime_error.";
+    ADD_FAILURE() << "Expected std::exception.";
   }
 
   const int setenv_result =

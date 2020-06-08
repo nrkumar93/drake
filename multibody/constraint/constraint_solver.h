@@ -64,11 +64,7 @@ namespace constraint {
 ///                   Algorithm and its extension to deal with upper and lower
 ///                   bounds. Mathematical Programming Study, 7, 1978.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following scalar types @p T are provided:
-/// - double
-/// They are already available to link against in the containing library.
+/// @tparam_double_only
 template <typename T>
 class ConstraintSolver {
  public:
@@ -345,11 +341,11 @@ class ConstraintSolver {
   ///           CalcContactForcesInContactFrames(). `cf` will be resized as
   ///           necessary.
   /// @pre Constraint data has been computed.
-  /// @throws a std::runtime_error if the constraint forces cannot be computed
+  /// @throws std::runtime_error if the constraint forces cannot be computed
   ///         (due to, e.g., the effects of roundoff error in attempting to
   ///         solve a complementarity problem); in such cases, it is
   ///         recommended to increase regularization and attempt again.
-  /// @throws a std::logic_error if `cf` is null.
+  /// @throws std::logic_error if `cf` is null.
   void SolveImpactProblem(const ConstraintVelProblemData<T>& problem_data,
                           VectorX<T>* cf) const;
 
@@ -406,9 +402,9 @@ class ConstraintSolver {
   ///           CalcContactForcesInContactFrames(). `cf` will be resized as
   ///           necessary.
   /// @pre Constraint data has been computed.
-  /// @throws a std::runtime_error if the constraint forces cannot be computed
+  /// @throws std::runtime_error if the constraint forces cannot be computed
   ///         (due to, e.g., an "inconsistent" rigid contact configuration).
-  /// @throws a std::logic_error if `cf` is null.
+  /// @throws std::logic_error if `cf` is null.
   void SolveConstraintProblem(const ConstraintAccelProblemData<T>& problem_data,
                               VectorX<T>* cf) const;
 
@@ -1328,17 +1324,17 @@ void ConstraintSolver<T>::SolveImpactProblem(
         max_dot > max(T(1), zz.maxCoeff()) * max(T(1), ww.maxCoeff()) *
             num_vars * npivots * zero_tol))) {
     // Report difficulty
-    SPDLOG_DEBUG(drake::log(), "Unable to solve impacting problem LCP without "
+    DRAKE_LOGGER_DEBUG("Unable to solve impacting problem LCP without "
         "progressive regularization");
-    SPDLOG_DEBUG(drake::log(), "zero tolerance for z/w: {}",
+    DRAKE_LOGGER_DEBUG("zero tolerance for z/w: {}",
         num_vars * npivots * zero_tol);
-    SPDLOG_DEBUG(drake::log(), "Solver reports success? {}", success);
-    SPDLOG_DEBUG(drake::log(), "minimum z: {}", zz.minCoeff());
-    SPDLOG_DEBUG(drake::log(), "minimum w: {}", ww.minCoeff());
-    SPDLOG_DEBUG(drake::log(), "zero tolerance for <z,w>: {}",
+    DRAKE_LOGGER_DEBUG("Solver reports success? {}", success);
+    DRAKE_LOGGER_DEBUG("minimum z: {}", zz.minCoeff());
+    DRAKE_LOGGER_DEBUG("minimum w: {}", ww.minCoeff());
+    DRAKE_LOGGER_DEBUG("zero tolerance for <z,w>: {}",
       max(T(1), zz.maxCoeff()) * max(T(1), ww.maxCoeff()) * num_vars *
       npivots * zero_tol);
-    SPDLOG_DEBUG(drake::log(), "z'w: {}", max_dot);
+    DRAKE_LOGGER_DEBUG("z'w: {}", max_dot);
 
     // Use progressive regularization to solve.
     const int min_exp = -16;      // Minimum regularization factor: 1e-16.
@@ -1351,9 +1347,9 @@ void ConstraintSolver<T>::SolveImpactProblem(
       throw std::runtime_error("Progressively regularized LCP solve failed.");
     } else {
       ww = MM * zz + qq;
-      SPDLOG_DEBUG(drake::log(), "minimum z: {}", zz.minCoeff());
-      SPDLOG_DEBUG(drake::log(), "minimum w: {}", ww.minCoeff());
-      SPDLOG_DEBUG(drake::log(), "z'w: ",
+      DRAKE_LOGGER_DEBUG("minimum z: {}", zz.minCoeff());
+      DRAKE_LOGGER_DEBUG("minimum w: {}", ww.minCoeff());
+      DRAKE_LOGGER_DEBUG("z'w: ",
           (zz.array() * ww.array()).abs().maxCoeff());
     }
   }
@@ -1464,8 +1460,8 @@ void ConstraintSolver<T>::PopulatePackedConstraintForcesFromLcpSolution(
 
       // Transform the impulsive forces to non-impulsive forces.
       lambda = u.tail(num_eq_constraints) / dt;
-      DRAKE_SPDLOG_DEBUG(drake::log(),
-          "Bilateral constraint forces/impulses: {}", lambda.transpose());
+      DRAKE_LOGGER_DEBUG("Bilateral constraint forces/impulses: {}",
+          lambda.transpose());
     }
 
     return;
@@ -1484,11 +1480,11 @@ void ConstraintSolver<T>::PopulatePackedConstraintForcesFromLcpSolution(
   cf->segment(0, num_contacts) = fN;
   cf->segment(num_contacts, num_spanning_vectors) = fD_plus - fD_minus;
   cf->segment(num_contacts + num_spanning_vectors, num_limits) = fL;
-  DRAKE_SPDLOG_DEBUG(drake::log(), "Normal contact forces/impulses: {}",
+  DRAKE_LOGGER_DEBUG("Normal contact forces/impulses: {}",
       fN.transpose());
-  DRAKE_SPDLOG_DEBUG(drake::log(), "Frictional contact forces/impulses: {}",
+  DRAKE_LOGGER_DEBUG("Frictional contact forces/impulses: {}",
       (fD_plus - fD_minus).transpose());
-  DRAKE_SPDLOG_DEBUG(drake::log(), "Generic unilateral constraint "
+  DRAKE_LOGGER_DEBUG("Generic unilateral constraint "
       "forces/impulses: {}", fL.transpose());
 
   // Determine the new velocity and the bilateral constraint forces/
@@ -1519,8 +1515,8 @@ void ConstraintSolver<T>::PopulatePackedConstraintForcesFromLcpSolution(
 
     // Transform the impulsive forces back to non-impulsive forces.
     lambda = u.tail(num_eq_constraints) / dt;
-    DRAKE_SPDLOG_DEBUG(drake::log(), "Bilateral constraint forces/impulses: {}",
-                       lambda.transpose());
+    DRAKE_LOGGER_DEBUG("Bilateral constraint forces/impulses: {}",
+        lambda.transpose());
   }
 }
 

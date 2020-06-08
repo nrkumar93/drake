@@ -48,11 +48,11 @@ setup steps:
     :maxdepth: 1
 
     mac
-    ubuntu_xenial
+    ubuntu
 
 See :ref:`supported configurations <supported-configurations>`
 for the configurations and platforms that Drake officially supports.
-All else being equal, we would recommend developers use Ubuntu Xenial.
+All else being equal, we would recommend developers use Ubuntu Bionic.
 
 .. _build_with_bazel:
 
@@ -66,3 +66,9 @@ full details at:
     :maxdepth: 1
 
     bazel
+
+Historical Note
+===============
+
+Older releases were built around substantial MATLAB support, and are
+described on :ref:`this release notes page <older_releases>`.

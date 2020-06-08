@@ -7,9 +7,9 @@
 #include <utility>
 
 #include "drake/common/drake_copyable.h"
+#include "drake/common/value.h"
 #include "drake/systems/framework/context_base.h"
 #include "drake/systems/framework/framework_common.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace systems {
@@ -56,6 +56,8 @@ class CacheEntry {
   cache entry, given a place to put the value. */
   using CalcCallback = std::function<void(const ContextBase&, AbstractValue*)>;
 
+  // All the nontrivial parameters here are moved to the CacheEntry which is
+  // why they aren't references.
   /** (Advanced) Constructs a cache entry within a System and specifies the
   resources it needs.
 
@@ -71,7 +73,7 @@ class CacheEntry {
   the cache entry. Instead allocation is deferred until the allocator can be
   provided with a complete Context, which cannot occur until the full Diagram
   containing this subsystem has been completed. That way the initial type, size,
-  or value can Context-dependent. The supplied prerequisite tickets are
+  or value can be Context-dependent. The supplied prerequisite tickets are
   interpreted as belonging to the same subsystem that owns this %CacheEntry.
 
   The list of prerequisites cannot be empty -- a cache entry that really has
@@ -83,17 +85,35 @@ class CacheEntry {
   @throws std::logic_error if the prerequisite list is empty.
 
   @see drake::systems::SystemBase::DeclareCacheEntry() */
-  // All the nontrivial parameters here are moved to the CacheEntry which is
-  // why they aren't references.
   CacheEntry(const internal::SystemMessageInterface* owning_system,
              CacheIndex index, DependencyTicket ticket, std::string description,
              AllocCallback alloc_function, CalcCallback calc_function,
              std::set<DependencyTicket> prerequisites_of_calc);
 
-  /** Returns a reference to the list of prerequisites needed by this cache
+  /** Returns a reference to the set of prerequisites needed by this cache
   entry's Calc() function. These are all within the same subsystem that
   owns this %CacheEntry. */
   const std::set<DependencyTicket>& prerequisites() const {
+    return prerequisites_of_calc_;
+  }
+
+  /** (Advanced) Returns a mutable reference to the set of prerequisites needed
+  by this entry's Calc() function. Any tickets in this set are interpreted as
+  referring to prerequisites within the same subsystem that owns this
+  %CacheEntry. Modifications take effect the next time the containing System is
+  asked to create a Context.
+
+  A cache entry should normally be given its complete set of prerequisites
+  at the time it is declared (typically in a System constructor). If
+  possible, defer declaration of cache entries until all their prerequisites
+  have been declared so that all necessary tickets are available. In Systems
+  with complicated extended construction phases it may be awkward or impossible
+  to know all the prerequisites at that time. In that case, consider choosing
+  a comprehensive prerequisite like `all_input_ports_ticket()` that can include
+  as-yet-undeclared prerequisites. If performance requirements preclude that
+  approach, then an advanced user may use this method to add more prerequisites
+  as their tickets become available. */
+  std::set<DependencyTicket>& mutable_prerequisites() {
     return prerequisites_of_calc_;
   }
 
@@ -191,29 +211,43 @@ class CacheEntry {
   }
 
   /** (Debugging) Returns `true` if caching has been disabled for this cache
-  entry. That means Eval() will recalculate even if the entry is marked up
-  to date. */
+  entry in the given `context`. That means Eval() will recalculate even if the
+  entry is marked up to date. */
   bool is_cache_entry_disabled(const ContextBase& context) const {
     return get_cache_entry_value(context).is_cache_entry_disabled();
   }
 
-  /** (Debugging) Disables caching for this cache entry. Eval() will recompute
-  the cached value every time it is invoked, regardless of the state of the
-  out_of_date flag. That should have no effect on any computed results, other
-  than speed. See class documentation for ideas as to what might be wrong if you
-  see a change. Note that the `context` is `const` here; cache entry values
-  are mutable. */
+  /** (Debugging) Disables caching for this cache entry in the given `context`.
+  Eval() will recompute the cached value every time it is invoked, regardless
+  of the state of the out_of_date flag. That should have no effect on any
+  computed results, other than speed. See class documentation for ideas as to
+  what might be wrong if you see a change. Note that the `context` is `const`
+  here; cache entry values are mutable. */
   void disable_caching(const ContextBase& context) const {
     CacheEntryValue& value = get_mutable_cache_entry_value(context);
     value.disable_caching();
   }
 
-  /** (Debugging) Enables caching for this cache entry if it was previously
-  disabled. */
+  /** (Debugging) Enables caching for this cache entry in the given `context`
+  if it was previously disabled. */
   void enable_caching(const ContextBase& context) const {
     CacheEntryValue& value = get_mutable_cache_entry_value(context);
     value.enable_caching();
   }
+
+  /** (Debugging) Marks this cache entry so that the corresponding
+  CacheEntryValue object in any allocated Context is created with its
+  `disabled` flag initially set. This can be useful for debugging when you have
+  observed a difference between cached and non-cached behavior that can't be
+  diagnosed with the runtime disable_caching() method.
+  @see disable_caching() */
+  void disable_caching_by_default() {
+    is_disabled_by_default_ = true;
+  }
+
+  /** (Debugging) Returns the current value of this flag. It is `false` unless
+  a call to `disable_caching_by_default()` has previously been made. */
+  bool is_disabled_by_default() const { return is_disabled_by_default_; }
 
   /** Return the human-readable description for this %CacheEntry. */
   const std::string& description() const { return description_; }
@@ -250,6 +284,24 @@ class CacheEntry {
   a Context. */
   DependencyTicket ticket() const { return ticket_; }
 
+  /** (Advanced) Returns `true` if this cache entry was created without
+  specifying any prerequisites. This can be useful in determining whether
+  the apparent dependencies should be believed, or whether they may just be
+  due to some user's ignorance.
+  @note Currently we can't distinguish between "no prerequisites given"
+  (in which case we default to `all_sources_ticket()`) and "prerequisite
+  specified as `all_sources_ticket()`". Either of those cases makes this
+  method return `true` now, but we intend to change so that _explicit_
+  specification of `all_sources_ticket()` will be considered non-default. So
+  don't depend on the current behavior. */
+  bool has_default_prerequisites() const {
+    // TODO(sherm1) Make this bulletproof with a way to distinguish
+    // "took the default" from "specified the default value".
+    return prerequisites_of_calc_.size() == 1 &&
+           *prerequisites_of_calc_.begin() ==
+               DependencyTicket(internal::kAllSourcesTicket);
+  }
+
  private:
   // Unconditionally update the cache value, which has already been determined
   // to be in need of recomputation (either because it is out of date or
@@ -284,7 +336,7 @@ class CacheEntry {
   template <typename ValueType>
   const ValueType& ExtractValueOrThrow(const AbstractValue& abstract,
                                        const char* api) const {
-    const ValueType* value = abstract.MaybeGetValue<ValueType>();
+    const ValueType* value = abstract.maybe_get_value<ValueType>();
     if (!value)
       ThrowBadValueType<ValueType>(api, abstract);
     return *value;
@@ -312,7 +364,9 @@ class CacheEntry {
   // changes, the cache value must be recalculated. Note that all possible
   // prerequisites are internal to the containing subsystem, so the ticket
   // alone is a unique specification of a prerequisite.
-  const std::set<DependencyTicket> prerequisites_of_calc_;
+  std::set<DependencyTicket> prerequisites_of_calc_;
+
+  bool is_disabled_by_default_{false};
 };
 
 }  // namespace systems

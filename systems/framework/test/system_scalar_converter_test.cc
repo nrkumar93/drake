@@ -49,7 +49,7 @@ class NonSymbolicSystem : public LeafSystem<T> {
     this->DeclareVectorOutputPort(
         BasicVector<T>(1),
         [this](const Context<T>& context, BasicVector<T>* output) {
-          const BasicVector<T>& input = *(this->EvalVectorInput(context, 0));
+          const auto& input = this->get_input_port(0).Eval(context);
           (*output)[0] = test::copysign_int_to_non_symbolic_scalar(
               this->magic(), input[0]);
         });
@@ -225,29 +225,6 @@ GTEST_TEST(SystemScalarConverterTest, TestFromDoubleSystem) {
   // We support all remaining combinations of standard types.
   TestConversionPass<FromDoubleSystem, Expression, double, 1>();
   TestConversionPass<FromDoubleSystem, AutoDiffXd, double, 2>();
-}
-
-GTEST_TEST(SystemScalarConverterTest, TestUserTypes) {
-  // The device under test.
-  SystemScalarConverter dut(SystemTypeTag<AnyToAnySystem>{});
-
-  // We don't (by default) support non-standard types.
-  using AD2 = Eigen::AutoDiffScalar<Eigen::Vector2d>;
-  TestConversionFail<AnyToAnySystem, AD2, double>();
-
-  // The user can opt-in to non-standard types.
-  dut.AddIfSupported<AnyToAnySystem, AD2, double>();
-
-  // Do the conversion.
-  const AnyToAnySystem<double> original{0};
-  const std::unique_ptr<System<AD2>> converted =
-      dut.Convert<AD2, double>(original);
-  EXPECT_TRUE(converted != nullptr);
-
-  // Confirm that the correct type came out.
-  const auto* const downcast =
-      dynamic_cast<const AnyToAnySystem<AD2>*>(converted.get());
-  EXPECT_TRUE(downcast != nullptr);
 }
 
 GTEST_TEST(SystemScalarConverterTest, SubclassMismatch) {

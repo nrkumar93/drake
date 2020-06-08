@@ -54,7 +54,7 @@ void CheckHomomorphism(const function<Expression(const vector<Expression>&)>& f,
                        const Substitution& s) {
   vector<Expression> args1;  // {x_1, ..., x_n}
   vector<Expression> args2;  // {e_1, ..., e_n}
-  for (const pair<Variable, Expression>& p : s) {
+  for (const pair<const Variable, Expression>& p : s) {
     args1.emplace_back(p.first);
     args2.push_back(p.second);
   }
@@ -109,7 +109,7 @@ void CheckHomomorphism(const function<Formula(const vector<Expression>&)>& f,
                        const Substitution& s) {
   vector<Expression> args1;  // {x_1, ..., x_n}
   vector<Expression> args2;  // {e_1, ..., e_n}
-  for (const pair<Variable, Expression>& p : s) {
+  for (const pair<const Variable, Expression>& p : s) {
     args1.emplace_back(p.first);
     args2.push_back(p.second);
   }
@@ -418,6 +418,37 @@ TEST_F(SymbolicSubstitutionTest, UninterpretedFunction) {
   // = uf2(3.0, 4.0)
   EXPECT_PRED2(ExprEqual, uf2.Substitute(s3),
                uninterpreted_function("uf2", {3.0, 4.0}));
+}
+
+TEST_F(SymbolicSubstitutionTest, MatrixWithSubstitution) {
+  Eigen::Matrix<Expression, 2, 2> m;
+  // clang-format off
+  // | x + y + z    x * y * z |
+  // | x / y / z    xʸ * z    |
+  m << x_ + y_ + z_, x_ * y_ * z_,
+       x_ / y_ * z_, pow(x_, y_) * z_;
+  // clang-format on
+  const Substitution subst{{var_x_, 1.0}, {var_y_, 2.0}};
+  const auto substituted{Substitute(m, subst)};
+  EXPECT_PRED2(ExprEqual, substituted(0, 0), m(0, 0).Substitute(subst));
+  EXPECT_PRED2(ExprEqual, substituted(1, 0), m(1, 0).Substitute(subst));
+  EXPECT_PRED2(ExprEqual, substituted(0, 1), m(0, 1).Substitute(subst));
+  EXPECT_PRED2(ExprEqual, substituted(1, 1), m(1, 1).Substitute(subst));
+}
+
+TEST_F(SymbolicSubstitutionTest, MatrixWithVariableAndExpression) {
+  Eigen::Matrix<Expression, 2, 2> m;
+  // clang-format off
+  // | x + y + z    x * y * z |
+  // | x / y / z    xʸ * z    |
+  m << x_ + y_ + z_, x_ * y_ * z_,
+       x_ / y_ * z_, pow(x_, y_) * z_;
+  // clang-format on
+  const auto substituted{Substitute(m, var_x_, 3.0)};
+  EXPECT_PRED2(ExprEqual, substituted(0, 0), m(0, 0).Substitute(var_x_, 3.0));
+  EXPECT_PRED2(ExprEqual, substituted(1, 0), m(1, 0).Substitute(var_x_, 3.0));
+  EXPECT_PRED2(ExprEqual, substituted(0, 1), m(0, 1).Substitute(var_x_, 3.0));
+  EXPECT_PRED2(ExprEqual, substituted(1, 1), m(1, 1).Substitute(var_x_, 3.0));
 }
 
 class ForallFormulaSubstitutionTest : public SymbolicSubstitutionTest {

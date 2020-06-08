@@ -3,16 +3,18 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "drake/common/copyable_unique_ptr.h"
 #include "drake/common/drake_copyable.h"
-#include "drake/common/drake_optional.h"
 #include "drake/common/eigen_types.h"
-#include "drake/multibody/multibody_tree/multibody_tree.h"
-#include "drake/multibody/rigid_body_tree.h"
+#include "drake/math/rigid_transform.h"
+#include "drake/multibody/math/spatial_velocity.h"
+#include "drake/multibody/plant/multibody_plant.h"
 #include "drake/solvers/mathematical_program.h"
 
 namespace drake {
@@ -30,7 +32,7 @@ std::ostream& operator<<(std::ostream& os,
                          const DifferentialInverseKinematicsStatus value);
 
 struct DifferentialInverseKinematicsResult {
-  optional<VectorX<double>> joint_velocities{};
+  std::optional<VectorX<double>> joint_velocities{};
   DifferentialInverseKinematicsStatus status{
       DifferentialInverseKinematicsStatus::kNoSolutionFound};
 };
@@ -77,22 +79,22 @@ class DifferentialInverseKinematicsParameters {
     return gain_E_;
   }
 
-  const optional<double>& get_unconstrained_degrees_of_freedom_velocity_limit()
-      const {
+  const std::optional<double>&
+      get_unconstrained_degrees_of_freedom_velocity_limit() const {
     return unconstrained_degrees_of_freedom_velocity_limit_;
   }
 
-  const optional<std::pair<VectorX<double>, VectorX<double>>>&
+  const std::optional<std::pair<VectorX<double>, VectorX<double>>>&
   get_joint_position_limits() const {
     return q_bounds_;
   }
 
-  const optional<std::pair<VectorX<double>, VectorX<double>>>&
+  const std::optional<std::pair<VectorX<double>, VectorX<double>>>&
   get_joint_velocity_limits() const {
     return v_bounds_;
   }
 
-  const optional<std::pair<VectorX<double>, VectorX<double>>>&
+  const std::optional<std::pair<VectorX<double>, VectorX<double>>>&
   get_joint_acceleration_limits() const {
     return vd_bounds_;
   }
@@ -105,7 +107,7 @@ class DifferentialInverseKinematicsParameters {
   /// @{
   /**
    * Sets timestep to @p dt.
-   * @throws if dt <= 0.
+   * @throws std::exception if dt <= 0.
    */
   void set_timestep(double dt) {
     DRAKE_THROW_UNLESS(dt > 0);
@@ -115,7 +117,7 @@ class DifferentialInverseKinematicsParameters {
   /**
    * Sets the max magnitude of the velocity in the unconstrained degree of
    * freedom to @p limit.
-   * @throws if limit < 0.
+   * @throws std::exception if limit < 0.
    */
   void set_unconstrained_degrees_of_freedom_velocity_limit(double limit) {
     DRAKE_THROW_UNLESS(limit >= 0);
@@ -124,7 +126,7 @@ class DifferentialInverseKinematicsParameters {
 
   /**
    * Sets the nominal joint position.
-   * @throws if @p nominal_joint_position's dimension differs.
+   * @throws std::exception if @p nominal_joint_position's dimension differs.
    */
   void set_nominal_joint_position(
       const Eigen::Ref<const VectorX<double>>& nominal_joint_position) {
@@ -135,7 +137,8 @@ class DifferentialInverseKinematicsParameters {
   /**
    * Sets the end effector gains in the body frame. Gains can be used to
    * specify relative importance among different dimensions.
-   * @throws if any element of @p gain_E is larger than 1 or smaller than 0.
+   * @throws std::exception if any element of @p gain_E is larger than 1 or
+   * smaller than 0.
    */
   void set_end_effector_velocity_gain(const Vector6<double>& gain_E) {
     DRAKE_THROW_UNLESS((gain_E.array() >= 0).all() &&
@@ -147,9 +150,9 @@ class DifferentialInverseKinematicsParameters {
    * Sets the joint position limits.
    * @param q_bounds The first element is the lower bound, and the second is
    * the upper bound.
-   * @throws if the first or second element of @p q_bounds has the wrong
-   * dimension or any element of the second element is smaller than its
-   * corresponding part in the first element.
+   * @throws std::exception if the first or second element of @p q_bounds has
+   * the wrong dimension or any element of the second element is smaller than
+   * its corresponding part in the first element.
    */
   void set_joint_position_limits(
       const std::pair<VectorX<double>, VectorX<double>>& q_bounds) {
@@ -164,9 +167,9 @@ class DifferentialInverseKinematicsParameters {
    * Sets the joint velocity limits.
    * @param q_bounds The first element is the lower bound, and the second is
    * the upper bound.
-   * @throws if the first or second element of @p q_bounds has the wrong
-   * dimension or any element of the second element is smaller than its
-   * corresponding part in the first element.
+   * @throws std::exception if the first or second element of @p q_bounds has
+   * the wrong dimension or any element of the second element is smaller than
+   * its corresponding part in the first element.
    */
   void set_joint_velocity_limits(
       const std::pair<VectorX<double>, VectorX<double>>& v_bounds) {
@@ -181,9 +184,9 @@ class DifferentialInverseKinematicsParameters {
    * Sets the joint acceleration limits.
    * @param q_bounds The first element is the lower bound, and the second is
    * the upper bound.
-   * @throws if the first or second element of @p q_bounds has the wrong
-   * dimension or any element of the second element is smaller than its
-   * corresponding part in the first element.
+   * @throws std::exception if the first or second element of @p q_bounds has
+   * the wrong dimension or any element of the second element is smaller than
+   * its corresponding part in the first element.
    */
   void set_joint_acceleration_limits(
       const std::pair<VectorX<double>, VectorX<double>>& vd_bounds) {
@@ -213,10 +216,10 @@ class DifferentialInverseKinematicsParameters {
   int num_positions_{0};
   int num_velocities_{0};
   VectorX<double> nominal_joint_position_;
-  optional<std::pair<VectorX<double>, VectorX<double>>> q_bounds_{};
-  optional<std::pair<VectorX<double>, VectorX<double>>> v_bounds_{};
-  optional<std::pair<VectorX<double>, VectorX<double>>> vd_bounds_{};
-  optional<double> unconstrained_degrees_of_freedom_velocity_limit_{};
+  std::optional<std::pair<VectorX<double>, VectorX<double>>> q_bounds_{};
+  std::optional<std::pair<VectorX<double>, VectorX<double>>> v_bounds_{};
+  std::optional<std::pair<VectorX<double>, VectorX<double>>> vd_bounds_{};
+  std::optional<double> unconstrained_degrees_of_freedom_velocity_limit_{};
   Vector6<double> gain_E_{Vector6<double>::Ones()};
   double dt_{1};
   std::vector<std::shared_ptr<solvers::LinearConstraint>>
@@ -224,11 +227,41 @@ class DifferentialInverseKinematicsParameters {
 };
 
 /**
- * Computes a generalized velocity v, s.t. J * v has the same direction as
- * V, and the difference between |V| and |J * v| is minimized while all
+ * Computes a generalized velocity v_next, via the following
+ * MathematicalProgram:
+ *
+ *   min_{v_next,alpha}   100 * | alpha - |V| |^2
+ *                        // iff J.rows() < J.cols(), then
+ *                          + | q_current + v_next*dt - q_nominal |^2
+ *
+ *   s.t. J*v_next = alpha * V / |V|  // J*v_next has the same direction as V
+ *        joint_lim_min <= q_current + v_next*dt <= joint_lim_max
+ *        joint_vel_lim_min <= v_next <= joint_vel_lim_max
+ *        joint_accel_lim_min <= (v_next - v_current)/dt <=
+ *          joint_accel_lim_max
+ *        for all i > J.rows(),
+ *          -unconstrained_vel_lim <= S.col(i)' v_next <= unconstrained_vel_lim
+ *          where J = UΣS' is the SVD, with the singular values in decreasing
+ *          order.  Note that the constraint is imposed on each column
+ *          independently.
+ *
+ *        and any additional linear constraints added via
+ *          AddLinearVelocityConstraint() in the
+ *          DifferentialInverseKinematicsParameters.
+ *   where J.rows() == V.size() and
+ *   J.cols() == v_current.size() == q_current.size() == v_next.size().  V
+ *   can have any size, with each element representing a constraint on the
+ *   solution (6 constraints specifying an end-effector pose is typical, but
+ *   not required).
+ *
+ * Intuitively, this finds a v_next such that J*v_next is in the same direction
+ * as V, and the difference between |V| and |J * v_next| is minimized while all
  * constraints in @p parameters are satisfied as well. If the problem is
- * redundant, a secondary objective to minimize |q_current + v * dt - q_nominal|
- * is added to the problem. It is possible that the solver is unable to find
+ * redundant, a secondary objective to minimize
+ *   |q_current + v_next * dt - q_nominal|
+ * is added to the problem.
+ *
+ * It is possible that the solver is unable to find
  * such a generalized velocity while not violating the constraints, in which
  * case, status will be set to kStuck in the returned
  * DifferentialInverseKinematicsResult.
@@ -236,7 +269,8 @@ class DifferentialInverseKinematicsParameters {
  * @param v_current The current generalized position.
  * @param V Desired spatial velocity. It must have the same number of rows as
  * @p J.
- * @param J Geometric Jacobian. It must have the same number of rows as @p V.
+ * @param J Jacobian with respect to generalized velocities v.
+ * It must have the same number of rows as @p V.
  * J * v need to represent the same spatial velocity as @p V.
  * @param parameters Collection of various problem specific constraints and
  * constants.
@@ -254,58 +288,13 @@ DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
  * A wrapper over
  * DoDifferentialInverseKinematics(q_current, v_current, V, J, params)
  * that tracks frame E's spatial velocity.
- * q_current and v_current are taken from @p cache. V is computed by first
- * transforming @p V_WE to V_WE_E, then taking the element-wise product between
- * V_WE_E and the gains (specified in frame E) in @p parameters, and only
- * selecting the non zero elements. J is computed similarly.
- * @param robot Kinematic tree.
- * @param cache Kinematic cache build from the current generalized position and
- * velocity.
- * @param V_WE_desired Desired world frame spatial velocity of @p frame_E.
- * @param frame_E End effector frame.
- * @param parameters Collection of various problem specific constraints and
- * constants.
- * @return If the solver successfully finds a solution, joint_velocities will
- * be set to v, otherwise it will be nullopt.
- */
-DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
-    const RigidBodyTree<double>& robot, const KinematicsCache<double>& cache,
-    const Vector6<double>& V_WE_desired, const RigidBodyFrame<double>& frame_E,
-    const DifferentialInverseKinematicsParameters& parameters);
-
-/**
- * A wrapper over
- * DoDifferentialInverseKinematics(robot, cache, V_WE_desired, frame_E, params)
- * that tracks frame E's pose in the world frame.
- * q_current and v_current are taken from @p cache. V_WE is computed by
- * ComputePoseDiffInCommonFrame(X_WE, X_WE_desired) / dt, where X_WE is computed
- * from @p cache, and dt is taken from @p parameters.
- * @param robot Robot model.
- * @param cache KinematiCache built from the current generalized position and
- * velocity.
- * @param X_WE_desired Desired pose of @p frame_E in the world frame.
- * @param frame_E End effector frame.
- * @param parameters Collection of various problem specific constraints and
- * constants.
- * @return If the solver successfully finds a solution, joint_velocities will
- * be set to v, otherwise it will be nullopt.
- */
-DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
-    const RigidBodyTree<double>& robot, const KinematicsCache<double>& cache,
-    const Isometry3<double>& X_WE_desired,
-    const RigidBodyFrame<double>& frame_E,
-    const DifferentialInverseKinematicsParameters& parameters);
-
-/**
- * A wrapper over
- * DoDifferentialInverseKinematics(q_current, v_current, V, J, params)
- * that tracks frame E's spatial velocity.
  * q_current and v_current are taken from @p context. V is computed by first
  * transforming @p V_WE to V_WE_E, then taking the element-wise product between
  * V_WE_E and the gains (specified in frame E) in @p parameters, and only
  * selecting the non zero elements. J is computed similarly.
- * @param robot A MultibodyTree model.
- * @param context Contains the current generalized position and velocity.
+ * @param robot A MultibodyPlant model.
+ * @param context Must be the Context of the MultibodyPlant. Contains the
+ * current generalized position and velocity.
  * @param V_WE_desired Desired world frame spatial velocity of @p frame_E.
  * @param frame_E End effector frame.
  * @param parameters Collection of various problem specific constraints and
@@ -314,7 +303,7 @@ DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
  * be set to v, otherwise it will be nullopt.
  */
 DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
-    const multibody::MultibodyTree<double>& robot,
+    const multibody::MultibodyPlant<double>& robot,
     const systems::Context<double>& context,
     const Vector6<double>& V_WE_desired,
     const multibody::Frame<double>& frame_E,
@@ -327,8 +316,9 @@ DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
  * q_current and v_current are taken from @p cache. V_WE is computed by
  * ComputePoseDiffInCommonFrame(X_WE, X_WE_desired) / dt, where X_WE is computed
  * from @p context, and dt is taken from @p parameters.
- * @param robot A MultibodyTree model.
- * @param context Contains the current generalized position and velocity.
+ * @param robot A MultibodyPlant model.
+ * @param context Must be the Context of the MultibodyPlant. Contains the
+ * current generalized position and velocity.
  * @param X_WE_desired Desired pose of @p frame_E in the world frame.
  * @param frame_E End effector frame.
  * @param parameters Collection of various problem specific constraints and
@@ -337,11 +327,23 @@ DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
  * be set to v, otherwise it will be nullopt.
  */
 DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
-    const multibody::MultibodyTree<double>& robot,
+    const multibody::MultibodyPlant<double>& robot,
     const systems::Context<double>& context,
     const Isometry3<double>& X_WE_desired,
     const multibody::Frame<double>& frame_E,
     const DifferentialInverseKinematicsParameters& parameters);
+
+#ifndef DRAKE_DOXYGEN_CXX
+namespace internal {
+DifferentialInverseKinematicsResult DoDifferentialInverseKinematics(
+    const Eigen::Ref<const VectorX<double>>&,
+    const Eigen::Ref<const VectorX<double>>&,
+    const math::RigidTransform<double>&,
+    const Eigen::Ref<const Matrix6X<double>>&,
+    const multibody::SpatialVelocity<double>&,
+    const DifferentialInverseKinematicsParameters&);
+}  // namespace internal
+#endif
 
 }  // namespace planner
 }  // namespace manipulation

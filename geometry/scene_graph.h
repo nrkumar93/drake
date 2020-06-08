@@ -26,9 +26,6 @@ namespace geometry {
 class GeometryInstance;
 
 template <typename T>
-class GeometryContext;
-
-template <typename T>
 class QueryObject;
 
 /** SceneGraph serves as the nexus for all geometry (and geometry-based
@@ -39,21 +36,28 @@ class QueryObject;
  interface for registering the geometry, updating its position based on the
  current context, and performing geometric queries.
 
+ @system{SceneGraph,
+   @input_port{source_pose{0}} @input_port{...} @input_port{source_pose{N-1}},
+   @output_port{lcm_visualization} @output_port{query}
+ }
+
  Only registered "geometry sources" can introduce geometry into %SceneGraph.
  Geometry sources will typically be other leaf systems, but, in the case of
  _anchored_ (i.e., stationary) geometry, it could also be some other block of
  code (e.g., adding a common ground plane with which all systems' geometries
  interact). For dynamic geometry (geometry whose pose depends on a Context), the
  geometry source must also provide pose values for all of the geometries the
- source owns, via a port connection on %SceneGraph.
+ source owns, via a port connection on %SceneGraph. For N geometry sources,
+ the %SceneGraph instance will have N pose input ports.
 
  The basic workflow for interacting with %SceneGraph is:
-   - Register as a geometry source, acquiring a unique SourceId.
-   - Register geometry (anchored and dynamic) with the system.
-   - Connect source's geometry output ports to the corresponding %SceneGraph
-     input ports.
-     - Implement appropriate `Calc*` methods on the geometry output ports to
-       update geometry pose values.
+
+ - Register as a geometry source, acquiring a unique SourceId.
+ - Register geometry (anchored and dynamic) with the system.
+ - Connect source's geometry output ports to the corresponding %SceneGraph
+   input ports.
+   - Implement appropriate `Calc*` methods on the geometry output ports to
+     update geometry pose values.
 
  @section geom_sys_inputs Inputs
  @cond
@@ -73,8 +77,8 @@ class QueryObject;
  FramePoseVector. For each registered frame, this "pose vector" maps the
  registered FrameId to a pose value. All registered frames must be accounted
  for and only frames registered by a source can be included in its output port.
- See the details in FrameKinematicsVector for details on how to allocate and
- calculate this port.
+ See the details in FrameKinematicsVector for details on how to provide values
+ for this port.
 
  @section geom_sys_outputs Outputs
 
@@ -180,21 +184,35 @@ class QueryObject;
 
  Failure to meet these requirements will lead to a run-time error.
 
+ @section geom_model_vs_context Model versus Context
+
+ Many (and eventually all) methods that configure the population of SceneGraph
+ have two variants that differ by whether they accept a mutable Context or not.
+ When no Context is provided, _this_ %SceneGraph instance's underlying model is
+ modified. When the %SceneGraph instance allocates a context, its model is
+ copied into that context.
+
+ The second variant causes %SceneGraph to modify the data stored in the provided
+ Context to be modified _instead of the internal model_.
+
+ The two interfaces _can_ be used interchangeably. However, modifications to
+ `this` %SceneGraph's underlying model will _not_ affect previously allocated
+ Context instances. A new Context should be allocated after modifying the
+ model.
+
+ @note In this initial version, the only methods with the Context-modifying
+ variant are those methods that _do not_ change the the semantics of the input
+ or output ports. Modifications that make such changes must be coordinated
+ across systems.
+ <!-- TODO(SeanCurtis-TRI): Add context-modifying variants of all methods. -->
+
  @cond
  // TODO(SeanCurtis-TRI): Future work which will require add'l documentation:
  //   - velocity kinematics.
  //   - Finalizing API for topology changes at discrete events.
  @endcond
 
- @tparam T The scalar type. Must be a valid Eigen scalar.
-
- Instantiated templates for the following kinds of T's are provided:
- - double
- - AutoDiffXd
-
- They are already available to link against in the containing library.
- No other values for T are currently supported.
-
+ @tparam_nonsymbolic_scalar
  @ingroup systems
  */
 template <typename T>
@@ -202,10 +220,11 @@ class SceneGraph final : public systems::LeafSystem<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(SceneGraph)
 
+  /** Constructs a default (empty) scene graph. */
   SceneGraph();
 
   /** Constructor used for scalar conversions. It should only be used to convert
-   _from_ double _to_ other scalar types. */
+   _from_ double _to_ other scalar types.  */
   template <typename U>
   explicit SceneGraph(const SceneGraph<U>& other);
 
@@ -220,43 +239,45 @@ class SceneGraph final : public systems::LeafSystem<T> {
    the inputs associated with that source. Failure to do so will be treated as
    a runtime error during the evaluation of %SceneGraph. %SceneGraph
    will detect that frames have been registered but no values have been
-   provided. */
+   provided.  */
   //@{
 
-  /** Registers a new source to the geometry system. The caller must save the
-   returned SourceId; it is the token by which all other operations on the
+  /** Registers a new, named source to the geometry system. The caller must save
+   the returned SourceId; it is the token by which all other operations on the
    geometry world are conducted.
 
    This source id can be used to register arbitrary _anchored_ geometry. But if
    dynamic geometry is registered (via RegisterGeometry/RegisterFrame), then
    the context-dependent pose values must be provided on an input port.
    See get_source_pose_port().
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
    @param name          The optional name of the source. If none is provided
-                        (or the empty string) a unique name will be defined by
+                        (or the empty string) a default name will be defined by
                         SceneGraph's logic.
-   @throws std::logic_error if a context has already been allocated for this
-                            %SceneGraph.
-   @see GeometryState::RegisterNewSource() */
+   @throws std::logic_error if the name is not unique.  */
   SourceId RegisterSource(const std::string& name = "");
 
   /** Reports if the given source id is registered.
-   @param id       The id of the source to query. */
+   @param id       The id of the source to query.  */
   bool SourceIsRegistered(SourceId id) const;
 
   /** Given a valid source `id`, returns a _pose_ input port associated
    with that `id`. This port is used to communicate _pose_ data for registered
    frames.
-   @throws  std::logic_error if the source_id is _not_ recognized. */
+   @throws std::logic_error if the source_id is _not_ recognized.  */
   const systems::InputPort<T>& get_source_pose_port(SourceId id) const;
 
   /** Returns the output port which produces the PoseBundle for LCM
-   communication to drake visualizer. */
+   communication to drake visualizer.  */
   const systems::OutputPort<T>& get_pose_bundle_output_port() const {
     return systems::System<T>::get_output_port(bundle_port_index_);
   }
 
   /** Returns the output port which produces the QueryObject for performing
-   geometric queries. */
+   geometric queries.  */
   const systems::OutputPort<T>& get_query_output_port() const {
     return systems::System<T>::get_output_port(query_port_index_);
   }
@@ -265,59 +286,77 @@ class SceneGraph final : public systems::LeafSystem<T> {
 
   /** @name             Topology Manipulation
    Topology manipulation consists of changing the data contained in the world.
-   This includes registering a new geometry source, adding or
-   removing frames, and adding or removing geometries.
+   This includes registering a new geometry source, adding frames, adding or
+   removing geometries, modifying geometry properties, etc.
 
-   Currently, the topology can only be manipulated during initialization.
-   Eventually, the API will expand to include modifications of the topology
-   during discrete updates.
+   The work flow for adding geometry to the SceneGraph is as follows:
 
-   The initialization phase begins with the instantiation of a %SceneGraph
-   and ends when a context is allocated by the %SceneGraph instance. This is
-   the only phase when geometry sources can be registered with %SceneGraph.
-   Once a source is registered, it can register frames and geometries. Any
-   frames and geometries registered during this phase become part of the
-   _default_ context state for %SceneGraph and calls to
-   CreateDefaultContext() will produce identical contexts.
+   - A geometry source registers itself with %SceneGraph (via RegisterSource()).
+   - The geometry source can then immediately register "anchored" geometry --
+     geometry that is affixed to the world frame. These geometries will never
+     move.
+   - For geometries that need to move based on the source's state, the
+     geometry source must first register a GeometryFrame. In fact, geometries
+     never move directly; it is the frames to which they are affixed that move.
+     A geometry source can register a frame via the RegisterFrame() methods.
+   - Once a frame has been registered, the geometry source can register
+     geometries that are rigidly affixed to that frame (or, figuratively
+     speaking, "hung" on that frame). The geometry is immovably posed in that
+     frame and assigned various properties. The geometry is registered via calls
+     to the RegisterGeometry() methods.
 
-   Every geometry must ultimately be associated with a parent frame.
-   The position of every geometry in the world depends on a hierarchy of frames
-   between it and the world. The pose of a geometry is described relative
-   to its parent (a frame or another geometry). That parent may, in turn, also
-   have a parent. So, the position of a particular geometry in the world frame
-   depends on all of its ancestors which lie between it and the world frame. The
-   act of assigning a frame or geometry as a child to another frame or geometry
-   (as appropriate) and defining its pose, is referred to colloquially has
-   "hanging" it on the parent.
+   %SceneGraph has a concept of "ownership" that is separate from the C++
+   notion of ownership. In this case, %SceneGraph protects geometry and frames
+   registered by one source from being modified by another source. All methods
+   that change the world are associated with the SourceId of the geometry source
+   requesting the change. One source cannot "hang" geometry onto a frame (or
+   geometry) that belongs to another source. However, all sources have read
+   access to all geometries in the world. For example, queries will return
+   GeometryId values that span all sources and the properties of the associated
+   geometries can be queried by arbitrary sources.
 
-   Geometry sources can only hang frames or geometries onto other frames and/or
-   geometries that it "owns".
-   */
+   That said, if one source _chooses_ to share its SourceId externally, then
+   arbitrary code can use that SourceId to modify the geometry resources that
+   are associated with that SourceId.
+
+   @note There are no Context-modifying variants for source or frame
+   registration yet, as these methods modify the port semantics.  */
   //@{
 
-  /** Registers a new frame F on for this source. This hangs frame F on the
+  /** Registers a new frame F for this source. This hangs frame F on the
    world frame (W). Its pose is defined relative to the world frame (i.e,
    `X_WF`). Returns the corresponding unique frame id.
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
    @param source_id     The id for the source registering the frame.
-   @param frame         The definition of the frame to add.
-   @returns  A newly allocated frame id.
-   @throws std::logic_error  If the `source_id` does _not_ map to a registered
-                             source or if a context has been allocated. */
+   @param frame         The frame to register.
+   @returns A unique identifier for the added frame.
+   @throws std::logic_error  if a) the `source_id` does _not_ map to a
+                             registered source, or
+                             b) `frame` has an id that has already been
+                             registered.  */
   FrameId RegisterFrame(SourceId source_id, const GeometryFrame& frame);
 
   /** Registers a new frame F for this source. This hangs frame F on another
    previously registered frame P (indicated by `parent_id`). The pose of the new
    frame is defined relative to the parent frame (i.e., `X_PF`).  Returns the
    corresponding unique frame id.
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
    @param source_id    The id for the source registering the frame.
    @param parent_id    The id of the parent frame P.
    @param frame        The frame to register.
-   @returns  A newly allocated frame id.
-   @throws std::logic_error  1. If the `source_id` does _not_ map to a
+   @returns A unique identifier for the added frame.
+   @throws std::logic_error  if a) the `source_id` does _not_ map to a
                              registered source,
-                             2. If the `parent_id` does _not_ map to a known
+                             b) the `parent_id` does _not_ map to a known
                              frame or does not belong to the source, or
-                             3. a context has been allocated. */
+                             c) `frame` has an id that has already been
+                             registered.  */
   FrameId RegisterFrame(SourceId source_id, FrameId parent_id,
                         const GeometryFrame& frame);
 
@@ -326,19 +365,31 @@ class SceneGraph final : public systems::LeafSystem<T> {
    geometry is defined in a fixed pose relative to F (i.e., `X_FG`).
    Returns the corresponding unique geometry id.
 
+   Roles will be assigned to the registered geometry if the corresponding
+   GeometryInstance `geometry` has had properties assigned.
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
    @param source_id   The id for the source registering the geometry.
    @param frame_id    The id for the frame F to hang the geometry on.
    @param geometry    The geometry G to affix to frame F.
    @return A unique identifier for the added geometry.
-   @throws std::logic_error  1. the `source_id` does _not_ map to a registered
-                             source,
-                             2. the `frame_id` doesn't belong to the source,
-                             3. the `geometry` is equal to `nullptr`,
-                             4. a context has been allocated, or
-                             5. the geometry's name doesn't satisfy the
+   @throws std::logic_error  if a) the `source_id` does _not_ map to a
+                             registered source,
+                             b) the `frame_id` doesn't belong to the source,
+                             c) the `geometry` is equal to `nullptr`, or
+                             d) the geometry's name doesn't satisfy the
                              requirements outlined in GeometryInstance.  */
   GeometryId RegisterGeometry(SourceId source_id, FrameId frame_id,
                               std::unique_ptr<GeometryInstance> geometry);
+
+  /** systems::Context-modifying variant of RegisterGeometry(). Rather than
+   modifying %SceneGraph's model, it modifies the copy of the model stored in
+   the provided context.  */
+  GeometryId RegisterGeometry(systems::Context<T>* context, SourceId source_id,
+                              FrameId frame_id,
+                              std::unique_ptr<GeometryInstance> geometry) const;
 
   /** Registers a new geometry G for this source. This hangs geometry G on a
    previously registered geometry P (indicated by `geometry_id`). The pose of
@@ -346,43 +397,295 @@ class SceneGraph final : public systems::LeafSystem<T> {
    `X_PG`). By induction, this geometry is effectively rigidly affixed to the
    frame that P is affixed to. Returns the corresponding unique geometry id.
 
+   Roles will be assigned to the registered geometry if the corresponding
+   GeometryInstance `geometry` has had properties assigned.
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
    @param source_id    The id for the source registering the geometry.
    @param geometry_id  The id for the parent geometry P.
    @param geometry     The geometry G to add.
    @return A unique identifier for the added geometry.
-   @throws std::logic_error 1. the `source_id` does _not_ map to a registered
+   @throws std::logic_error if a) the `source_id` does _not_ map to a registered
                             source,
-                            2. the `geometry_id` doesn't belong to the source,
-                            3. the `geometry` is equal to `nullptr`,
-                            4. a context has been allocated, or
-                            5. the geometry's name doesn't satisfy the
+                            b) the `geometry_id` doesn't belong to the source,
+                            c) the `geometry` is equal to `nullptr`, or
+                            d) the geometry's name doesn't satisfy the
                             requirements outlined in GeometryInstance.  */
   GeometryId RegisterGeometry(SourceId source_id, GeometryId geometry_id,
                               std::unique_ptr<GeometryInstance> geometry);
 
+  /** systems::Context-modifying variant of RegisterGeometry(). Rather than
+   modifying %SceneGraph's model, it modifies the copy of the model stored in
+   the provided context.  */
+  GeometryId RegisterGeometry(systems::Context<T>* context, SourceId source_id,
+                              GeometryId geometry_id,
+                              std::unique_ptr<GeometryInstance> geometry) const;
+
   /** Registers a new _anchored_ geometry G for this source. This hangs geometry
    G from the world frame (W). Its pose is defined in that frame (i.e., `X_WG`).
    Returns the corresponding unique geometry id.
+
+   Roles will be assigned to the registered geometry if the corresponding
+   GeometryInstance `geometry` has had properties assigned.
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
    @param source_id     The id for the source registering the frame.
    @param geometry      The anchored geometry G to add to the world.
-   @returns The index for the added geometry.
-   @throws std::logic_error  1. the `source_id` does _not_ map to a registered
-                             source,
-                             2. a context has been allocated, or
-                             3. the geometry's name doesn't satisfy the
+   @return A unique identifier for the added geometry.
+   @throws std::logic_error  if a) the `source_id` does _not_ map to a
+                             registered source or
+                             b) the geometry's name doesn't satisfy the
                              requirements outlined in GeometryInstance.  */
   GeometryId RegisterAnchoredGeometry(
       SourceId source_id, std::unique_ptr<GeometryInstance> geometry);
 
+  /** Removes the given geometry G (indicated by `geometry_id`) from the given
+   source's registered geometries. All registered geometries hanging from
+   this geometry will also be removed.
+
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
+   @param source_id   The identifier for the owner geometry source.
+   @param geometry_id The identifier of the geometry to remove (can be dynamic
+                      or anchored).
+   @throws std::logic_error  if a) the `source_id` does _not_ map to a
+                             registered source,
+                             b) the `geometry_id` does not map to a valid
+                             geometry, or
+                             c) the `geometry_id` maps to a geometry that does
+                             not belong to the indicated source.  */
+  void RemoveGeometry(SourceId source_id, GeometryId geometry_id);
+
+  /** systems::Context-modifying variant of RemoveGeometry(). Rather than
+   modifying %SceneGraph's model, it modifies the copy of the model stored in
+   the provided context.  */
+  void RemoveGeometry(systems::Context<T>* context, SourceId source_id,
+                      GeometryId geometry_id) const;
+
   //@}
 
-  /** Reports the identifier for the world frame. */
+  /** @name     Managing RenderEngine instances      */
+  //@{
+
+  /** Adds a new render engine to this %SceneGraph. The %SceneGraph owns the
+   render engine. The render engine's name should be referenced in the
+   @ref render::CameraProperties "CameraProperties" provided in the render
+   queries (see QueryObject::RenderColorImage() as an example).
+
+   There is no restriction on when a renderer is added relative to geometry
+   registration and role assignment. Given a representative sequence of
+   registration and perception role assignment, the addition of the renderer
+   can be introduced anywhere in the sequence and the end result would be
+   the same.
+
+   ```
+   GeometryId id1 = scene_graph.RegisterGeometry(source_id, ...);
+   scene_graph.AssignRole(source_id, id1, PerceptionProperties());
+   GeometryId id2 = scene_graph.RegisterGeometry(source_id, ...);
+   scene_graph.AssignRole(source_id, id2, PerceptionProperties());
+   GeometryId id3 = scene_graph.RegisterGeometry(source_id, ...);
+   scene_graph.AssignRole(source_id, id3, PerceptionProperties());
+   ```
+
+   @param name      The unique name of the renderer.
+   @param renderer  The `renderer` to add.
+   @throws std::logic_error if the name is not unique.  */
+  void AddRenderer(std::string name,
+                   std::unique_ptr<render::RenderEngine> renderer);
+
+  /** Reports if this %SceneGraph has a renderer registered to the given name.
+   */
+  bool HasRenderer(const std::string& name) const;
+
+  /** Reports the number of renderers registered to this %SceneGraph.  */
+  int RendererCount() const;
+
+  /** Reports the names of all registered renderers.  */
+  std::vector<std::string> RegisteredRendererNames() const;
+
+  //@}
+
+  /** @name     Managing geometry roles
+
+   Geometries _must_ be assigned one or more *roles* before they have an effect
+   on SceneGraph computations (see @ref geometry_roles for details). These
+   methods provide the ability to manage roles for a registered geometry.
+
+   The `AssignRole()` methods provide the mechanism for initially assigning a
+   role (via its corresponding properties) and, subsequently, modifying those
+   properties.
+
+   <h4>Assigning roles for the first time</h4>
+
+   If a geometry has not had a particular role assigned to it, the role is
+   assigned by the following call:
+
+   @code
+   scene_graph.AssignRole(source_id, geometry_id, properties);
+   @endcode
+
+   The role is inferred by the type of properties provided. An exception will
+   be thrown if the geometry has already had the implied role assigned to it.
+
+   <h4>Changing the properties for an assigned role</h4>
+
+   If  the geometry has previously been assigned a role, the properties for
+   that role can be modified with the following code (using ProximityProperties
+   as an example):
+
+   @code
+   ProximityProperties props;
+   props.AddProperty(....);  // Populate the properties.
+   scene_graph.AssignRole(source_id, geometry_id, props, RoleAssign::kReplace);
+   @endcode
+
+   An exception will be thrown if the geometry _has not_ already had a role
+   assigned.
+
+   If the goal is to modify the properties that have already been assigned, we
+   recommend the following (again, using ProximityProperties as an example):
+
+   @code
+   const ProximityProperties* old_props =
+       scene_graph.model_inspector().GetProximityProperties(geometry_id);
+   DRAKE_DEMAND(old_props);
+   ProximityProperties new_props(*old_props);
+   new_props.AddProperty(...);  // add additional properties.
+   scene_graph.AssignRole(source_id, geometry_id, new_props,
+                          RoleAssign::kReplace);
+   @endcode
+
+   Calling `AssignRole()` with an empty set of properties will *not* remove the
+   role; it will simply eliminate possibly necessary properties. To remove
+   the role completely, call `RemoveRole()`.
+
+   @warning Currently, only __proximity__ properties can be updated via this
+   mechanism. Updating illustration and perception will throw an exception (to
+   be implemented in the near future).
+
+   All invocations of `AssignRole()` will throw an exception if:
+
+     - the source id is invalid.
+     - the geometry id is invalid.
+     - the geometry id is not owned by the given source id.
+     - Another geometry with the same name, affixed to the same frame, already
+       has the role.
+
+   <h4>Removing roles</h4>
+
+   Calling `RemoveRole()` will remove the properties and _role_ entirely.
+
+   These methods include the model- and context-modifying variants.  */
+  //@{
+
+  /** Assigns the proximity role to the geometry indicated by `geometry_id`.
+   @pydrake_mkdoc_identifier{proximity_direct}
+   */
+  void AssignRole(SourceId source_id, GeometryId geometry_id,
+                  ProximityProperties properties,
+                  RoleAssign assign = RoleAssign::kNew);
+
+  /** systems::Context-modifying variant of
+   @ref AssignRole(SourceId,GeometryId,ProximityProperties) "AssignRole()" for
+   proximity properties. Rather than modifying %SceneGraph's model, it modifies
+   the copy of the model stored in the provided context.
+   @pydrake_mkdoc_identifier{proximity_context}
+   */
+  void AssignRole(systems::Context<T>* context, SourceId source_id,
+                  GeometryId geometry_id, ProximityProperties properties,
+                  RoleAssign assign = RoleAssign::kNew) const;
+
+  /** Assigns the perception role to the geometry indicated by `geometry_id`.
+
+   By default, a geometry with a perception role will be reified by all
+   render::RenderEngine instances. This behavior can be changed. Renderers can
+   be explicitly whitelisted via the ('renderer', 'accepting') perception
+   property. Its type is std::set<std::string> and it contains the names of
+   all the renderers that _may_ reify it. If no property is defined (or an
+   empty set is given), then the default behavior of all renderers attempting
+   to reify it will be restored.
+   @pydrake_mkdoc_identifier{perception_direct}
+   */
+  void AssignRole(SourceId source_id, GeometryId geometry_id,
+                  PerceptionProperties properties,
+                  RoleAssign assign = RoleAssign::kNew);
+
+  /** systems::Context-modifying variant of
+   @ref AssignRole(SourceId,GeometryId,PerceptionProperties) "AssignRole()" for
+   perception properties. Rather than modifying %SceneGraph's model, it modifies
+   the copy of the model stored in the provided context.
+   @pydrake_mkdoc_identifier{perception_context}
+   */
+  void AssignRole(systems::Context<T>* context, SourceId source_id,
+                  GeometryId geometry_id, PerceptionProperties properties,
+                  RoleAssign assign = RoleAssign::kNew) const;
+
+  /** Assigns the illustration role to the geometry indicated by `geometry_id`.
+   @pydrake_mkdoc_identifier{illustration_direct}
+   */
+  void AssignRole(SourceId source_id, GeometryId geometry_id,
+                  IllustrationProperties properties,
+                  RoleAssign assign = RoleAssign::kNew);
+
+  /** systems::Context-modifying variant of
+   @ref AssignRole(SourceId,GeometryId,IllustrationProperties) "AssignRole()"
+   for illustration properties. Rather than modifying %SceneGraph's model, it
+   modifies the copy of the model stored in the provided context.
+   @pydrake_mkdoc_identifier{illustration_context}
+   */
+  void AssignRole(systems::Context<T>* context, SourceId source_id,
+                  GeometryId geometry_id, IllustrationProperties properties,
+                  RoleAssign assign = RoleAssign::kNew) const;
+
+  /** Removes the indicated `role` from any geometry directly registered to the
+   frame indicated by `frame_id` (if the geometry has the role).
+   @returns The number of geometries affected by the removed role.
+   @throws std::logic_error if a) `source_id` does not map to a registered
+                            source,
+                            b) `frame_id` does not map to a registered frame,
+                            c) `frame_id` does not belong to `source_id`
+                            (unless `frame_id` is the world frame id), or
+                            d) the context has already been allocated.  */
+  int RemoveRole(SourceId source_id, FrameId frame_id, Role role);
+
+  /** systems::Context-modifying variant of
+   @ref RemoveRole(SourceId,FrameId,Role) "RemoveRole()" for frames.
+   Rather than modifying %SceneGraph's model, it modifies the copy of the model
+   stored in the provided context.  */
+  int RemoveRole(systems::Context<T>* context, SourceId source_id,
+                  FrameId frame_id, Role role) const;
+
+  /** Removes the indicated `role` from the geometry indicated by `geometry_id`.
+   @returns One if the geometry had the role removed and zero if the geometry
+            did not have the role assigned in the first place.
+   @throws std::logic_error if a) `source_id` does not map to a registered
+                            source,
+                            b) `geometry_id` does not map to a registered
+                            geometry,
+                            c) `geometry_id` does not belong to `source_id`, or
+                            d) the context has already been allocated.  */
+  int RemoveRole(SourceId source_id, GeometryId geometry_id, Role role);
+
+  /** systems::Context-modifying variant of
+   @ref RemoveRole(SourceId,GeometryId,Role) "RemoveRole()" for individual
+   geometries. Rather than modifying %SceneGraph's model, it modifies the copy
+   of the model stored in the provided context.  */
+  int RemoveRole(systems::Context<T>* context, SourceId source_id,
+                  GeometryId geometry_id, Role role) const;
+
+  //@}
+
+  /** Reports the identifier for the world frame.  */
   static FrameId world_frame_id() {
-    return internal::InternalFrame::get_world_frame_id();
+    return internal::InternalFrame::world_frame_id();
   }
 
-  /** Returns an inspector on the system's *model* scene graph data.
-   @throw std::logic_error If a context has been allocated.*/
+  /** Returns an inspector on the system's _model_ scene graph data.  */
   const SceneGraphInspector<T>& model_inspector() const;
 
   /** @name         Collision filtering
@@ -411,6 +714,20 @@ class SceneGraph final : public systems::LeafSystem<T> {
    them from the candidate set C. See each method for details.
 
    Modifications to C _must_ be performed before context allocation.
+
+   @warning All collision filtering is done based on geometry state at the time
+   of the collision filtering calls. More concretely:
+    - For a FrameId in the set, only those geometries attached to the
+      identified frame with the proximity role assigned at the time of the call
+      will be included in the filter. If geometries are subsequently added or
+      assigned the proximity role, they will not be retroactively added to the
+      filter.
+    - If the set includes geometries which have _not_ been assigned a proximity
+      role, those geometries will be ignored. If a proximity role is
+      subsequently assigned, those geometries will _still_ not be part of any
+      collision filters.
+    - In general, adding collisions and assinging proximity roles should
+      happen prior to collision filter configuration.
    */
   //@{
 
@@ -418,9 +735,21 @@ class SceneGraph final : public systems::LeafSystem<T> {
    candidate pair set `C = C - P`, where `P = {(gᵢ, gⱼ)}, ∀ gᵢ, gⱼ ∈ G` and
    `G = {g₀, g₁, ..., gₘ}` is the input `set` of geometries.
 
+   This method modifies the underlying model and requires a new Context to be
+   allocated.
+
+   @sa @ref scene_graph_collision_filtering for requirements and how collision
+   filtering works.
+
    @throws std::logic_error if the set includes ids that don't exist in the
                             scene graph.  */
   void ExcludeCollisionsWithin(const GeometrySet& set);
+
+  /** systems::Context-modifying variant of ExcludeCollisionsWithin(). Rather
+   than modifying %SceneGraph's model, it modifies the copy of the model stored
+   in the provided context.  */
+  void ExcludeCollisionsWithin(systems::Context<T>* context,
+                               const GeometrySet& set) const;
 
   /** Excludes geometry pairs from collision evaluation by updating the
    candidate pair set `C = C - P`, where `P = {(a, b)}, ∀ a ∈ A, b ∈ B` and
@@ -428,10 +757,20 @@ class SceneGraph final : public systems::LeafSystem<T> {
    geometries `setA` and `setB`, respectively. This does _not_ preclude
    collisions between members of the _same_ set.
 
+   @sa @ref scene_graph_collision_filtering for requirements and how collision
+   filtering works.
+
    @throws std::logic_error if the groups include ids that don't exist in the
-                            scene graph.   */
+                            scene graph.  */
   void ExcludeCollisionsBetween(const GeometrySet& setA,
                                 const GeometrySet& setB);
+
+  /** systems::Context-modifying variant of ExcludeCollisionsBetween(). Rather
+   than modifying %SceneGraph's model, it modifies the copy of the model stored
+   in the provided context.  */
+  void ExcludeCollisionsBetween(systems::Context<T>* context,
+                                const GeometrySet& setA,
+                                const GeometrySet& setB) const;
   //@}
 
  private:
@@ -446,23 +785,12 @@ class SceneGraph final : public systems::LeafSystem<T> {
   // evaluate inputs on the context.
   friend class QueryObject<T>;
 
-  // The two output ports (bundle and query object) depend on all input
-  // kinematics (more or less). This makes those relationships concrete and
-  // official even if/when this class is made symbolic-compatible (or the
-  // default non-symbolic-compatible behavior were to change).
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return true;
-  }
-
   // Helper class to register input ports for a source id.
   void MakeSourcePorts(SourceId source_id);
 
   // Allow the load dispatch to peek into SceneGraph.
   friend void DispatchLoadMessage(const SceneGraph<double>&,
-                                  lcm::DrakeLcmInterface*);
-
-  // Constructs a QueryObject for OutputPort allocation.
-  QueryObject<T> MakeQueryObject() const;
+                                  lcm::DrakeLcmInterface*, Role role);
 
   // Sets the context into the output port value so downstream consumers can
   // perform queries.
@@ -479,23 +807,34 @@ class SceneGraph final : public systems::LeafSystem<T> {
   void CalcPoseBundle(const systems::Context<T>& context,
                       systems::rendering::PoseBundle<T>* output) const;
 
-  // Updates the state of geometry world from *all* the inputs.
-  void FullPoseUpdate(const GeometryContext<T>& context) const;
+  // Collects all of the *dynamic* frames that have geometries with the given
+  // role.
+  std::vector<FrameId> GetDynamicFrames(const GeometryState<T>& g_state,
+                                        Role role) const;
 
-  // Override of construction to account for
-  //    - instantiating a GeometryContext instance (as opposed to LeafContext),
-  //    - to detect allocation in support of the topology semantics described
-  //      above.
-  std::unique_ptr<systems::LeafContext<T>> DoMakeLeafContext() const override;
+  // Refreshes the pose of the various engines which exploits the caching
+  // infrastructure.
+  void FullPoseUpdate(const systems::Context<T>& context) const {
+    this->get_cache_entry(pose_update_index_).template Eval<int>(context);
+  }
 
-  // Helper method for throwing an exception if a context has *ever* been
-  // allocated by this system. The invoking method should pass it's name so
-  // that the error message can include that detail.
-  void ThrowIfContextAllocated(const char* source_method) const;
+  // Updates the state of geometry world from *all* the inputs. This is the calc
+  // method for the corresponding cache entry. The entry *value* (the int) is
+  // strictly a dummy -- the value is unimportant; only the side effect matters.
+  void CalcPoseUpdate(const systems::Context<T>& context, int*) const;
 
   // Asserts the given source_id is registered, throwing an exception whose
   // message is the given message with the source_id appended if not.
   void ThrowUnlessRegistered(SourceId source_id, const char* message) const;
+
+  // Extracts a mutable reference to the underlying abstract geometry state from
+  // the given context.
+  GeometryState<T>& mutable_geometry_state(systems::Context<T>* context) const;
+
+  // Extracts a reference to the underlying abstract geometry state from the
+  // given context.
+  const GeometryState<T>& geometry_state(
+      const systems::Context<T>& context) const;
 
   // A struct that stores the port indices for a given source.
   // TODO(SeanCurtis-TRI): Consider making these TypeSafeIndex values.
@@ -517,13 +856,14 @@ class SceneGraph final : public systems::LeafSystem<T> {
   // allocating contexts for this system). The instance is owned by
   // model_abstract_states_.
   GeometryState<T>* initial_state_{};
-  SceneGraphInspector<T> model_inspector_;
 
-  // TODO(SeanCurtis-TRI): Get rid of this.
-  mutable bool context_has_been_allocated_{false};
+  SceneGraphInspector<T> model_inspector_;
 
   // The index of the geometry state in the context's abstract state.
   int geometry_state_index_{-1};
+
+  // The cache index for the pose update cache entry.
+  systems::CacheIndex pose_update_index_{};
 };
 
 }  // namespace geometry

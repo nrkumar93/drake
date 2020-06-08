@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/systems/framework/leaf_system.h"
 
@@ -15,7 +16,7 @@ namespace systems {
 /// This system is used, for instance, in PidController which is a Diagram
 /// composed of simple framework primitives. In this case a PassThrough is used
 /// to connect the exported input of the Diagram to the inputs of the Gain
-/// systems for the proportioanal and integral constants of the controller. This
+/// systems for the proportional and integral constants of the controller. This
 /// is necessary to provide an output port to which the internal Gain subsystems
 /// connect. In this case the PassThrough is effectively creating an output port
 /// that feeds through the input to the Diagram and that can now be connected to
@@ -23,17 +24,7 @@ namespace systems {
 /// A detailed discussion of the PidController can be found at
 /// https://github.com/RobotLocomotion/drake/pull/3132.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// This class uses Drake's `-inl.h` pattern. When seeing linker errors from
-/// this class, please refer to https://drake.mit.edu/cxx_inl.html.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
-///
-/// They are already available to link against in the containing library.
+/// @tparam_default_scalar
 /// @ingroup primitive_systems
 template <typename T>
 class PassThrough final : public LeafSystem<T> {
@@ -55,14 +46,15 @@ class PassThrough final : public LeafSystem<T> {
   template <typename U>
   explicit PassThrough(const PassThrough<U>&);
 
-  virtual ~PassThrough() {}
+  virtual ~PassThrough() = default;
 
   // TODO(eric.cousineau): Possibly share single port interface with
   // ZeroOrderHold (#6490).
 
   /// Returns the sole input port.
   const InputPort<T>& get_input_port() const {
-    return LeafSystem<T>::get_input_port(0);
+    DRAKE_ASSERT(input_port_ != nullptr);
+    return *input_port_;
   }
 
   // Don't use the indexed get_input_port when calling this system directly.
@@ -70,13 +62,21 @@ class PassThrough final : public LeafSystem<T> {
 
   /// Returns the sole output port.
   const OutputPort<T>& get_output_port() const {
-    return LeafSystem<T>::get_output_port(0);
+    DRAKE_ASSERT(output_port_ != nullptr);
+    return *output_port_;
   }
 
   // Don't use the indexed get_output_port when calling this system directly.
   void get_output_port(int) = delete;
 
- protected:
+ private:
+  // Allow different specializations to access each other's private data.
+  template <typename U> friend class PassThrough;
+
+  // All of the other constructors delegate here.
+  PassThrough(int vector_size,
+              std::unique_ptr<const AbstractValue> abstract_model_value);
+
   /// Sets the output port to equal the input port.
   void DoCalcVectorOutput(
       const Context<T>& context,
@@ -87,22 +87,18 @@ class PassThrough final : public LeafSystem<T> {
       const Context<T>& context,
       AbstractValue* output) const;
 
-  // Override feedthrough detection to avoid the need for `DoToSymbolic()`.
-  optional<bool> DoHasDirectFeedthrough(
-      int input_port, int output_port) const override;
-
- private:
   bool is_abstract() const { return abstract_model_value_ != nullptr; }
 
-  // Delegated constructor so that we may clone properly at run-time.
-  PassThrough(int vector_size,
-              std::unique_ptr<const AbstractValue> abstract_model_value);
-
-  // Allow different specializations to access each other's private data.
-  template <typename U> friend class PassThrough;
-
   const std::unique_ptr<const AbstractValue> abstract_model_value_;
+
+  // We store our port pointers so that DoCalcVectorOutput's access to the
+  // input_port_->Eval is inlined (without any port-count bounds checking).
+  const InputPort<T>* input_port_{};
+  const OutputPort<T>* output_port_{};
 };
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::PassThrough)

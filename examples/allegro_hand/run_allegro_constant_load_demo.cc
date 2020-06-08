@@ -9,15 +9,14 @@
 
 #include "drake/common/drake_assert.h"
 #include "drake/common/find_resource.h"
-#include "drake/common/text_logging_gflags.h"
 #include "drake/geometry/geometry_visualization.h"
 #include "drake/geometry/scene_graph.h"
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
-#include "drake/multibody/multibody_tree/joints/weld_joint.h"
-#include "drake/multibody/multibody_tree/multibody_plant/multibody_plant.h"
-#include "drake/multibody/multibody_tree/parsing/multibody_plant_sdf_parser.h"
-#include "drake/multibody/multibody_tree/uniform_gravity_field_element.h"
 #include "drake/lcm/drake_lcm.h"
+#include "drake/multibody/parsing/parser.h"
+#include "drake/multibody/plant/multibody_plant.h"
+#include "drake/multibody/tree/revolute_joint.h"
+#include "drake/multibody/tree/uniform_gravity_field_element.h"
+#include "drake/multibody/tree/weld_joint.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/framework/diagram.h"
 #include "drake/systems/framework/diagram_builder.h"
@@ -27,19 +26,19 @@ namespace drake {
 namespace examples {
 namespace allegro_hand {
 
-using drake::multibody::multibody_plant::MultibodyPlant;
+using drake::multibody::MultibodyPlant;
 
 DEFINE_double(constant_load, 0, "the constant load on each joint, Unit [Nm]."
               "Suggested load is in the order of 0.01 Nm. When input value"
               "equals to 0 (default), the program runs a passive simulation.");
 
-DEFINE_double(simulation_time, 5, 
+DEFINE_double(simulation_time, 5,
               "Desired duration of the simulation in seconds");
 
-DEFINE_bool(use_right_hand, true, 
+DEFINE_bool(use_right_hand, true,
             "Which hand to model: true for right hand or false for left hand");
 
-DEFINE_double(max_time_step, 1.0e-4, 
+DEFINE_double(max_time_step, 1.0e-4,
               "Simulation time step used for integrator.");
 
 DEFINE_bool(add_gravity, true, "Indicator for whether terrestrial gravity"
@@ -60,36 +59,37 @@ void DoMain() {
 
   MultibodyPlant<double>& plant = *builder.AddSystem<MultibodyPlant>
                                   (FLAGS_max_time_step);
+  plant.RegisterAsSourceForSceneGraph(&scene_graph);
   std::string full_name;
-  if (FLAGS_use_right_hand) 
+  if (FLAGS_use_right_hand)
     full_name = FindResourceOrThrow("drake/manipulation/models/"
       "allegro_hand_description/sdf/allegro_hand_description_right.sdf");
   else
     full_name = FindResourceOrThrow("drake/manipulation/models/"
       "allegro_hand_description/sdf/allegro_hand_description_left.sdf");
 
-  multibody::parsing::AddModelFromSdfFile(
-                          full_name, &plant, &scene_graph);
+  multibody::Parser(&plant).AddModelFromFile(full_name);
 
   // Weld the hand to the world frame
   const auto& joint_hand_root = plant.GetBodyByName("hand_root");
-  plant.AddJoint<multibody::WeldJoint>( "weld_hand", plant.world_body(), {},
-      joint_hand_root, {}, Isometry3<double>::Identity());
+  plant.AddJoint<multibody::WeldJoint>("weld_hand", plant.world_body(),
+      std::nullopt, joint_hand_root, std::nullopt,
+      math::RigidTransformd::Identity());
 
-  // Add gravity, if needed
-  if (FLAGS_add_gravity)
-    plant.AddForceElement<multibody::UniformGravityFieldElement>(
-        -9.81 * Eigen::Vector3d::UnitZ());
+  if (!FLAGS_add_gravity) {
+    plant.mutable_gravity_field().set_gravity_vector(
+        Eigen::Vector3d::Zero());
+  }
 
   // Now the model is complete.
-  plant.Finalize(&scene_graph);
+  plant.Finalize();
 
   DRAKE_DEMAND(plant.num_actuators() == 16);
   DRAKE_DEMAND(plant.num_actuated_dofs() == 16);
 
   // constant force input
   VectorX<double> constant_load_value = VectorX<double>::Ones(
-      plant.tree().num_actuators()) * FLAGS_constant_load;
+      plant.num_actuators()) * FLAGS_constant_load;
   auto constant_source =
      builder.AddSystem<systems::ConstantVectorSource<double>>(
       constant_load_value);
@@ -131,8 +131,8 @@ void DoMain() {
   simulator.set_publish_every_time_step(true);
   simulator.set_target_realtime_rate(FLAGS_target_realtime_rate);
   simulator.Initialize();
-  simulator.StepTo(FLAGS_simulation_time);
-} 
+  simulator.AdvanceTo(FLAGS_simulation_time);
+}
 
 }  // namespace allegro_hand
 }  // namespace examples

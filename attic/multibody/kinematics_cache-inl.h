@@ -1,5 +1,7 @@
 #pragma once
 
+#include "drake/attic_warning.h"
+
 /// @file
 /// Template method implementations for kinematics_cache.h.
 /// Most users should only include that file, not this one.
@@ -174,15 +176,7 @@ template <typename T>
 int KinematicsCache<T>::get_num_positions() const { return num_positions_; }
 
 template <typename T>
-int KinematicsCache<T>::getNumPositions() const { return get_num_positions(); }
-
-template <typename T>
 int KinematicsCache<T>::get_num_velocities() const { return num_velocities_; }
-
-template <typename T>
-int KinematicsCache<T>::getNumVelocities() const {
-  return get_num_velocities();
-}
 
 template <typename T>
 void KinematicsCache<T>::invalidate() {

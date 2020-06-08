@@ -39,7 +39,7 @@ class TestMpcWithDoubleIntegrator : public ::testing::Test {
 
     std::unique_ptr<Context<double>> system_context =
         system->CreateDefaultContext();
-    system_context->FixInputPort(0, u0);
+    system->get_input_port().FixValue(system_context.get(), u0);
     system_context->get_mutable_discrete_state(0).SetFromVector(x0);
 
     dut_.reset(new LinearModelPredictiveController<double>(
@@ -72,7 +72,7 @@ TEST_F(TestMpcWithDoubleIntegrator, TestAgainstInfiniteHorizonSolution) {
   const Eigen::Matrix<double, 2, 1> x0 = Eigen::Vector2d::Ones();
 
   auto context = dut_->CreateDefaultContext();
-  context->FixInputPort(0, BasicVector<double>::Make(x0(0), x0(1)));
+  dut_->get_input_port(0).FixValue(context.get(), x0);
   std::unique_ptr<SystemOutput<double>> output = dut_->AllocateOutput();
 
   dut_->CalcOutput(*context, output.get());
@@ -88,12 +88,12 @@ template <typename T>
 class CubicPolynomialSystem final : public LeafSystem<T> {
  public:
   explicit CubicPolynomialSystem(double time_step)
-      : LeafSystem<T>(
-            SystemTypeTag<systems::controllers::CubicPolynomialSystem>{}),
+      : LeafSystem<T>(SystemTypeTag<CubicPolynomialSystem>{}),
         time_step_(time_step) {
     this->DeclareInputPort(systems::kVectorValued, 1);
     this->DeclareVectorOutputPort(BasicVector<T>(2),
-                                  &CubicPolynomialSystem::OutputState);
+                                  &CubicPolynomialSystem::OutputState,
+                                  {this->all_state_ticket()});
     this->DeclareDiscreteState(2);
     this->DeclarePeriodicDiscreteUpdate(time_step);
   }
@@ -113,7 +113,7 @@ class CubicPolynomialSystem final : public LeafSystem<T> {
       DiscreteValues<T>* next_state) const final {
     using std::pow;
     const T& x1 = context.get_discrete_state(0).get_value()[0];
-    const T& u = this->EvalVectorInput(context, 0)->get_value()[0];
+    const T& u = this->get_input_port(0).Eval(context)[0];
     next_state->get_mutable_vector(0).SetAtIndex(0, u);
     next_state->get_mutable_vector(0).SetAtIndex(1, pow(x1, 3.));
   }
@@ -121,13 +121,6 @@ class CubicPolynomialSystem final : public LeafSystem<T> {
   void OutputState(const systems::Context<T>& context,
                    BasicVector<T>* output) const {
     output->set_value(context.get_discrete_state(0).get_value());
-  }
-
-  // TODO(jadecastro) We know a discrete system of this format does not have
-  // direct feedthrough, even though sparsity reports the opposite.  This is a
-  // hack to patch in the correct result.
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return false;
   }
 
   const double time_step_{0.};
@@ -151,7 +144,7 @@ class TestMpcWithCubicSystem : public ::testing::Test {
     auto context = system_->CreateDefaultContext();
 
     // Set nominal input to zero.
-    context->FixInputPort(0, Vector1d::Constant(0.));
+    system_->get_input_port(0).FixValue(context.get(), 0.);
 
     // Set the nominal state.
     BasicVector<double>& x =
@@ -206,7 +199,7 @@ class TestMpcWithCubicSystem : public ::testing::Test {
 
     simulator_->set_target_realtime_rate(1.);
     simulator_->Initialize();
-    simulator_->StepTo(time_horizon_);
+    simulator_->AdvanceTo(time_horizon_);
   }
 
   const double time_step_ = 0.1;
@@ -246,7 +239,7 @@ GTEST_TEST(TestMpcConstructor, ThrowIfRNotStrictlyPositiveDefinite) {
       std::make_unique<LinearSystem<double>>(A, B, C, D, 1.);
 
   std::unique_ptr<Context<double>> context = system->CreateDefaultContext();
-  context->FixInputPort(0, BasicVector<double>::Make(0., 0.));
+  system->get_input_port().FixValue(context.get(), Eigen::Vector2d::Zero());
 
   const Eigen::Matrix2d Q = Eigen::Matrix2d::Identity();
 

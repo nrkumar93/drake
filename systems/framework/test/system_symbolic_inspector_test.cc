@@ -24,18 +24,21 @@ class SparseSystem : public LeafSystem<symbolic::Expression> {
                                   &SparseSystem::CalcY0);
     this->DeclareVectorOutputPort(BasicVector<symbolic::Expression>(kSize),
                                   &SparseSystem::CalcY1);
-    this->DeclareAbstractOutputPort(42, &SparseSystem::CalcNothing);
+    this->DeclareAbstractOutputPort("port_42", 42, &SparseSystem::CalcNothing);
 
     this->DeclareContinuousState(kSize);
     this->DeclareDiscreteState(kSize);
 
     this->DeclareEqualityConstraint(&SparseSystem::CalcConstraint, kSize,
                                     "equality constraint");
-    this->DeclareInequalityConstraint(&SparseSystem::CalcConstraint, kSize,
-                                      "inequality constraint");
+    this->DeclareInequalityConstraint(&SparseSystem::CalcConstraint,
+                                      { Eigen::VectorXd::Zero(kSize),
+                                      std::nullopt }, "inequality constraint");
   }
 
-  void AddAbstractInputPort() { this->DeclareAbstractInputPort(); }
+  void AddAbstractInputPort() {
+    this->DeclareAbstractInputPort(kUseDefaultName, Value<std::string>{});
+  }
 
   ~SparseSystem() override {}
 
@@ -43,27 +46,27 @@ class SparseSystem : public LeafSystem<symbolic::Expression> {
   // Calculation function for output port 0.
   void CalcY0(const Context<symbolic::Expression>& context,
               BasicVector<symbolic::Expression>* y0) const {
-    const auto& u0 = *(this->EvalVectorInput(context, 0));
-    const auto& u1 = *(this->EvalVectorInput(context, 1));
-    const auto& xc = context.get_continuous_state_vector();
+    const auto& u0 = this->get_input_port(0).Eval(context);
+    const auto& u1 = this->get_input_port(1).Eval(context);
+    const auto& xc = context.get_continuous_state_vector().CopyToVector();
 
     // Output 0 depends on input 0 and the continuous state.  Input 1 appears in
     // an intermediate computation, but is ultimately cancelled out.
-    y0->set_value(u1.get_value());
-    y0->PlusEqScaled(1, u0);
-    y0->PlusEqScaled(-1, u1);
-    y0->PlusEqScaled(12, xc);
+    y0->get_mutable_value() = u1;
+    y0->get_mutable_value() += u0;
+    y0->get_mutable_value() -= u1;
+    y0->get_mutable_value() += 12. * xc;
   }
 
   // Calculation function for output port 1.
   void CalcY1(const Context<symbolic::Expression>& context,
               BasicVector<symbolic::Expression>* y1) const {
-    const auto& u0 = *(this->EvalVectorInput(context, 0));
-    const auto& u1 = *(this->EvalVectorInput(context, 1));
-    const auto& xd = context.get_discrete_state(0);
+    const auto& u0 = this->get_input_port(0).Eval(context);
+    const auto& u1 = this->get_input_port(1).Eval(context);
+    const auto& xd = context.get_discrete_state(0).get_value();
 
     // Output 1 depends on both inputs and the discrete state.
-    y1->set_value(u0.get_value() + u1.get_value() + xd.get_value());
+    y1->set_value(u0 + u1 + xd);
   }
 
   void CalcNothing(const Context<symbolic::Expression>& context, int*) const {}
@@ -77,8 +80,8 @@ class SparseSystem : public LeafSystem<symbolic::Expression> {
   void DoCalcTimeDerivatives(
       const Context<symbolic::Expression>& context,
       ContinuousState<symbolic::Expression>* derivatives) const override {
-    const auto u0 = this->EvalVectorInput(context, 0)->CopyToVector();
-    const auto u1 = this->EvalVectorInput(context, 1)->CopyToVector();
+    const auto& u0 = this->get_input_port(0).Eval(context);
+    const auto& u1 = this->get_input_port(1).Eval(context);
     const auto& t = context.get_time();
     const Vector2<symbolic::Expression> x =
         context.get_continuous_state_vector().CopyToVector();
@@ -97,8 +100,8 @@ class SparseSystem : public LeafSystem<symbolic::Expression> {
           const systems::DiscreteUpdateEvent<symbolic::Expression>*>&,
       systems::DiscreteValues<symbolic::Expression>* discrete_state)
       const override {
-    const auto u0 = this->EvalVectorInput(context, 0)->CopyToVector();
-    const auto u1 = this->EvalVectorInput(context, 1)->CopyToVector();
+    const auto& u0 = this->get_input_port(0).Eval(context);
+    const auto& u1 = this->get_input_port(1).Eval(context);
     const Vector2<symbolic::Expression> xd =
         context.get_discrete_state(0).get_value();
     const Eigen::Matrix2d A = 7 * Eigen::Matrix2d::Identity();
@@ -156,8 +159,8 @@ TEST_F(SystemSymbolicInspectorTest, InputToOutput) {
 TEST_F(SystemSymbolicInspectorTest, AbstractContextThwartsSparsity) {
   system_.AddAbstractInputPort();
   inspector_ = std::make_unique<SystemSymbolicInspector>(system_);
-  for (int i = 0; i < system_.get_num_input_ports(); ++i) {
-    for (int j = 0; j < system_.get_num_output_ports(); ++j) {
+  for (int i = 0; i < system_.num_input_ports(); ++i) {
+    for (int j = 0; j < system_.num_output_ports(); ++j) {
       EXPECT_TRUE(inspector_->IsConnectedInputToOutput(i, j));
     }
   }
@@ -166,8 +169,8 @@ TEST_F(SystemSymbolicInspectorTest, AbstractContextThwartsSparsity) {
 TEST_F(SystemSymbolicInspectorTest, ConstraintTest) {
   const auto& constraints = inspector_->constraints();
   const std::vector<std::string> expected{
-    "((xc0 == 0) and (xc1 == 0))",
-    "((xc0 >= 0) and (xc1 >= 0))",
+      "((xc0 == 0) and (xc1 == 0))",
+      "((xc0 >= 0) and (xc1 >= 0) and (xc0 <= inf) and (xc1 <= inf))",
   };
   std::vector<std::string> actual;
   std::transform(
@@ -191,6 +194,15 @@ TEST_F(SystemSymbolicInspectorTest, HasAffineDynamics) {
 
 TEST_F(PendulumInspectorTest, HasAffineDynamics) {
   EXPECT_FALSE(inspector_->HasAffineDynamics());
+}
+
+TEST_F(SystemSymbolicInspectorTest, IsAbstract) {
+  auto context = system_.CreateDefaultContext();
+  EXPECT_FALSE(SystemSymbolicInspector::IsAbstract(system_, *context));
+
+  system_.AddAbstractInputPort();
+  auto context2 = system_.CreateDefaultContext();
+  EXPECT_TRUE(SystemSymbolicInspector::IsAbstract(system_, *context2));
 }
 
 TEST_F(PendulumInspectorTest, SymbolicParameters) {

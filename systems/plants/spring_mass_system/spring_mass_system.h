@@ -13,14 +13,7 @@ namespace systems {
 /// The state of a one-dimensional spring-mass system, consisting of the
 /// position and velocity of the mass, in meters and meters/s.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-/// - AutoDiffXd
-///
-/// They are already available to link against in the containing library.
-/// No other values for T are currently supported.
+/// @tparam_default_scalar
 template <typename T>
 class SpringMassStateVector : public BasicVector<T> {
  public:
@@ -53,7 +46,7 @@ class SpringMassStateVector : public BasicVector<T> {
   void set_conservative_work(const T& e);
 
  private:
-  SpringMassStateVector<T>* DoClone() const override;
+  [[nodiscard]] SpringMassStateVector<T>* DoClone() const override;
 };
 
 /// A model of a one-dimensional spring-mass system.
@@ -63,13 +56,7 @@ class SpringMassStateVector : public BasicVector<T> {
 /// @endverbatim
 /// Units are MKS (meters-kilograms-seconds).
 ///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-/// - AutoDiffXd
-///
-/// They are already available to link against in the containing library.
-/// No other values for T are currently supported.
-///
+/// @tparam_default_scalar
 /// @ingroup rigid_body_systems
 template <typename T>
 class SpringMassSystem : public LeafSystem<T> {
@@ -120,9 +107,9 @@ class SpringMassSystem : public LeafSystem<T> {
   /// @returns the external driving force to the system.
   T get_input_force(const Context<T>& context) const {
     T external_force = 0;
-    DRAKE_ASSERT(system_is_forced_ == (context.get_num_input_ports() == 1));
+    DRAKE_ASSERT(system_is_forced_ == (context.num_input_ports() == 1));
     if (system_is_forced_) {
-      external_force = this->EvalVectorInput(context, 0)->GetAtIndex(0);
+      external_force = get_force_port().Eval(context)[0];
     }
     return external_force;
   }

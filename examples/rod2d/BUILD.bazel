@@ -1,7 +1,7 @@
 # -*- python -*-
 
 load(
-    "//tools:drake.bzl",
+    "@drake//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
@@ -16,7 +16,7 @@ package(default_visibility = ["//visibility:public"])
 
 drake_cc_vector_gen_library(
     name = "rod2d_state_vector",
-    srcs = ["rod2d_state_vector.named_vector"],
+    srcs = ["rod2d_state_vector_named_vector.yaml"],
 )
 
 drake_cc_binary(
@@ -26,14 +26,14 @@ drake_cc_binary(
     test_rule_args = [" --sim_duration=0.01"],
     deps = [
         ":rod2d",
+        "//attic/systems/rendering:drake_visualizer_client",
+        "//common:add_text_logging_gflags",
         "//common:essential",
-        "//common:text_logging_gflags",
         "//lcm",
         "//lcmtypes:viewer",
         "//systems/analysis",
         "//systems/framework",
         "//systems/lcm:lcm_pubsub_system",
-        "//systems/rendering:drake_visualizer_client",
         "//systems/rendering:pose_aggregator",
         "//systems/rendering:pose_bundle_to_draw_message",
         "@gflags",
@@ -45,7 +45,6 @@ drake_cc_library(
     srcs = ["rod2d.cc"],
     hdrs = [
         "rod2d.h",
-        "rod2d-inl.h",
     ],
     deps = [
         ":rod2d_state_vector",
@@ -65,6 +64,7 @@ drake_cc_googletest(
         ":rod2d",
         "//common:essential",
         "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_no_throw",
         "//multibody/constraint",
         "//systems/analysis",
     ],

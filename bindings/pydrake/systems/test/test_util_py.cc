@@ -2,8 +2,9 @@
 #include "pybind11/functional.h"
 #include "pybind11/pybind11.h"
 
+#include "drake/bindings/pydrake/common/value_pybind.h"
 #include "drake/bindings/pydrake/pydrake_pybind.h"
-#include "drake/bindings/pydrake/systems/systems_pybind.h"
+#include "drake/systems/analysis/simulator.h"
 #include "drake/systems/framework/basic_vector.h"
 #include "drake/systems/framework/leaf_system.h"
 #include "drake/systems/framework/vector_system.h"
@@ -14,6 +15,7 @@ namespace drake {
 
 using systems::BasicVector;
 using systems::LeafSystem;
+using systems::Simulator;
 
 namespace pydrake {
 namespace {
@@ -24,12 +26,10 @@ using T = double;
 class DeleteListenerSystem : public LeafSystem<T> {
  public:
   explicit DeleteListenerSystem(std::function<void()> delete_callback)
-      : LeafSystem<T>(),
-      delete_callback_(delete_callback) {}
+      : LeafSystem<T>(), delete_callback_(delete_callback) {}
 
-  ~DeleteListenerSystem() override {
-    delete_callback_();
-  }
+  ~DeleteListenerSystem() override { delete_callback_(); }
+
  private:
   std::function<void()> delete_callback_;
 };
@@ -37,33 +37,14 @@ class DeleteListenerSystem : public LeafSystem<T> {
 class DeleteListenerVector : public BasicVector<T> {
  public:
   explicit DeleteListenerVector(std::function<void()> delete_callback)
-    : BasicVector(VectorX<T>::Constant(1, 0.)),
-      delete_callback_(delete_callback) {}
+      : BasicVector(VectorX<T>::Constant(1, 0.)),
+        delete_callback_(delete_callback) {}
 
-  ~DeleteListenerVector() override {
-    delete_callback_();
-  }
+  ~DeleteListenerVector() override { delete_callback_(); }
+
  private:
   std::function<void()> delete_callback_;
 };
-
-class MoveOnlyType {
- public:
-  explicit MoveOnlyType(int x) : x_(x) {}
-  MoveOnlyType(MoveOnlyType&&) = default;
-  MoveOnlyType& operator=(MoveOnlyType&&) = default;
-  MoveOnlyType(const MoveOnlyType&) = delete;
-  MoveOnlyType& operator=(const MoveOnlyType&) = delete;
-  int x() const { return x_; }
-  void set_x(int x) { x_ = x; }
-  std::unique_ptr<MoveOnlyType> Clone() const {
-    return std::make_unique<MoveOnlyType>(x_);
-  }
- private:
-  int x_{};
-};
-
-struct UnknownType {};
 
 // A simple 2-dimensional subclass of BasicVector for testing.
 template <typename T>
@@ -89,27 +70,14 @@ PYBIND11_MODULE(test_util, m) {
   py::module::import("pydrake.systems.framework");
   py::module::import("pydrake.systems.primitives");
 
-  py::class_<DeleteListenerSystem, LeafSystem<T>>(
-      m, "DeleteListenerSystem")
-    .def(py::init<std::function<void()>>());
-  py::class_<DeleteListenerVector, BasicVector<T>>(
-      m, "DeleteListenerVector")
-    .def(py::init<std::function<void()>>());
-
-  py::class_<MoveOnlyType>(m, "MoveOnlyType")
-    .def(py::init<int>())
-    .def("x", &MoveOnlyType::x)
-    .def("set_x", &MoveOnlyType::set_x);
-  // Define `Value` instantiation.
-  pysystems::AddValueInstantiation<MoveOnlyType>(m);
+  py::class_<DeleteListenerSystem, LeafSystem<T>>(m, "DeleteListenerSystem")
+      .def(py::init<std::function<void()>>());
+  py::class_<DeleteListenerVector, BasicVector<T>>(m, "DeleteListenerVector")
+      .def(py::init<std::function<void()>>());
 
   // A 2-dimensional subclass of BasicVector.
   py::class_<MyVector2<T>, BasicVector<T>>(m, "MyVector2")
       .def(py::init<const Eigen::Vector2d&>(), py::arg("data"));
-
-  m.def("make_unknown_abstract_value", []() {
-    return AbstractValue::Make(UnknownType{});
-  });
 
   // Call overrides to ensure a custom Python class can override these methods.
 
@@ -120,9 +88,18 @@ PYBIND11_MODULE(test_util, m) {
   };
 
   m.def("call_leaf_system_overrides", [clone_vector](
-      const LeafSystem<T>& system) {
+                                          const LeafSystem<T>& system) {
     py::dict results;
     auto context = system.AllocateContext();
+    {
+      // Leverage simulator to call initialization events.
+      // TODO(eric.cousineau): Simplify as part of #10015.
+      Simulator<T> simulator(system);
+      // Do not publish at initialization because we want to track publishes
+      // from only events of trigger type `kInitialization`.
+      simulator.set_publish_at_initialization(false);
+      simulator.Initialize();
+    }
     {
       // Call `Publish` to test `DoPublish`.
       auto events =
@@ -135,9 +112,8 @@ PYBIND11_MODULE(test_util, m) {
     }
     {
       // Call `CalcTimeDerivatives` to test `DoCalcTimeDerivatives`
-      auto& state = context->get_mutable_continuous_state();
-      ContinuousState<T> state_copy(clone_vector(state.get_vector()));
-      system.CalcTimeDerivatives(*context, &state_copy);
+      auto state_dot = system.AllocateTimeDerivatives();
+      system.CalcTimeDerivatives(*context, state_dot.get());
     }
     {
       // Call `CalcDiscreteVariableUpdates` to test
@@ -155,35 +131,29 @@ PYBIND11_MODULE(test_util, m) {
     return results;
   });
 
-  m.def("call_vector_system_overrides", [clone_vector](
-      const VectorSystem<T>& system, Context<T>* context,
-      bool is_discrete, double dt) {
-    // While this is not convention, update state first to ensure that our
-    // output incorporates it correctly, for testing purposes.
-    // TODO(eric.cousineau): Add (Continuous|Discrete)State::Clone().
-    if (is_discrete) {
-      auto& state = context->get_mutable_discrete_state();
-      DiscreteValues<T> state_copy(
-          clone_vector(state.get_vector()));
-      system.CalcDiscreteVariableUpdates(
-          *context, &state_copy);
-      state.SetFrom(state_copy);
-    } else {
-      auto& state = context->get_mutable_continuous_state();
-      ContinuousState<T> state_dot(
-          clone_vector(state.get_vector()),
-          state.get_generalized_position().size(),
-          state.get_generalized_velocity().size(),
-          state.get_misc_continuous_state().size());
-      system.CalcTimeDerivatives(*context, &state_dot);
-      state.SetFromVector(
-          state.CopyToVector() + dt * state_dot.CopyToVector());
-    }
-    // Calculate output.
-    auto output = system.AllocateOutput();
-    system.CalcOutput(*context, output.get());
-    return output;
-  });
+  m.def("call_vector_system_overrides",
+      [clone_vector](const VectorSystem<T>& system, Context<T>* context,
+          bool is_discrete, double dt) {
+        // While this is not convention, update state first to ensure that our
+        // output incorporates it correctly, for testing purposes.
+        // TODO(eric.cousineau): Add (Continuous|Discrete)State::Clone().
+        if (is_discrete) {
+          auto& state = context->get_mutable_discrete_state();
+          DiscreteValues<T> state_copy(clone_vector(state.get_vector()));
+          system.CalcDiscreteVariableUpdates(*context, &state_copy);
+          state.SetFrom(state_copy);
+        } else {
+          auto& state = context->get_mutable_continuous_state();
+          auto state_dot = system.AllocateTimeDerivatives();
+          system.CalcTimeDerivatives(*context, state_dot.get());
+          state.SetFromVector(
+              state.CopyToVector() + dt * state_dot->CopyToVector());
+        }
+        // Calculate output.
+        auto output = system.AllocateOutput();
+        system.CalcOutput(*context, output.get());
+        return output;
+      });
 }
 
 }  // namespace pydrake

@@ -9,14 +9,18 @@ Build Cop
 Overview
 --------
 
-The Drake build cop monitors `continuous production <https://drake-
-jenkins.csail.mit.edu/view/Continuous%20Production/>`_ and `nightly production
-<https://drake-jenkins.csail.mit.edu/view/Nightly%20Production/>`_ continuous
-integration failures in the RobotLocomotion/drake GitHub repo.
+The Drake build cop monitors `continuous <https://drake-
+jenkins.csail.mit.edu/view/Continuous%20Production/>`_, `nightly
+<https://drake-jenkins.csail.mit.edu/view/Nightly%20Production/>`_, and
+`weekly <https://drake-jenkins.csail.mit.edu/view/Weekly%20Production/>`_
+production continuous integration failures in the
+`RobotLocomotion/drake <https://github.com/RobotLocomotion/drake>`_ GitHub
+repo.
 
 The build cop will rotate on a weekly basis. The
 `schedule <https://github.com/RobotLocomotion/drake-ci/wiki/Build-Cop-Rotation>`_
-is maintained on the RobotLocomotion/drake-ci wiki.
+is maintained on the
+`RobotLocomotion/drake-ci <https://github.com/RobotLocomotion/drake-ci>`_ wiki.
 
 .. _process:
 
@@ -25,12 +29,14 @@ Process
 The build cop is expected to be on duty during normal business hours Eastern
 Time, approximately 9am to 5pm on weekdays, holidays excepted. Developers are
 encouraged, but not required, to merge pull requests during times when the build
-cop is on duty. Nightly build failures will be addressed the following weekday
-morning.
+cop is on duty. Nightly and weekly build failures will be addressed the
+following weekday morning.
 
 When a CI build failure occurs, the build cop will be notified by email.
 Notifications are sent to ``drake-alerts+jenkins@tri.global`` and
-``drake-developers+build-cop@kitware.com``. The build cop will triage the
+``drake-developers+build-cop@kitware.com``. To receive these notifications,
+subscribe to the ``drake-alerts`` Google Group at TRI or the
+``drake-developers`` Google Group at Kitware. The build cop will triage the
 failure by identifying the recent commits or other problem that caused the CI
 build to fail.
 
@@ -67,9 +73,9 @@ author, and include the following template in the PR description.
  Dear $AUTHOR,
 
  The on-call build cop, $BUILD_COP, believes that your PR $NUMBER may have
- broken one or more of Drake's continuous integration builds [1,2]. It is
+ broken one or more of Drake's continuous integration builds [1]. It is
  possible to break a build even if your PR passed continuous integration
- pre-merge because additional platforms and tests are built post-merge.
+ pre-merge because additional platforms are tested post-merge.
 
  The specific build failures under investigation are:
  $LINK_TO_BROKEN_BUILD_ON_JENKINS
@@ -91,14 +97,13 @@ author, and include the following template in the PR description.
  reverted, please review and LGTM this PR. This allows the build cop to merge
  without waiting for CI results.
 
- For advice on how to handle a build cop revert, see [3].
+ For advice on how to handle a build cop revert, see [2].
 
  Thanks!
- Your Friendly Oncall Buildcop
+ Your Friendly On-call Build Cop
 
- [1] CI Continuous Production Dashboard: https://drake-jenkins.csail.mit.edu/view/Continuous%20Production/
- [2] CI Nightly Production Dashboard: https://drake-jenkins.csail.mit.edu/view/Nightly%20Production/
- [3] https://drake.mit.edu/buildcop.html#workflow-for-handling-a-build-cop-revert
+ [1] CI Production Dashboard: https://drake-jenkins.csail.mit.edu/view/Production/
+ [2] https://drake.mit.edu/buildcop.html#workflow-for-handling-a-build-cop-revert
 
 .. _handling_a_build_cop_revert:
 
@@ -136,11 +141,13 @@ Check the `Continuous Production <https://drake-jenkins.csail.mit.edu/view/Conti
 build dashboard in Jenkins at least once an hour during on-call hours. These
 builds run after every merge to Drake. Also check the
 `Nightly Production <https://drake-jenkins.csail.mit.edu/view/Nightly%20Production/>`_
-build dashboard every morning. These builds are unusually resource-intensive,
-and therefore run just once per day.
+build dashboard every morning and
+`Weekly Production <https://drake-jenkins.csail.mit.edu/view/Weekly%20Production/>`_
+build dashboard on Monday morning. These builds are unusually
+resource-intensive, and therefore run at most once per day.
 
-If any Continuous or Nightly Production builds turn yellow or red, you need
-to act.
+If any Continuous, Nightly, or Weekly Production builds turn yellow or red, you
+need to act.
 
 In Jenkins, builds that are in progress (blinking on and off) will show the
 color of the previous build.
@@ -160,7 +167,7 @@ click on the build that is yellow or red in Jenkins, then click on the first
 breaking change in the Build History. You will see a list of the new commits
 in that particular run.
 
-Determine if an open Github Drake issue describes the situation. For example,
+Determine if an open GitHub Drake issue describes the situation. For example,
 some tests are flaky for reasons that have no known resolution, but are
 described by Drake issues. If you find that your broken build is described by
 such an issue, consider adding the build information to the issue for future
@@ -205,6 +212,22 @@ After you identify one, create a rollback by clicking "Revert" in the
 GitHub UI. Use the :ref:`template message <revert_template>` to communicate
 with the author, and proceed as specified in that message.
 
+Restarting Mac Nightly Builds
+******************************
+Occasionally there will be flaky tests or timeouts in the Mac nightly builds.
+While it is tempting to restart these builds to clear the errors, Mac resources
+are limited and restarting the long-running nightly builds may tie up resources
+needed for continuous builds. In addition, too many simultaneous Mac builds
+will increase the chances of timeouts and other flakes. Build cops should use
+their best judgement, keeping in mind the following guidelines:
+
+* If the nightly job is mirrored by a continuous job, don't re-run.
+* If the test passed last build, don't re-run.
+* If it is a linter only timeout, don't re-run.
+* If there are many timeouts, you may consider re-running.
+* If the timed-out test failed last build (not just timed out), you may consider re-running.
+
+
 Broken CI Script
 ****************
 Sometimes people merge changes to the Drake CI scripts that result in spurious
@@ -222,7 +245,7 @@ Infrastructure Flake
 The machinery of the CI system itself sometimes fails for reasons unrelated to
 any code change. The most common infrastructure flakes include:
 
-* Unable to obtain a MATLAB license.
+* Unable to obtain a Gurobi license.
 * Broken connection to a Mac build agent.
 
 Infrastructure flakes will be red in Jenkins. If you believe you are looking at
@@ -251,3 +274,10 @@ Attempt to figure out what infrastructure collapsed. If it's under our control,
 alert Kitware by assigning a GitHub issue to both @BetsyMcPhail and
 @jamiesnape. If it's under a vendor's control, spread the news and simply wait
 it out.
+
+Drake External Examples
+***********************
+Details of failures in the `drake-external-examples <https://github.com/RobotLocomotion/drake-external-examples/>`_
+repository, which may be denoted by red "build failing" icons at the top of the build
+dashboard on Jenkins, should be posted to the `#buildcop <https://drakedevelopers.slack.com/messages/buildcop/details/>`_
+channel on Slack, ensuring that @jamiesnape is mentioned in the message.

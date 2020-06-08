@@ -1,7 +1,7 @@
 # -*- python -*-
 
 load(
-    "//tools:drake.bzl",
+    "@drake//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
@@ -13,19 +13,30 @@ load(
 )
 load("//tools/lint:lint.bzl", "add_lint_tests")
 
+package(default_visibility = ["//visibility:private"])
+
 drake_cc_vector_gen_library(
     name = "acrobot_input",
-    srcs = ["acrobot_input.named_vector"],
+    srcs = ["acrobot_input_named_vector.yaml"],
+    visibility = ["//visibility:public"],
 )
 
 drake_cc_vector_gen_library(
     name = "acrobot_params",
-    srcs = ["acrobot_params.named_vector"],
+    srcs = ["acrobot_params_named_vector.yaml"],
+    visibility = ["//visibility:public"],
 )
 
 drake_cc_vector_gen_library(
     name = "acrobot_state",
-    srcs = ["acrobot_state.named_vector"],
+    srcs = ["acrobot_state_named_vector.yaml"],
+    visibility = ["//visibility:public"],
+)
+
+drake_cc_vector_gen_library(
+    name = "spong_controller_params",
+    srcs = ["spong_controller_params_named_vector.yaml"],
+    visibility = ["//visibility:public"],
 )
 
 drake_cc_library(
@@ -56,6 +67,39 @@ drake_cc_library(
     ],
 )
 
+drake_cc_library(
+    name = "acrobot_geometry",
+    srcs = ["acrobot_geometry.cc"],
+    hdrs = ["acrobot_geometry.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":acrobot_params",
+        ":acrobot_plant",
+        "//geometry:geometry_roles",
+        "//geometry:scene_graph",
+        "//math:geometric_transform",
+        "//systems/framework:diagram_builder",
+        "//systems/framework:leaf_system",
+    ],
+)
+
+drake_cc_library(
+    name = "spong_controller",
+    srcs = ["spong_controller.cc"],
+    hdrs = ["spong_controller.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":acrobot_plant",
+        ":spong_controller_params",
+        "//common:default_scalars",
+        "//math:wrap_to",
+        "//systems/controllers:linear_quadratic_regulator",
+        "//systems/framework:leaf_system",
+        "//systems/framework:vector",
+        "//systems/primitives:linear_system",
+    ],
+)
+
 # Note: This is a development tool for testing LCM communication
 # but does not actually provide test coverage as a stand-alone
 # executable.
@@ -74,15 +118,14 @@ drake_cc_binary(
     name = "run_lqr",
     srcs = ["run_lqr.cc"],
     add_test_rule = 1,
-    data = [":models"],
-    test_rule_args = ["-realtime_factor=0.0"],
+    test_rule_args = [
+        "-simulation_sec=1.0",
+        "-realtime_factor=0.0",
+    ],
     deps = [
+        ":acrobot_geometry",
         ":acrobot_plant",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//lcm",
-        "//multibody:rigid_body_tree",
+        "//geometry:geometry_visualization",
         "//systems/analysis:simulator",
         "@gflags",
     ],
@@ -93,17 +136,15 @@ drake_cc_binary(
     testonly = 1,
     srcs = ["run_lqr_w_estimator.cc"],
     add_test_rule = 1,
-    data = [":models"],
-    test_rule_args = ["-realtime_factor=0.0"],
+    test_rule_args = [
+        "-simulation_sec=1.0",
+        "-realtime_factor=0.0",
+    ],
     deps = [
+        ":acrobot_geometry",
         ":acrobot_plant",
-        "//attic/multibody/joints",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//common/proto:call_matlab",
-        "//lcm",
-        "//multibody:rigid_body_tree",
+        "//common/proto:call_python",
+        "//geometry:geometry_visualization",
         "//systems/analysis:simulator",
         "//systems/estimators:kalman_filter",
         "//systems/framework:diagram",
@@ -118,16 +159,14 @@ drake_cc_binary(
     name = "run_passive",
     srcs = ["run_passive.cc"],
     add_test_rule = 1,
-    data = [":models"],
-    test_rule_args = ["-realtime_factor=0.0"],
+    test_rule_args = [
+        "-simulation_sec=1.0",
+        "-realtime_factor=0.0",
+    ],
     deps = [
+        ":acrobot_geometry",
         ":acrobot_plant",
-        "//attic/multibody/joints",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//lcm",
-        "//multibody:rigid_body_tree",
+        "//geometry:geometry_visualization",
         "//systems/analysis:simulator",
         "//systems/framework:diagram",
         "@gflags",
@@ -138,22 +177,20 @@ drake_cc_binary(
     name = "run_swing_up",
     srcs = [
         "run_swing_up.cc",
-        "spong_controller.h",
     ],
     add_test_rule = 1,
-    data = [":models"],
-    test_rule_args = ["-realtime_factor=0.0"],
+    test_rule_args = [
+        # N.B. We can't set -simulation_sec here, because the demo program has
+        # success criteria that it asserts after the simulation expires.
+        "-realtime_factor=0.0",
+    ],
     deps = [
+        ":acrobot_geometry",
         ":acrobot_plant",
-        "//attic/multibody/joints",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//lcm",
-        "//math:wrap_to",
-        "//multibody:rigid_body_tree",
-        "//systems/analysis",
-        "//systems/controllers:linear_quadratic_regulator",
+        ":spong_controller",
+        ":spong_controller_params",
+        "//geometry:geometry_visualization",
+        "//systems/analysis:simulator",
         "@gflags",
     ],
 )
@@ -161,19 +198,18 @@ drake_cc_binary(
 drake_cc_binary(
     name = "run_swing_up_traj_optimization",
     srcs = ["test/run_swing_up_traj_optimization.cc"],
-    add_test_rule = 1,
-    data = [":models"],
+    # TODO(ggould) Temporarily turned off due to mac test failures, see #10276.
+    add_test_rule = 0,
+    tags = ["snopt"],
     test_rule_args = ["-realtime_factor=0.0"],
     deps = [
+        ":acrobot_geometry",
         ":acrobot_plant",
-        "//attic/multibody/joints",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//lcm",
-        "//multibody:rigid_body_tree",
-        "//systems/analysis",
-        "//systems/controllers:linear_quadratic_regulator",
+        "//common:is_approx_equal_abstol",
+        "//geometry:geometry_visualization",
+        "//solvers:solve",
+        "//systems/analysis:simulator",
+        "//systems/controllers:finite_horizon_linear_quadratic_regulator",
         "//systems/primitives:trajectory_source",
         "//systems/trajectory_optimization:direct_collocation",
         "@gflags",
@@ -183,49 +219,67 @@ drake_cc_binary(
 drake_cc_binary(
     name = "spong_controller_w_lcm",
     srcs = [
-        "spong_controller.h",
         "spong_controller_w_lcm.cc",
+    ],
+    add_test_rule = 1,
+    test_rule_args = [
+        "-time_limit_sec=1.0",
     ],
     deps = [
         ":acrobot_lcm",
         ":acrobot_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//lcm",
-        "//math:wrap_to",
-        "//multibody:rigid_body_tree",
-        "//systems/analysis",
-        "//systems/controllers:linear_quadratic_regulator",
+        ":spong_controller",
+        ":spong_controller_params",
+        "//systems/analysis:simulator",
+        "//systems/lcm",
+        "@gflags",
     ],
 )
 
 drake_cc_binary(
     name = "run_plant_w_lcm",
     srcs = ["run_plant_w_lcm.cc"],
-    data = [":models"],
+    add_test_rule = 1,
+    test_rule_args = [
+        "-simulation_sec=1.0",
+        "-realtime_factor=0.0",
+    ],
+    test_rule_size = "medium",
     deps = [
+        ":acrobot_geometry",
         ":acrobot_lcm",
         ":acrobot_plant",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//lcm",
-        "//systems/analysis",
+        "//geometry:geometry_visualization",
+        "//systems/analysis:simulator",
         "//systems/controllers:linear_quadratic_regulator",
         "@gflags",
     ],
 )
 
 drake_cc_googletest(
-    name = "urdf_dynamics_test",
+    name = "acrobot_plant_test",
+    deps = [
+        ":acrobot_plant",
+        "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
+drake_cc_googletest(
+    name = "acrobot_geometry_test",
+    deps = [
+        ":acrobot_geometry",
+        ":acrobot_plant",
+    ],
+)
+
+drake_cc_googletest(
+    name = "multibody_dynamics_test",
     data = [":models"],
     deps = [
         ":acrobot_plant",
-        "//attic/multibody/joints",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant",
         "//common:find_resource",
         "//common/test_utilities:eigen_matrix_compare",
+        "//multibody/parsing",
     ],
 )
 

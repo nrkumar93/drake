@@ -1,12 +1,12 @@
 # -*- python -*-
 
 load(
-    "@drake//tools/workspace:cmake_configure_file.bzl",
-    "cmake_configure_file",
+    "@drake//tools/skylark:py.bzl",
+    "py_binary",
 )
 load(
-    "@drake//tools/workspace:generate_export_header.bzl",
-    "generate_export_header",
+    "@drake//tools/workspace:cmake_configure_file.bzl",
+    "cmake_configure_file",
 )
 load(
     "@drake//tools/workspace:generate_include_header.bzl",
@@ -17,7 +17,7 @@ load(
     "install",
 )
 
-licenses(["notice"])  # Apache-2.0 AND BSD-3-Clause
+licenses(["notice"])  # Apache-2.0 AND BSD-3-Clause AND BSL-1.0
 
 package(default_visibility = ["//visibility:public"])
 
@@ -80,11 +80,15 @@ cmake_configure_file(
     visibility = ["//visibility:private"],
 )
 
+# Public headers are indicated in sdformat's `include/sdf/CMakeLists.txt`.
 SDFORMAT_MOST_PUBLIC_HDRS = [
+    "include/sdf/Actor.hh",
+    "include/sdf/AirPressure.hh",
+    "include/sdf/Altimeter.hh",
     "include/sdf/Assert.hh",
+    "include/sdf/Atmosphere.hh",
     "include/sdf/Box.hh",
-    # TODO(jwnimmer-tri) Collision.hh isn't marked public in upstream sdformat,
-    # but it should be.
+    "include/sdf/Camera.hh",
     "include/sdf/Collision.hh",
     "include/sdf/Console.hh",
     "include/sdf/Cylinder.hh",
@@ -92,22 +96,35 @@ SDFORMAT_MOST_PUBLIC_HDRS = [
     "include/sdf/Error.hh",
     "include/sdf/Exception.hh",
     "include/sdf/Filesystem.hh",
+    "include/sdf/Frame.hh",
     "include/sdf/Geometry.hh",
+    "include/sdf/Gui.hh",
+    "include/sdf/Imu.hh",
     "include/sdf/Joint.hh",
     "include/sdf/JointAxis.hh",
+    "include/sdf/Lidar.hh",
+    "include/sdf/Light.hh",
     "include/sdf/Link.hh",
+    "include/sdf/Magnetometer.hh",
     "include/sdf/Material.hh",
     "include/sdf/Mesh.hh",
     "include/sdf/Model.hh",
+    "include/sdf/Noise.hh",
     "include/sdf/Param.hh",
-    "include/sdf/parser.hh",
+    "include/sdf/Pbr.hh",
+    "include/sdf/Physics.hh",
     "include/sdf/Plane.hh",
     "include/sdf/Root.hh",
     "include/sdf/SDFImpl.hh",
+    "include/sdf/Scene.hh",
+    "include/sdf/SemanticPose.hh",
+    "include/sdf/Sensor.hh",
     "include/sdf/Sphere.hh",
+    "include/sdf/Surface.hh",
     "include/sdf/Types.hh",
     "include/sdf/Visual.hh",
     "include/sdf/World.hh",
+    "include/sdf/parser.hh",
     "include/sdf/system_util.hh",
 ]
 
@@ -122,25 +139,21 @@ drake_generate_include_header(
     visibility = ["//visibility:private"],
 )
 
-# Generates EmbeddedSdf.hh.
-# TODO(jwnimmer-tri) Since the ruby code uses globbing to decide which files to
-# stringize, ideally we should create a temporary folder, copy the declared
-# `srcs` there, and then run the codegen tool -- so that its glob only finds
-# our declared `srcs`.  However, for now just relying on Bazel's runfiles tree
-# being reasonably well-defined seems good enough.
+# Generates EmbeddedSdf.cc.
 genrule(
-    name = "embed_sdf",
-    srcs = [
-        "sdf/embedSdf.rb",
-    ] + glob([
+    name = "embed_sdf_genrule",
+    srcs = glob([
         "sdf/**/*.sdf",
         "sdf/**/*.convert",
     ]),
-    outs = ["include/sdf/EmbeddedSdf.hh"],
-    cmd = "$(location @ruby) -C$$(dirname $(location sdf/embedSdf.rb)) embedSdf.rb > $@",  # noqa
-    tools = [
-        "@ruby",
-    ],
+    outs = ["src/EmbeddedSdf.cc"],
+    cmd = "$(execpath :embed_sdf) $(SRCS) > $@",  # noqa
+    tools = [":embed_sdf"],
+)
+
+py_binary(
+    name = "embed_sdf",
+    srcs = ["@drake//tools/workspace/sdformat:embed_sdf.py"],
 )
 
 SDFORMAT_ALL_PUBLIC_HDRS = SDFORMAT_MOST_PUBLIC_HDRS + [
@@ -148,51 +161,69 @@ SDFORMAT_ALL_PUBLIC_HDRS = SDFORMAT_MOST_PUBLIC_HDRS + [
     "include/sdf/sdf_config.h",  # from cmake_configure_file above
 ]
 
-SDFORMAT_DATA = glob(["sdf/1.6/*.sdf"])
-
 # Generates the library exported to users. The explicitly listed srcs= matches
 # upstream's explicitly listed sources. The explicitly listed hdrs= matches
-# upstream's public headers.
+# upstream's private headers. We exclude the irrelevant ign.hh and ign.cc.
 cc_library(
     name = "sdformat",
     srcs = [
-        "include/sdf/Collision.hh",
-        "include/sdf/Converter.hh",
-        "include/sdf/EmbeddedSdf.hh",
-        "include/sdf/ExceptionPrivate.hh",
-        "include/sdf/SDFExtension.hh",
-        "include/sdf/SDFImplPrivate.hh",
-        "include/sdf/parser_private.hh",
         "include/sdf/parser_urdf.hh",
+        "src/Actor.cc",
+        "src/AirPressure.cc",
+        "src/Altimeter.cc",
+        "src/Atmosphere.cc",
         "src/Box.cc",
+        "src/Camera.cc",
         "src/Collision.cc",
         "src/Console.cc",
         "src/Converter.cc",
+        "src/Converter.hh",
         "src/Cylinder.cc",
         "src/Element.cc",
+        "src/EmbeddedSdf.hh",
         "src/Error.cc",
         "src/Exception.cc",
+        "src/ExceptionPrivate.hh",
         "src/Filesystem.cc",
+        "src/Frame.cc",
+        "src/FrameSemantics.cc",
+        "src/FrameSemantics.hh",
         "src/Geometry.cc",
+        "src/Gui.cc",
+        "src/Imu.cc",
         "src/Joint.cc",
         "src/JointAxis.cc",
+        "src/Lidar.cc",
+        "src/Light.cc",
         "src/Link.cc",
+        "src/Magnetometer.cc",
         "src/Material.cc",
         "src/Mesh.cc",
         "src/Model.cc",
+        "src/Noise.cc",
         "src/Param.cc",
+        "src/Pbr.cc",
+        "src/Physics.cc",
         "src/Plane.cc",
         "src/Root.cc",
         "src/SDF.cc",
         "src/SDFExtension.cc",
+        "src/SDFExtension.hh",
+        "src/SDFImplPrivate.hh",
+        "src/Scene.cc",
+        "src/SemanticPose.cc",
+        "src/Sensor.cc",
         "src/Sphere.cc",
+        "src/Surface.cc",
         "src/Types.cc",
         "src/Utils.cc",
         "src/Utils.hh",
         "src/Visual.cc",
         "src/World.cc",
         "src/parser.cc",
+        "src/parser_private.hh",
         "src/parser_urdf.cc",
+        ":src/EmbeddedSdf.cc",
     ],
     hdrs = SDFORMAT_ALL_PUBLIC_HDRS,
     # TODO(jamiesnape): Enable visibility after resolving warnings such as
@@ -200,13 +231,11 @@ cc_library(
     # runtime. This was likely caused by different translation units being
     # compiled with different visibility settings."
     copts = ["-w"],
-    data = SDFORMAT_DATA,
     defines = ["SDFORMAT_STATIC_DEFINE"],
     includes = ["include"],
     linkstatic = 1,
     deps = [
         ":urdfdom",
-        "@boost//:boost_headers",
         "@ignition_math",
         "@tinyxml",
     ],
@@ -214,7 +243,6 @@ cc_library(
 
 install(
     name = "install",
-    data = SDFORMAT_DATA,
     docs = [
         "COPYING",
         "LICENSE",

@@ -3,17 +3,35 @@
 /* clang-format on */
 
 #include "drake/common/never_destroyed.h"
+#include "drake/solvers/mathematical_program.h"
 
 namespace drake {
 namespace solvers {
 
-SolverId ScsSolver::solver_id() const {
-  return id();
-}
+ScsSolver::ScsSolver()
+    : SolverBase(&id, &is_available, &is_enabled,
+                 &ProgramAttributesSatisfied) {}
+
+ScsSolver::~ScsSolver() = default;
 
 SolverId ScsSolver::id() {
   static const never_destroyed<SolverId> singleton{"SCS"};
   return singleton.access();
+}
+
+bool ScsSolver::is_enabled() { return true; }
+
+bool ScsSolver::ProgramAttributesSatisfied(const MathematicalProgram& prog) {
+  return AreRequiredAttributesSupported(
+      prog.required_capabilities(),
+      ProgramAttributes({ProgramAttribute::kLinearEqualityConstraint,
+                         ProgramAttribute::kLinearConstraint,
+                         ProgramAttribute::kLorentzConeConstraint,
+                         ProgramAttribute::kRotatedLorentzConeConstraint,
+                         ProgramAttribute::kPositiveSemidefiniteConstraint,
+                         ProgramAttribute::kExponentialConeConstraint,
+                         ProgramAttribute::kLinearCost,
+                         ProgramAttribute::kQuadraticCost}));
 }
 
 }  // namespace solvers

@@ -23,7 +23,7 @@ class LinearFeasibilityProgram : public OptimizationProgram {
 
   ~LinearFeasibilityProgram() override {};
 
-  void CheckSolution(SolverType solver_type) const override;
+  void CheckSolution(const MathematicalProgramResult& result) const override;
 
  private:
   VectorDecisionVariable<3> x_;
@@ -47,7 +47,7 @@ class LinearProgram0 : public OptimizationProgram {
 
   ~LinearProgram0() override {};
 
-  void CheckSolution(SolverType solver_type) const override;
+  void CheckSolution(const MathematicalProgramResult& result) const override;
 
  private:
   VectorDecisionVariable<2> x_;
@@ -68,7 +68,7 @@ class LinearProgram1 : public OptimizationProgram {
 
   ~LinearProgram1() override {};
 
-  void CheckSolution(SolverType solver_type) const override;
+  void CheckSolution(const MathematicalProgramResult& result) const override;
 
  private:
   VectorDecisionVariable<2> x_;
@@ -76,7 +76,7 @@ class LinearProgram1 : public OptimizationProgram {
 };
 
 // Test a simple linear programming problem
-// Adapt from http://docs.mosek.com/7.1/capi/Linear_optimization.html
+// Adapted from https://docs.mosek.com/9.0/capi/tutorial-lo-shared.html
 // min -3x0 - x1 - 5x2 - x3
 // s.t     3x0 +  x1 + 2x2        = 30
 //   15 <= 2x0 +  x1 + 3x2 +  x3 <= inf
@@ -96,7 +96,7 @@ class LinearProgram2 : public OptimizationProgram {
 
   ~LinearProgram2() override {};
 
-  void CheckSolution(SolverType solver_type) const override;
+  void CheckSolution(const MathematicalProgramResult& result) const override;
 
  private:
   VectorDecisionVariable<4> x_;
@@ -121,7 +121,7 @@ class LinearProgram3 : public OptimizationProgram {
 
   ~LinearProgram3() override {};
 
-  void CheckSolution(SolverType solver_type) const override;
+  void CheckSolution(const MathematicalProgramResult& result) const override;
 
  private:
   VectorDecisionVariable<3> x_;
@@ -205,6 +205,13 @@ class UnboundedLinearProgramTest1 : public ::testing::Test {
  protected:
   std::unique_ptr<MathematicalProgram> prog_;
 };
+
+/**
+ * Test getting dual solution for LP.
+ * This LP has inequality constraints.
+ */
+void TestLPDualSolution1(const SolverInterface& solver, double tol = 1e-6);
+
 }  // namespace test
 }  // namespace solvers
 }  // namespace drake

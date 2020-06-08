@@ -4,6 +4,7 @@
 #include <memory>
 #include <set>
 #include <utility>
+#include <variant>
 
 #include "drake/common/symbolic.h"
 #include "drake/math/barycentric.h"
@@ -18,6 +19,8 @@ namespace controllers {
 /// Consolidates the many possible options to be passed to the dynamic
 /// programming algorithms.
 struct DynamicProgrammingOptions {
+  DynamicProgrammingOptions() = default;
+
   /// A value between (0,1] that discounts future rewards.
   /// @see FittedValueIteration.
   double discount_factor{1.};
@@ -42,12 +45,27 @@ struct DynamicProgrammingOptions {
 
   /// If callable, this method is invoked during each major iteration of the
   /// dynamic programming algorithm, in order to facilitate e.g. graphical
-  /// inspection/debugging of the results.  Note: the first call happens at
-  /// iteration 1 (after the value iteration has run once), not zero.
+  /// inspection/debugging of the results.
+  ///
+  /// @note The first call happens at iteration 1 (after the value iteration
+  /// has run once), not zero.
   std::function<void(
       int iteration, const math::BarycentricMesh<double>& state_mesh,
       const Eigen::RowVectorXd& cost_to_go, const Eigen::MatrixXd& policy)>
       visualization_callback{nullptr};
+
+  /// For systems with multiple input ports, we must specify which input port is
+  /// being used in the control design.  @see systems::InputPortSelection.
+  std::variant<systems::InputPortSelection, InputPortIndex> input_port_index{
+      systems::InputPortSelection::kUseFirstInputIfItExists};
+
+  /// (Advanced) Boolean which, if true, allows this algorithm to optimize
+  /// without considering the dynamics of any non-continuous states. This is
+  /// helpful for optimizing systems that might have some additional
+  /// book-keeping variables in their state. Only use this if you are sure that
+  /// the dynamics of the additional state variables cannot impact the dynamics
+  /// of the continuous states.  @default false.
+  bool assume_non_continuous_states_are_fixed{false};
 };
 
 /// Implements Fitted Value Iteration on a (triangulated) Barycentric Mesh,
@@ -84,6 +102,7 @@ struct DynamicProgrammingOptions {
 /// in through @p simulator) and a single vector output (which is the input
 /// of the system passed in through @p simulator).
 ///
+/// @ingroup control_systems
 std::pair<std::unique_ptr<BarycentricMeshSystem<double>>, Eigen::RowVectorXd>
 FittedValueIteration(
     Simulator<double>* simulator,
@@ -148,6 +167,7 @@ FittedValueIteration(
 /// @return params the VectorXd of parameters that optimizes the
 /// supplied cost-to-go function.
 ///
+/// @ingroup control_systems
 Eigen::VectorXd LinearProgrammingApproximateDynamicProgramming(
     Simulator<double>* simulator,
     const std::function<double(const Context<double>& context)>& cost_function,

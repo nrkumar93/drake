@@ -15,8 +15,12 @@ drake_cc_package_library(
     deps = [
         ":autodiff",
         ":barycentric",
+        ":bspline_basis",
+        ":compute_numerical_gradient",
         ":continuous_algebraic_riccati_equation",
+        ":continuous_lyapunov_equation",
         ":discrete_algebraic_riccati_equation",
+        ":discrete_lyapunov_equation",
         ":eigen_sparse_triplet",
         ":evenly_distributed_pts_on_sphere",
         ":expmap",
@@ -54,6 +58,29 @@ drake_cc_library(
 )
 
 drake_cc_library(
+    name = "bspline_basis",
+    srcs = [
+        "bspline_basis.cc",
+    ],
+    hdrs = [
+        "bspline_basis.h",
+        "knot_vector_type.h",
+    ],
+    deps = [
+        "//common:default_scalars",
+    ],
+)
+
+drake_cc_library(
+    name = "compute_numerical_gradient",
+    srcs = [],
+    hdrs = ["compute_numerical_gradient.h"],
+    deps = [
+        "//common:essential",
+    ],
+)
+
+drake_cc_library(
     name = "continuous_algebraic_riccati_equation",
     srcs = ["continuous_algebraic_riccati_equation.cc"],
     hdrs = ["continuous_algebraic_riccati_equation.h"],
@@ -74,10 +101,29 @@ drake_cc_library(
     ],
 )
 
+drake_cc_library(
+    name = "continuous_lyapunov_equation",
+    srcs = ["continuous_lyapunov_equation.cc"],
+    hdrs = ["continuous_lyapunov_equation.h"],
+    deps = [
+        "//common:is_approx_equal_abstol",
+    ],
+)
+
+drake_cc_library(
+    name = "discrete_lyapunov_equation",
+    srcs = ["discrete_lyapunov_equation.cc"],
+    hdrs = ["discrete_lyapunov_equation.h"],
+    deps = [
+        "//common:is_approx_equal_abstol",
+    ],
+)
+
 # TODO(jwnimmer-tri) Improved name for this library, "pose_representations"?
 drake_cc_library(
     name = "geometric_transform",
     srcs = [
+        "hopf_coordinate.cc",
         "quaternion.cc",
         "random_rotation.cc",
         "rigid_transform.cc",
@@ -85,12 +131,12 @@ drake_cc_library(
         "rotation_matrix.cc",
     ],
     hdrs = [
+        "hopf_coordinate.h",
         "quaternion.h",
         "random_rotation.h",
         "rigid_transform.h",
         "roll_pitch_yaw.h",
         "rotation_matrix.h",
-        "transform.h",  # Deprecated.
     ],
     deps = [
         "//common:default_scalars",
@@ -203,6 +249,7 @@ drake_cc_library(
     srcs = ["quadratic_form.cc"],
     hdrs = ["quadratic_form.h"],
     deps = [
+        ":matrix_util",
         "//common:essential",
         "@eigen",
     ],
@@ -238,6 +285,7 @@ drake_cc_googletest(
         ":autodiff",
         ":gradient",
         "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_no_throw",
     ],
 )
 
@@ -251,9 +299,36 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
+    name = "bspline_basis_test",
+    deps = [
+        ":bspline_basis",
+        "//common/test_utilities",
+    ],
+)
+
+drake_cc_googletest(
+    name = "compute_numerical_gradient_test",
+    deps = [
+        ":autodiff",
+        ":compute_numerical_gradient",
+        ":gradient",
+        "//common/test_utilities:eigen_matrix_compare",
+        "//solvers:evaluator_base",
+    ],
+)
+
+drake_cc_googletest(
     name = "continuous_algebraic_riccati_equation_test",
     deps = [
         ":continuous_algebraic_riccati_equation",
+        "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
+drake_cc_googletest(
+    name = "continuous_lyapunov_equation_test",
+    deps = [
+        ":continuous_lyapunov_equation",
         "//common/test_utilities:eigen_matrix_compare",
     ],
 )
@@ -279,6 +354,15 @@ drake_cc_googletest(
     deps = [
         ":discrete_algebraic_riccati_equation",
         "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
+drake_cc_googletest(
+    name = "discrete_lyapunov_equation_test",
+    deps = [
+        ":discrete_lyapunov_equation",
+        "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_no_throw",
     ],
 )
 
@@ -332,6 +416,13 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
+    name = "hopf_coordinate_test",
+    deps = [
+        ":geometric_transform",
+    ],
+)
+
+drake_cc_googletest(
     name = "matrix_util_test",
     deps = [
         ":matrix_util",
@@ -359,6 +450,7 @@ drake_cc_googletest(
 drake_cc_googletest(
     name = "quadratic_form_test",
     deps = [
+        ":geometric_transform",
         ":quadratic_form",
         "//common/test_utilities:eigen_matrix_compare",
     ],
@@ -370,6 +462,14 @@ drake_cc_googletest(
         ":autodiff",
         ":geometric_transform",
         "//common/test_utilities:eigen_matrix_compare",
+    ],
+)
+
+drake_cc_googletest(
+    name = "random_rotation_test",
+    deps = [
+        ":geometric_transform",
+        "//common:symbolic",
     ],
 )
 
@@ -411,6 +511,7 @@ drake_cc_googletest(
     name = "rigid_transform_test",
     deps = [
         ":geometric_transform",
+        "//common/test_utilities",
     ],
 )
 

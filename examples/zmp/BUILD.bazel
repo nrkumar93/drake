@@ -1,7 +1,7 @@
 # -*- python -*-
 
 load(
-    "//tools:drake.bzl",
+    "@drake//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
@@ -14,7 +14,7 @@ drake_cc_binary(
     testonly = 1,
     srcs = ["zmp_example.cc"],
     deps = [
-        "//common/proto:call_matlab",
+        "//common/proto:call_python",
         "//systems/controllers:zmp_test_util",
     ],
 )

@@ -1,3 +1,4 @@
+#include "drake/common/test_utilities/expect_no_throw.h"
 /* clang-format off to disable clang-format-includes */
 #include "drake/solvers/mathematical_program.h"
 /* clang-format on */
@@ -5,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/solvers/solve.h"
 
 using Eigen::Vector2d;
 
@@ -31,8 +33,9 @@ GTEST_TEST(testMathematicalProgram, simpleLCP) {
   auto x = prog.NewContinuousVariables<2>();
 
   prog.AddLinearComplementarityConstraint(M, q, x);
-  EXPECT_NO_THROW(prog.Solve());
-  const auto& x_value = prog.GetSolution(x);
+  MathematicalProgramResult result;
+  DRAKE_EXPECT_NO_THROW(result = Solve(prog));
+  const auto& x_value = result.GetSolution(x);
   EXPECT_TRUE(CompareMatrices(x_value, Vector2d(16, 0), 1e-4,
                               MatrixCompareType::absolute));
 }
@@ -56,9 +59,10 @@ GTEST_TEST(testMathematicalProgram, multiLCP) {
 
   prog.AddLinearComplementarityConstraint(M, q, x);
   prog.AddLinearComplementarityConstraint(M, q, y);
-  EXPECT_NO_THROW(prog.Solve());
-  const auto& x_value = prog.GetSolution(x);
-  const auto& y_value = prog.GetSolution(y);
+  MathematicalProgramResult result;
+  DRAKE_EXPECT_NO_THROW(result = Solve(prog));
+  const auto& x_value = result.GetSolution(x);
+  const auto& y_value = result.GetSolution(y);
   EXPECT_TRUE(CompareMatrices(x_value, Vector2d(16, 0), 1e-4,
                               MatrixCompareType::absolute));
 

@@ -1,7 +1,7 @@
 # -*- python -*-
 
 load(
-    "//tools:drake.bzl",
+    "@drake//tools/skylark:drake_cc.bzl",
     "drake_cc_googletest",
 )
 load("//tools/install:install_data.bzl", "install_data")
@@ -20,11 +20,17 @@ drake_cc_googletest(
     srcs = ["urdf/test/dual_iiwa14_polytope_collision_test.cc"],
     data = [":models"],
     deps = [
-        "//attic/multibody/parsers",
         "//common:find_resource",
+        "//multibody/parsing",
+        "//multibody/plant",
     ],
 )
 
-install_data()
+install_data(
+    extra_prod_models = [
+        "LICENSE.TXT",
+        "iiwa_stack.LICENSE.txt",
+    ],
+)
 
 add_lint_tests()

@@ -2,8 +2,10 @@
 
 #include <vector>
 
+#include "drake/attic_warning.h"
 #include "drake/multibody/rigid_body_tree.h"
 #include "drake/solvers/mathematical_program.h"
+#include "drake/solvers/mathematical_program_result.h"
 #include "drake/solvers/mixed_integer_rotation_constraint.h"
 
 namespace drake {
@@ -64,9 +66,9 @@ class GlobalInverseKinematics : public solvers::MathematicalProgram {
    * with the specified index. This is the orientation of body i's frame
    * measured and expressed in the world frame.
    * @param body_index  The index of the queried body. Notice that body 0 is
-   * the world, and thus not a decision variable. Throws a runtime_error if
-   * the index is smaller than 1, or no smaller than the total number of bodies
-   * in the robot.
+   * the world, and thus not a decision variable.
+   * @throws std::runtime_error if the index is smaller than 1, or no smaller
+   * than the total number of bodies in the robot.
    */
   const solvers::MatrixDecisionVariable<3, 3>& body_rotation_matrix(
       int body_index) const;
@@ -74,9 +76,9 @@ class GlobalInverseKinematics : public solvers::MathematicalProgram {
   /** Getter for the decision variables on the position p_WBo of the body B's
    * origin measured and expressed in the world frame.
    * @param body_index The index of the queried body. Notice that body 0 is
-   * the world, and thus not a decision variable. Throws a runtime_error if
-   * the index is smaller than 1, or greater than or equal to the total number
-   * of bodies in the robot.
+   * the world, and thus not a decision variable.
+   * @throws std::runtime_error if the index is smaller than 1, or greater than
+   * or equal to the total number of bodies in the robot.
    */
   const solvers::VectorDecisionVariable<3>& body_position(int body_index) const;
 
@@ -95,7 +97,8 @@ class GlobalInverseKinematics : public solvers::MathematicalProgram {
    * coordinates, corresponding to the RigidBodyTree on which the inverse
    * kinematics problem is solved.
    */
-  Eigen::VectorXd ReconstructGeneralizedPositionSolution() const;
+  Eigen::VectorXd ReconstructGeneralizedPositionSolution(
+      const solvers::MathematicalProgramResult& result) const;
 
   /**
    * Adds the constraint that the position of a point `Q` on a body `B`
@@ -205,13 +208,13 @@ class GlobalInverseKinematics : public solvers::MathematicalProgram {
    * 1. body_position_cost.rows() == robot->get_num_bodies(), where `robot`
    *    is the input argument in the constructor of the class.
    * 2. body_position_cost(i) is non-negative.
-   * @throw a runtime error if the precondition is not satisfied.
+   * @throws std::runtime_error if the precondition is not satisfied.
    * @param body_orientation_cost The cost for each body's orientation error.
    * @pre
    * 1. body_orientation_cost.rows() == robot->get_num_bodies() , where
    *    `robot` is the input argument in the constructor of the class.
    * 2. body_position_cost(i) is non-negative.
-   * @throw a runtime_error if the precondition is not satisfied.
+   * @throws std::runtime_error if the precondition is not satisfied.
    */
   void AddPostureCost(
       const Eigen::Ref<const Eigen::VectorXd>& q_desired,
@@ -257,6 +260,60 @@ class GlobalInverseKinematics : public solvers::MathematicalProgram {
       const std::vector<Eigen::Matrix3Xd>& region_vertices);
 
   /**
+   * Describes a polytope in 3D as 𝐀 * 𝐱 ≤ 𝐛  (a set of half-spaces),
+   * where 𝐀 ∈ ℝⁿˣ³, 𝐱 ∈ ℝ³, 𝐛 ∈ ℝⁿ.
+   */
+  struct Polytope3D {
+    Polytope3D(const Eigen::Ref<const Eigen::MatrixX3d>& m_A,
+               const Eigen::Ref<const Eigen::VectorXd>& m_b)
+        : A{m_A}, b{m_b} {}
+    Eigen::MatrixX3d A;
+    Eigen::VectorXd b;
+  };
+
+  /**
+   * Adds the constraint that a sphere rigidly attached to a body has to be
+   * within at least one of the given bounded polytopes. If the polytopes don't
+   * intersect, then the sphere is in one and only one polytope. Otherwise the
+   * sphere is in at least one of the polytopes (could be in the intersection of
+   * multiple polytopes.)
+   * If the i'th polytope is described as
+   * <pre>
+   *   Aᵢ * x ≤ bᵢ
+   * </pre>
+   * where Aᵢ ∈ ℝⁿ ˣ ³, bᵢ ∈ ℝⁿ.
+   * Then a sphere with center position p_WQ and radius r is within the i'th
+   * polytope, if
+   * Aᵢ * p_WQ ≤ bᵢ - aᵢr
+   * where aᵢ(j) = Aᵢ.row(j).norm()
+   * To constrain that the sphere is in one of the n polytopes, we introduce the
+   * binary variable z ∈{0, 1}ⁿ, together with continuous variables yᵢ ∈ ℝ³, i
+   * = 1, ..., n, such that
+   * p_WQ = y₁ + ... + yₙ
+   * Aᵢ * yᵢ ≤ (bᵢ - aᵢr)zᵢ
+   * z₁ + ... +zₙ  = 1
+   * Notice that when zᵢ = 0, Aᵢ * yᵢ ≤ 0 implies that yᵢ = 0. This is due to
+   * the boundedness of the polytope. If Aᵢ * yᵢ ≤ 0 has a non-zero solution y̅,
+   * that y̅ ≠ 0 and Aᵢ * y̅ ≤ 0. Then for any point x̂ in the polytope satisfying
+   * Aᵢ * x̂ ≤ bᵢ, we know the ray x̂ + ty̅, ∀ t ≥ 0 also satisfies Aᵢ * (x̂ + ty̅) ≤
+   * bᵢ, thus the ray is within the polytope, violating the boundedness
+   * assumption.
+   * @param body_index The index of the body to which the sphere is attached.
+   * @param p_BQ The position of the sphere center in the body frame B.
+   * @param radius The radius of the sphere.
+   * @param polytopes. polytopes[i] = (Aᵢ, bᵢ). We assume that Aᵢx≤ bᵢ is a
+   * bounded polytope. It is the user's responsibility to guarantee the
+   * boundedness.
+   * @retval z The newly added binary variables. If z(i) = 1, then the sphere is
+   * in the i'th polytope. If two or more polytopes are intersecting, and the
+   * sphere is in the intersection region, then it is up to the solver to choose
+   * one of z(i) to be 1.
+   */
+  solvers::VectorXDecisionVariable BodySphereInOneOfPolytopes(
+      int body_index, const Eigen::Ref<const Eigen::Vector3d>& p_BQ,
+      double radius, const std::vector<Polytope3D>& polytopes);
+
+  /**
    * Adds joint limits on a specified joint.
    * @param body_index The joint connecting the parent link to this body will be
    * constrained.
@@ -281,7 +338,8 @@ class GlobalInverseKinematics : public solvers::MathematicalProgram {
   // index body_idx. Note that the orientation of the parent link of the body
   // body_idx should have been reconstructed, in reconstruct_R_WB.
   void ReconstructGeneralizedPositionSolutionForBody(
-      int body_idx, Eigen::Ref<Eigen::VectorXd> q,
+      const solvers::MathematicalProgramResult& result, int body_idx,
+      Eigen::Ref<Eigen::VectorXd> q,
       std::vector<Eigen::Matrix3d>* reconstruct_R_WB) const;
 
   const RigidBodyTree<double>* robot_;

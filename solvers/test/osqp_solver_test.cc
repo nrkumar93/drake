@@ -16,34 +16,37 @@ GTEST_TEST(QPtest, TestUnconstrainedQP) {
 
   OsqpSolver solver;
   if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kSolutionFound);
+    auto result = solver.Solve(prog, {}, {});
+    EXPECT_TRUE(result.is_success());
     const double tol = 1E-10;
-    EXPECT_NEAR(prog.GetSolution(x(0)), 0, tol);
-    EXPECT_NEAR(prog.GetOptimalCost(), 0, tol);
+    EXPECT_NEAR(result.GetSolution(x(0)), 0, tol);
+    EXPECT_NEAR(result.get_optimal_cost(), 0, tol);
+    EXPECT_EQ(result.get_solver_details<OsqpSolver>().y.rows(), 0);
   }
 
   // Add additional quadratic costs
   prog.AddQuadraticCost((x(1) + x(2) - 2) * (x(1) + x(2) - 2));
   if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kSolutionFound);
+    auto result = solver.Solve(prog, {}, {});
+    EXPECT_TRUE(result.is_success());
     const double tol = 1E-10;
-    EXPECT_NEAR(prog.GetSolution(x(0)), 0, tol);
-    EXPECT_NEAR(prog.GetSolution(x(1)) + prog.GetSolution(x(2)), 2, tol);
-    EXPECT_NEAR(prog.GetOptimalCost(), 0, tol);
+    EXPECT_NEAR(result.GetSolution(x(0)), 0, tol);
+    EXPECT_NEAR(result.GetSolution(x(1)) + result.GetSolution(x(2)), 2, tol);
+    EXPECT_NEAR(result.get_optimal_cost(), 0, tol);
+    EXPECT_EQ(result.get_solver_details<OsqpSolver>().y.rows(), 0);
   }
 
   // Add linear costs.
   prog.AddLinearCost(4 * x(0) + 5);
   // Now the cost is (x₀ + 2)² + (x₁ + x₂-2)² + 1
   if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kSolutionFound);
+    auto result = solver.Solve(prog, {}, {});
+    EXPECT_TRUE(result.is_success());
     const double tol = 1E-10;
-    EXPECT_NEAR(prog.GetSolution(x(0)), -2, tol);
-    EXPECT_NEAR(prog.GetSolution(x(1)) + prog.GetSolution(x(2)), 2, tol);
-    EXPECT_NEAR(prog.GetOptimalCost(), 1, tol);
+    EXPECT_NEAR(result.GetSolution(x(0)), -2, tol);
+    EXPECT_NEAR(result.GetSolution(x(1)) + result.GetSolution(x(2)), 2, tol);
+    EXPECT_NEAR(result.get_optimal_cost(), 1, tol);
+    EXPECT_EQ(result.get_solver_details<OsqpSolver>().y.rows(), 0);
   }
 }
 
@@ -52,7 +55,7 @@ TEST_P(QuadraticProgramTest, TestQP) {
   prob()->RunProblem(&solver);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     OsqpTest, QuadraticProgramTest,
     ::testing::Combine(::testing::ValuesIn(quadratic_cost_form()),
                        ::testing::ValuesIn(linear_constraint_form()),
@@ -74,16 +77,16 @@ GTEST_TEST(QPtest, TestUnbounded) {
   OsqpSolver solver;
   // The program is unbounded.
   if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kDualInfeasible);
+    auto result = solver.Solve(prog, {}, {});
+    EXPECT_EQ(result.get_solution_result(), SolutionResult::kDualInfeasible);
   }
 
   // Add a constraint
   prog.AddLinearConstraint(x(0) + 2 * x(2) == 2);
   prog.AddLinearConstraint(x(0) >= 0);
   if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kDualInfeasible);
+    auto result = solver.Solve(prog, {}, {});
+    EXPECT_EQ(result.get_solution_result(), SolutionResult::kDualInfeasible);
   }
 }
 
@@ -99,32 +102,78 @@ GTEST_TEST(QPtest, TestInfeasible) {
   OsqpSolver solver;
   // The program is infeasible.
   if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kInfeasibleConstraints);
-    EXPECT_EQ(prog.GetOptimalCost(),
+    auto result = solver.Solve(prog, {}, {});
+    EXPECT_EQ(result.get_solution_result(),
+              SolutionResult::kInfeasibleConstraints);
+    EXPECT_EQ(result.get_optimal_cost(),
               MathematicalProgram::kGlobalInfeasibleCost);
+    EXPECT_EQ(result.get_solver_details<OsqpSolver>().y.rows(), 0);
   }
 }
 
-GTEST_TEST(LPtest, TestUnbounded) {
-  MathematicalProgram prog;
-  auto x = prog.NewContinuousVariables<2>();
-
-  prog.AddLinearCost(x(0) + x(1));
-
-  // This problem is unbounded.
+GTEST_TEST(OsqpSolverTest, DualSolution1) {
+  // Test GetDualSolution().
   OsqpSolver solver;
-  if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kDualInfeasible);
-  }
+  TestQPDualSolution1(solver);
+}
 
-  // Add some constraint, the program is still unbounded.
-  prog.AddLinearConstraint(x(0) >= 1);
-  prog.AddLinearConstraint(x(1) <= 2);
-  if (solver.available()) {
-    const SolutionResult result = solver.Solve(prog);
-    EXPECT_EQ(result, SolutionResult::kDualInfeasible);
+GTEST_TEST(OsqpSolverTest, DualSolution2) {
+  // Test GetDualSolution().
+  // This QP has non-zero dual solution for linear inequality constraint.
+  OsqpSolver solver;
+  TestQPDualSolution2(solver);
+}
+
+GTEST_TEST(OsqpSolverTest, DualSolution3) {
+  // Test GetDualSolution().
+  // This QP has non-zero dual solution for the bounding box constraint.
+  OsqpSolver solver;
+  TestQPDualSolution3(solver);
+}
+
+GTEST_TEST(OsqpSolverTest, EqualityConstrainedQPDualSolution1) {
+  OsqpSolver solver;
+  TestEqualityConstrainedQPDualSolution1(solver);
+}
+
+GTEST_TEST(OsqpSolverTest, EqualityConstrainedQPDualSolution2) {
+  OsqpSolver solver;
+  TestEqualityConstrainedQPDualSolution2(solver);
+}
+
+GTEST_TEST(OsqpSolverTest, SolverOptionsTest) {
+  MathematicalProgram prog;
+  auto x = prog.NewContinuousVariables<3>();
+  prog.AddLinearConstraint(x(0) + 2 * x(1) - 3 * x(2) <= 3);
+  prog.AddLinearConstraint(4 * x(0) - 2 * x(1) - 6 * x(2) >= -3);
+  prog.AddQuadraticCost(x(0) * x(0) + 2 * x(1) * x(1) + 5 * x(2) * x(2) +
+                        2 * x(1) * x(2));
+  prog.AddLinearConstraint(8 * x(0) - x(1) == 2);
+
+  MathematicalProgramResult result;
+  OsqpSolver osqp_solver;
+  if (osqp_solver.available()) {
+    osqp_solver.Solve(prog, {}, {}, &result);
+    const int OSQP_SOLVED = 1;
+    EXPECT_EQ(result.get_solver_details<OsqpSolver>().status_val, OSQP_SOLVED);
+    // OSQP is not very accurate, use a loose tolerance.
+    EXPECT_TRUE(CompareMatrices(result.get_solver_details<OsqpSolver>().y,
+                                Eigen::Vector3d(0, 0, -0.0619621), 1E-5));
+
+    // Now only allow half the iterations in the OSQP solver. The solver should
+    // not be able to solve the problem accurately.
+    const int half_iterations =
+        result.get_solver_details<OsqpSolver>().iter / 2;
+    SolverOptions solver_options;
+    solver_options.SetOption(osqp_solver.solver_id(), "max_iter",
+                             half_iterations);
+    osqp_solver.Solve(prog, {}, solver_options, &result);
+    EXPECT_NE(result.get_solver_details<OsqpSolver>().status_val, OSQP_SOLVED);
+
+    // Now set the options in prog.
+    prog.SetSolverOption(osqp_solver.solver_id(), "max_iter", half_iterations);
+    osqp_solver.Solve(prog, {}, {}, &result);
+    EXPECT_NE(result.get_solver_details<OsqpSolver>().status_val, OSQP_SOLVED);
   }
 }
 }  // namespace test

@@ -53,6 +53,8 @@ GTEST_TEST(RigidBodyPlantTest, TestLoadUrdf) {
   EXPECT_EQ(plant.get_input_size(), 0);
   EXPECT_EQ(plant.get_output_size(), 0);
 
+  EXPECT_FALSE(plant.HasAnyDirectFeedthrough());
+
   // Obtains a const reference to the underlying RigidBodyTree within the
   // RigidBodyPlant.
   const RigidBodyTree<double>& tree = plant.get_rigid_body_tree();
@@ -116,6 +118,8 @@ GTEST_TEST(RigidBodyPlantTest, MapVelocityToConfigurationDerivativesAndBack) {
   EXPECT_EQ(plant.get_num_velocities(), kNumVelocities);
   EXPECT_EQ(plant.get_input_size(), 0);  // There are no actuators.
   EXPECT_EQ(plant.get_output_size(), kNumStates);
+
+  EXPECT_FALSE(plant.HasAnyDirectFeedthrough());
 
   const Vector3d v0(1, 2, 3);    // Linear velocity in body's frame.
   const Vector3d w0(-4, 5, -6);  // Angular velocity in body's frame.
@@ -268,9 +272,8 @@ TEST_P(KukaArmTest, SetDefaultState) {
   // Connect to a "fake" free standing input.
   // TODO(amcastro-tri): Connect to a ConstantVectorSource once Diagrams have
   // derivatives per #3218.
-  context_->FixInputPort(
-      kuka_plant_->actuator_command_input_port().get_index(),
-      make_unique<BasicVector<double>>(kuka_plant_->get_num_actuators()));
+  kuka_plant_->actuator_command_input_port().FixValue(
+      context_.get(), Eigen::VectorXd::Zero(kuka_plant_->get_num_actuators()));
 
   // Asserts that for this case the zero configuration corresponds to a state
   // vector with all entries equal to zero.
@@ -290,8 +293,8 @@ TEST_P(KukaArmTest, EvalOutput) {
 
   // Checks that the number of input and output ports in the system and context
   // are consistent.
-  ASSERT_EQ(1, kuka_plant_->get_num_input_ports());
-  ASSERT_EQ(1, context_->get_num_input_ports());
+  ASSERT_EQ(1, kuka_plant_->num_input_ports());
+  ASSERT_EQ(1, context_->num_input_ports());
   ASSERT_EQ(1, kuka_plant_->get_num_model_instances());
 
   const int kModelInstanceId =
@@ -319,10 +322,8 @@ TEST_P(KukaArmTest, EvalOutput) {
   for (int i = 0; i < kuka_plant_->get_num_actuators(); i++) {
     expected_torque[i] = i + 1;
   }
-  context_->FixInputPort(
-      kuka_plant_->model_instance_actuator_command_input_port(kModelInstanceId)
-          .get_index(),
-      make_unique<BasicVector<double>>(expected_torque));
+  kuka_plant_->model_instance_actuator_command_input_port(kModelInstanceId)
+      .FixValue(context_.get(), expected_torque);
 
   // Sets the state to a non-zero value.
   VectorXd desired_angles(kNumPositions_);
@@ -346,9 +347,9 @@ TEST_P(KukaArmTest, EvalOutput) {
   // (In this context, there is only one model instance and thus only one model
   // instance state port.)
   if (kuka_plant_->is_state_discrete()) {
-    ASSERT_EQ(5, output_->get_num_ports());
+    ASSERT_EQ(5, output_->num_ports());
   } else {
-    ASSERT_EQ(6, output_->get_num_ports());
+    ASSERT_EQ(6, output_->num_ports());
   }
 
   kuka_plant_->CalcOutput(*context_, output_.get());
@@ -374,7 +375,7 @@ TEST_P(KukaArmTest, EvalOutput) {
   // Evaluates the correctness of the kinematics results port.
   const int index = kuka_plant_->kinematics_results_output_port().get_index();
   auto& kinematics_results =
-      output_->get_data(index)->GetValue<KinematicsResults<double>>();
+      output_->get_data(index)->get_value<KinematicsResults<double>>();
   ASSERT_EQ(kinematics_results.get_num_positions(), kNumPositions_);
   ASSERT_EQ(kinematics_results.get_num_velocities(), kNumVelocities_);
 
@@ -403,7 +404,7 @@ TEST_P(KukaArmTest, EvalOutput) {
 
 // Instantiate the value-parameterized tests to run twice: once with continuous
 // state and once with discrete state.
-INSTANTIATE_TEST_CASE_P(Blank, KukaArmTest,
+INSTANTIATE_TEST_SUITE_P(Blank, KukaArmTest,
     testing::Values(0.0 /* continuous state */, 1e-3 /* discrete state */));
 
 GTEST_TEST(rigid_body_plant_test, TestJointLimitForcesFormula) {
@@ -473,10 +474,7 @@ double GetPrismaticJointLimitAccel(double position, double applied_force) {
   // Apply a constant force on the input.
   Vector1d input;
   input << applied_force;
-  auto input_vector = std::make_unique<BasicVector<double>>(1);
-  input_vector->set_value(input);
-  context->FixInputPort(plant.actuator_command_input_port().get_index(),
-                        move(input_vector));
+  plant.actuator_command_input_port().FixValue(context.get(), input);
 
   // Obtain the time derivatives; test that speed is zero, return acceleration.
   auto derivatives = plant.AllocateTimeDerivatives();
@@ -533,6 +531,8 @@ GTEST_TEST(RigidBodyPlantTest, InstancePortTest) {
   EXPECT_EQ(plant.get_num_velocities(1), 4);
   EXPECT_EQ(plant.get_num_states(1), 8);
 
+  EXPECT_TRUE(plant.HasAnyDirectFeedthrough());
+
   // TODO(liang.fok) The following has a bug, see #4697.
   const RigidBodyTree<double>& tree = plant.get_rigid_body_tree();
   const std::map<std::string, int> position_name_to_index_map =
@@ -567,7 +567,7 @@ GTEST_TEST(rigid_body_plant_test, BasicTimeSteppingTest) {
   // but as discrete state.
   EXPECT_TRUE(continuous_context->has_only_continuous_state());
   EXPECT_TRUE(time_stepping_context->has_only_discrete_state());
-  EXPECT_EQ(continuous_context->get_continuous_state().size(),
+  EXPECT_EQ(continuous_context->num_continuous_states(),
             time_stepping_context->get_discrete_state(0).size());
 
   // Check that the dynamics of the time-stepping model match the
@@ -801,7 +801,7 @@ GTEST_TEST(RigidBodyPlantTest, LinearizePendulumTest) {
   auto context = pendulum.CreateDefaultContext();
   auto& state = context->get_mutable_continuous_state_vector();
   state.SetFromVector(Eigen::Vector2d{M_PI, 0.});
-  context->FixInputPort(0, Vector1d{0.});
+  pendulum.get_input_port(0).FixValue(context.get(), 0.);
 
   std::unique_ptr<LinearSystem<double>> linearized_pendulum =
       systems::Linearize(pendulum, *context);

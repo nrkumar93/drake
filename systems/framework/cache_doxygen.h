@@ -24,9 +24,10 @@ parameters, states, input ports, accuracy) and _computed_ values (e.g.
 derivatives, output ports) that depend on some or all of the source values. We
 call the particular dependencies of a computed value its _prerequisites_. The
 caching system described here manages computed values so that
- - they are recomputed _only if_ a prerequisite has changed,
- - they are marked out of date _whenever_ a prerequisite changes, and
- - _every_ access to a computed value first ensures that it is up to date.
+
+- they are recomputed _only if_ a prerequisite has changed,
+- they are marked out of date _whenever_ a prerequisite changes, and
+- _every_ access to a computed value first ensures that it is up to date.
 
 Accessing computed values is a critical, inner-loop activity during
 simulation (many times per step) so the implementation is designed to provide
@@ -42,13 +43,14 @@ Caching is entirely about performance. Hence, other than correctness, the
 performance goals listed above are the primary architectural constraints. Other
 goals also influenced the design. Here are the main goals in roughly descending
 order of importance.
- 1. Must be correct (same result with caching on or off).
- 2. Must be fast.
- 3. Must preserve independence of System and Context objects (e.g., no
-    cross-pointers).
- 4. Should provide a simple conceptual model and API for users.
- 5. Should treat all value sources and dependencies in Drake uniformly.
- 6. Should be backwards compatible with the existing API.
+
+1. Must be correct (same result with caching on or off).
+2. Must be fast.
+3. Must preserve independence of System and Context objects (e.g., no
+   cross-pointers).
+4. Should provide a simple conceptual model and API for users.
+5. Should treat all value sources and dependencies in Drake uniformly.
+6. Should be backwards compatible with the existing API.
 
 In service of correctness and speed we need instrumentation for debugging and
 performance measurement. For example, it should be possible to disable caching
@@ -58,9 +60,10 @@ to verify that the results don't change.
 validation of dependency lists. Instead we rely on a conservative default
 (depends on everything), and the ability to disable caching during testing.
 Several follow-ons are possible to improve this:
- - Runtime validation that computations only request sub-computations for which
-   they hold tickets (probably affordable only in Debug), and
- - Use of symbolic expressions to calculate dependency lists automatically.
+
+- Runtime validation that computations only request sub-computations for which
+  they hold tickets (probably affordable only in Debug), and
+- Use of symbolic expressions to calculate dependency lists automatically.
 
 @anchor cache_design_architecture
 <h2>Architecture</h2>
@@ -90,17 +93,18 @@ values to be exposed directly without the intermediate cache entry, but the
 semantics will be unchanged.
 
 From a user perspective:
- - Cache entries of arbitrary type are allocated to hold the results of all
-   significant computations, including built-ins like derivatives, energy,
-   and output ports as well as user-defined internal computations.
-   Prerequisites for these computations are explicitly noted at the time they
-   are declared; the default for user-defined cache entries is that they are
-   dependent on all sources.
- - Computation is initiated when a result is requested via an "Eval" method, if
-   the result is not already up to date with respect to its prerequisites, which
-   are recursively obtained using their Eval methods.
- - Cached results are automatically marked out of date when any of their
-   prerequisites may have changed.
+
+- Cache entries of arbitrary type are allocated to hold the results of all
+  significant computations, including built-ins like derivatives, energy,
+  and output ports as well as user-defined internal computations.
+  Prerequisites for these computations are explicitly noted at the time they
+  are declared; the default for user-defined cache entries is that they are
+  dependent on all sources.
+- Computation is initiated when a result is requested via an "Eval" method, if
+  the result is not already up to date with respect to its prerequisites, which
+  are recursively obtained using their Eval methods.
+- Cached results are automatically marked out of date when any of their
+  prerequisites may have changed.
 
 Figure 1 below illustrates the computational structure of a Drake LeafSystem,
 paired with its LeafContext. A Drake Diagram interconnects subsystems like
@@ -148,12 +152,13 @@ _intra_-System dependencies are permitted; _inter_-System dependencies are
 expressed by listing an input port as a prerequisite. There are six kinds of
 value sources within a System's Context that can serve as prerequisites for
 cached results within that %Context:
- 1. Time
- 2. Input ports
- 3. %Parameters (numerical and abstract)
- 4. %State (including continuous, discrete, and abstract variables)
- 5. Other cache entries
- 6. Accuracy
+
+1. Time
+2. Input ports
+3. %Parameters (numerical and abstract)
+4. %State (including continuous, discrete, and abstract variables)
+5. Other cache entries
+6. Accuracy
 
 In addition, we support "fixed" input ports whose values are provided locally;
 each such value is a value source, but is restricted to its corresponding
@@ -181,10 +186,11 @@ can be properly notified when it may be invalid.
 An Output Port for a System is a "window" onto one of the value sources within
 that %System's Context; that is the only way in which internal values of a
 %System are exported to other Systems in a Diagram. That value source may be
- - a cache entry allocated specifically for the output port, or
- - a pre-existing source like a state subgroup or a cached value that has other
-   uses (not implemented yet), or
- - an output port of a contained subsystem that has been exported.
+
+- a cache entry allocated specifically for the output port, or
+- a pre-existing source like a state subgroup or a cached value that has other
+  uses (not implemented yet), or
+- an output port of a contained subsystem that has been exported.
 
 An output port is a subscriber to its source, and a prerequisite to the
 downstream input ports that it drives.
@@ -199,9 +205,10 @@ to the source output port's tracker.
 <h2>Input ports</h2>
 
 The value source for a subsystem input port is either
- - an output port of a peer subsystem, or
- - an input port of its parent Diagram, or
- - a locally-stored value.
+
+- an output port of a peer subsystem, or
+- an input port of its parent Diagram, or
+- a locally-stored value.
 
 When an input port's value comes from a locally-stored value, we call it a
 _fixed_ input port. Note that the fixed value is stored as a source value in the
@@ -223,9 +230,10 @@ is automatically subscribed to the input port's source's tracker.
 
 Certain computations are defined by the system framework so are automatically
 assigned cache entries in the Context. Currently those are:
- - Leaf output ports
- - Time derivatives
- - Power and energy (scalars)
+
+- Leaf output ports
+- Time derivatives
+- Power and energy (scalars)
 
 Output ports that have their own Calc() methods are also automatically assigned
 cache entries. Currently that applies to every leaf output port, but not to
@@ -291,20 +299,20 @@ v                    |    | continuous velocity      | — ¹
 z                    |    | misc. continuous state   | — ¹
 xc                   |    | any continuous state     | q v z
 xd                   |    | any discrete state       | xdᵢ ∀i ¹ ²
-xa                   |    | any abstract state       | xaⱼ ∀j ¹ ²
+xa                   |    | any abstract state       | xaᵢ ∀i ¹ ²
 all_state            | x  | any state variable       | xc xd xa
 pn                   |    | any numeric parameter    | pnᵢ ∀i ¹ ²
 pa                   |    | any abstract parameter   | paᵢ ∀i ¹ ²
 all_parameters       | p  | any parameter p          | pn pa
 all_input_ports      | u  | any input port u         | uᵢ ∀i
 all_sources          |    | any change to %Context   | t, a, x, p, u
-configuration        |    | may affect pose or PE    | q, a, p, xd, xa ³
+configuration        |    | may affect pose or PE    | q, z, a, p, xd, xa ³
 kinematics           |    | may affect pose/motion   | configuration, v ³
-xcdot                |    | d/dt xc cached value     | all_sources ¹
-pe                   |    | potential energy         | all_sources ¹
-ke                   |    | kinetic energy           | all_sources ¹
-pc                   |    | conservative power       | all_sources ¹
-pnc                  |    | non-conservative power   | all_sources ¹
+xcdot                |    | d/dt xc cached value     | all_sources ¹ ⁵
+pe                   |    | potential energy         | all_sources ¹ ⁵
+ke                   |    | kinetic energy           | all_sources ¹ ⁵
+pc                   |    | conservative power       | all_sources ¹ ⁵
+pnc                  |    | non-conservative power   | all_sources ¹ ⁵
 numeric_parameter(i) |pnᵢ | one numeric parameter    | — ²
 abstract_parameter(i)|paᵢ | one abstract parameter   | — ²
 discrete_state(i)    |xdᵢ | one discrete state group | — ²
@@ -313,6 +321,7 @@ input_port(i)        | uᵢ | one input port           | peer, parent, or self �
 cache_entry(i)       | cᵢ | one cache entry          | explicit prerequisites
 
 _Notes_
+
 1. %Diagram has additional subscriptions for this tracker. See the
    diagram-specific table in the
    @ref caching_implementation_for_diagrams "Diagram-specific implementation"
@@ -320,11 +329,15 @@ _Notes_
 2. There are no Diagram-level trackers for individual discrete/abstract
    variables and numeric/abstract parameters.
 3. Until issue [#9171](https://github.com/RobotLocomotion/drake/issues/9171)
-   is resolved we don't know which non-continuous variables or which parameters
+   is resolved we don't know which non-`v` state variables or which parameters
    may affect kinematics, so we have to depend on all of them.
 4. Input ports are dependent on the source that provides their values. That
    may be the output port of a peer subsystem, the input port of the parent
    diagram, or a locally-stored fixed input port value.
+5. %Diagram currently subscribes to all_sources for this tracker, but in the
+   future it will only subscribe to the corresponding leaf trackers and no
+   longer subscribe to the Diagram's all_sources tracker.  The leaf trackers
+   are sufficient on their own; the all_sources tracker is redundant.
 
 Fixed input port values and output ports also have associated trackers. There
 are methods for obtaining their tickets also but they are for internal use.
@@ -372,13 +385,14 @@ category. Diagram contexts do have trackers for their composite state and
 parameters, and we must subscribe those to the corresponding child subsystem
 trackers to ensure notifications propagate upward. Using capital letters to
 denote the %Diagram composite trackers we have:
- - Q  = { qₛ : s ∈ 𝕊}
- - V  = { vₛ : s ∈ 𝕊}
- - Z  = { zₛ : s ∈ 𝕊}
- - Xd = {xdₛ : s ∈ 𝕊}
- - Xa = {xaₛ : s ∈ 𝕊}
- - Pn = {pnₛ : s ∈ 𝕊}
- - Pa = {paₛ : s ∈ 𝕊}
+
+- Q  = { qₛ : s ∈ 𝕊}
+- V  = { vₛ : s ∈ 𝕊}
+- Z  = { zₛ : s ∈ 𝕊}
+- Xd = {xdₛ : s ∈ 𝕊}
+- Xa = {xaₛ : s ∈ 𝕊}
+- Pn = {pnₛ : s ∈ 𝕊}
+- Pa = {paₛ : s ∈ 𝕊}
 
 where 𝕊 is the set of immediate child subsystems of a %Diagram. Note that the
 higher-level built-in trackers (all_state, all_parameters, configuration, etc.)
@@ -390,11 +404,12 @@ subsystems.
 In addition to composite sources, Diagrams have a limited set of built-in
 computations that are composites of their children's corresponding computations.
 These are
- - xcdot: composite time derivatives
- - pe: summed potential energy
- - ke: summed kinetic energy
- - pc: summed conservative power
- - pnc: summed non-conservative power
+
+- xcdot: composite time derivatives
+- pe: summed potential energy
+- ke: summed kinetic energy
+- pc: summed conservative power
+- pnc: summed non-conservative power
 
 Each of these has a cache entry and an associated Calc() method that sets the
 cache value by visiting the children to Eval() the corresponding quantities,
@@ -447,6 +462,7 @@ pc                   | —                           | subsystem pc
 pnc                  | —                           | subsystem pnc
 
 _Notes_
+
 1. Time and accuracy can be set only in the root Context so can only
    propagate downward.
 
@@ -470,6 +486,36 @@ the composite %Diagram time derivatives cache entry has subscribed to its
 subsystems' time derivative cache entries, that change will also mark the
 %Diagram time derivative out of date.
 
+@anchor cache_trackers_figure
+<h2>Tracker Subscription Summary</h2>
+
+The figure below depicts the tracker subscriptions detailed in the above sections.
+The arrow direction reads as "subscribes to (up)", i.e., "depends on":
+
+- Folder-shaped nodes denote a Diagram tracker.
+- Oval-shaped nodes denote a System tracker (the same for both LeafSystem or
+  Diagram).
+- \b Black arrows are per the "Subscribes to" column in the the "Predefined
+  dependency tickets" table.
+  - <span style="color:green">\b Green</span> arrows are per the input_port(i)
+    row in the same table.  Unlike black arrows which are always subscribed,
+    the green arrows are only subscribed if that particular input port source
+    is in effect.
+- <span style="color:blue">\b Blue</span> arrows are per the "Subscribes to"
+  column in the "Diagram-specific implementation" table.
+- <span style="color:red">\b Red</span> arrows are the implicit subscriptions
+  implemented as "Context modification methods", per the "Notifications sent"
+  column in the "Diagram-specific implementation" table.  When the diagram
+  quantity at the arrowhead is modified, the leaf quantities at the tail are
+  invalidated.  The dotted line style denotes an implicit subscription, not
+  part of the tracker.
+- <span style="border-bottom: 1px dashed">\b Dashed</span> lines indicate an
+  overly conservative subscription, planned to be made more precise in the
+  future.  See the specific text in the prior sections for details.
+- Doubled-line edges indicate that the item has a multiplicity of 0..many (∀i).
+
+@dotfile systems/framework/images/cache_doxygen_trackers.dot
+
 @anchor cache_design_implementation
 <h2>Implementation</h2>
 
@@ -477,6 +523,7 @@ The logical cache entry object is split into two pieces to reflect the const
 and mutable aspects. Given a CacheIndex, either piece may be obtained very
 efficiently. The `const` part is a CacheEntry owned by the System, and consists
 of:
+
  - The Allocator() and Calculator() methods,
  - a list of the Calculator's prerequisites, and
  - the assigned dependency ticket for this cache entry.
@@ -484,6 +531,7 @@ of:
 The mutable part is a CacheEntryValue and associated DependencyTracker, both
 owned by the Context. The CacheEntryValue is designed to optimize access
 efficiency. It contains:
+
  - an AbstractValue (obtained by invoking the Allocator()), and
  - a flag indicating whether the value is out of date with respect to its
    prerequisites, and
@@ -502,6 +550,7 @@ chosen so that only a single check that an int is zero is required to know that
 a value may be returned without computation.
 
 To summarize, the Eval() method for a CacheEntry operates as follows:
+
  1. The CacheEntryValue is obtained using an array index into the Context's
     cache.
  2. If the value is out of date (or caching is disabled), call the
@@ -512,6 +561,7 @@ To summarize, the Eval() method for a CacheEntry operates as follows:
 
 The DependencyTracker is designed to optimize invalidation efficiency.
 It contains:
+
  - Pointers to the prerequisite DependencyTrackers to which it has subscribed,
  - pointers to downstream subscribers that have registered as dependents of
    this cache entry,
@@ -519,19 +569,20 @@ It contains:
  - bookkeeping and statistics-gathering members.
 
 A prerequisite change to a particular value source works like this:
- 1. A "set" method or method providing mutable access to a source is invoked
-    on a Context.
- 2. A unique "change event" number N is assigned.
- 3. The ticket associated with the source is used to find its DependencyTracker
-    (just an array index operation).
- 4. The tracker's notification method is invoked, providing the change event
-    number N.
- 5. The tracker records N, and then notifies all trackers on its "subscribers"
-    list that change event N is occurring.
- 6. A notified tracker first checks its recorded change event number. If it is
-    already set to N then no further action is taken. Otherwise, it records N,
-    marks the associated cache entry (if any) out of date, and recursively
-    notifies all trackers on its "subscribers" list.
+
+1. A "set" method or method providing mutable access to a source is invoked
+   on a Context.
+2. A unique "change event" number N is assigned.
+3. The ticket associated with the source is used to find its DependencyTracker
+   (just an array index operation).
+4. The tracker's notification method is invoked, providing the change event
+   number N.
+5. The tracker records N, and then notifies all trackers on its "subscribers"
+   list that change event N is occurring.
+6. A notified tracker first checks its recorded change event number. If it is
+   already set to N then no further action is taken. Otherwise, it records N,
+   marks the associated cache entry (if any) out of date, and recursively
+   notifies all trackers on its "subscribers" list.
 
 For efficiency, changes to multiple value sources can be grouped into the same
 change event. Also, DependencyTracker subscriber lists and cache entry

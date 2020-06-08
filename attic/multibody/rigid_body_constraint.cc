@@ -11,6 +11,7 @@
 #include "drake/math/autodiff_gradient.h"
 #include "drake/math/gradient.h"
 #include "drake/math/quaternion.h"
+#include "drake/math/rigid_transform.h"
 #include "drake/multibody/rigid_body_tree.h"
 #include "drake/util/drakeGeometryUtil.h"
 
@@ -772,11 +773,11 @@ RelativePositionConstraint::RelativePositionConstraint(
       bodyB_idx_(bodyB_idx),
       bodyA_name_(robot->getBodyOrFrameName(bodyA_idx)),
       bodyB_name_(robot->getBodyOrFrameName(bodyB_idx)) {
-  Isometry3d bTbp_isometry;
-  bTbp_isometry.translation() = bTbp.topRows<3>();
-  bTbp_isometry.linear() = drake::math::quat2rotmat(bTbp.bottomRows<4>());
-  bTbp_isometry.makeAffine();
-  bpTb_ = bTbp_isometry.inverse();
+  const Vector3d position = bTbp.topRows<3>();
+  const Vector4d wxyz = bTbp.bottomRows<4>();
+  const Eigen::Quaterniond quat(wxyz(0), wxyz(1), wxyz(2), wxyz(3));
+  const drake::math::RigidTransformd X(quat, position);
+  bpTb_ = X.inverse().GetAsIsometry3();
   set_type(RigidBodyConstraint::RelativePositionConstraintType);
 }
 
@@ -1089,9 +1090,9 @@ void GazeOrientConstraint::eval(const double* t, KinematicsCache<double>& cache,
 
     auto axis_err_autodiff_args =
         initializeAutoDiffTuple(quat, quat_des_, get_axis());
-    auto e_autodiff = quatDiffAxisInvar(get<0>(axis_err_autodiff_args),
-                                        get<1>(axis_err_autodiff_args),
-                                        get<2>(axis_err_autodiff_args));
+    auto e_autodiff = quatDiffAxisInvar(std::get<0>(axis_err_autodiff_args),
+                                        std::get<1>(axis_err_autodiff_args),
+                                        std::get<2>(axis_err_autodiff_args));
     auto axis_err = e_autodiff.value();
     auto daxis_err = e_autodiff.derivatives().transpose().eval();
 
@@ -1104,8 +1105,8 @@ void GazeOrientConstraint::eval(const double* t, KinematicsCache<double>& cache,
     MatrixXd daxis_err_dq = daxis_err.block(0, 0, 1, 4) * dquat;
 
     auto quat_diff_autodiff_args = initializeAutoDiffTuple(quat, quat_des_);
-    auto q_diff_autodiff = quatDiff(get<0>(quat_diff_autodiff_args),
-                                    get<1>(quat_diff_autodiff_args));
+    auto q_diff_autodiff = quatDiff(std::get<0>(quat_diff_autodiff_args),
+                                    std::get<1>(quat_diff_autodiff_args));
     auto q_diff = autoDiffToValueMatrix(q_diff_autodiff);
     auto dq_diff = autoDiffToGradientMatrix(q_diff_autodiff);
 

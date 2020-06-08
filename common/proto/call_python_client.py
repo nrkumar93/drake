@@ -1,7 +1,46 @@
-from __future__ import print_function
+"""
+Permits calling arbitrary functions and passing some forms of data from C++
+to Python (only one direction) as a server-client pair.
+
+The server in this case is the C++ program, and the client is this binary.
+For an example of C++ usage, see `call_python_server_test.cc`.
+
+Here's an example of running with the C++ test program:
+
+    cd drake
+    bazel build //common/proto:call_python_client_cli //common/proto:call_python_server_test  # noqa
+    # Create default pipe file.
+    rm -f /tmp/python_rpc && mkfifo /tmp/python_rpc
+
+    # In Terminal 1, run client.
+    ./bazel-bin/common/proto/call_python_client_cli
+
+    # In Terminal 2, run server (or your C++ program).
+    ./bazel-bin/common/proto/call_python_server_test
+
+To use in Jupyter (if you have it installed) without a FIFO file (such that
+it's non-blocking):
+
+    cd drake
+    bazel build //common/proto:call_python_client_cli //common/proto:call_python_server_test  # noqa
+    rm -f /tmp/python_rpc  # Do not make it FIFO
+
+    # In Terminal 1, run server, create output.
+    ./bazel-bin/common/proto/call_python_server_test
+
+    # In Terminal 2, run client in notebook.
+    ./bazel-bin/common/proto/call_python_client_cli \
+        -c jupyter notebook ${PWD}/common/proto/call_python_client_notebook.ipynb  # noqa
+    # Execute: Cell > Run All
+
+Note:
+    Occasionally, the plotting will not come through on the notebook. I (Eric)
+    am unsure why.
+"""
+
 import argparse
 import os
-from Queue import Queue
+from queue import Queue
 import signal
 import stat
 import sys
@@ -10,11 +49,8 @@ import time
 import traceback
 
 import numpy as np
-# Hacky, but this is the simplest route right now.
-# @ref https://www.datadoghq.com/blog/engineering/protobuf-parsing-in-python/
-from google.protobuf.internal.decoder import _DecodeVarint32
 
-from drake.common.proto.matlab_rpc_pb2 import MatlabArray, MatlabRPC
+from drake import lcmt_call_python, lcmt_call_python_data
 
 
 def _ensure_sigint_handler():
@@ -62,7 +98,7 @@ def _get_required_helpers(scope_locals):
         """Parse a slice object from a string. """
         def to_piece(s):
             return s and int(s) or None
-        pieces = map(to_piece, expr.split(':'))
+        pieces = list(map(to_piece, expr.split(':')))
         if len(pieces) == 1:
             return slice(pieces[0], pieces[0] + 1)
         else:
@@ -101,35 +137,6 @@ def _get_required_helpers(scope_locals):
 class _KwArgs(dict):
     # Indicates values meant solely for `**kwargs`.
     pass
-
-
-def _cexec(stmt, globals_, locals_):
-    # Enable executing a statement via evaluation so that we may control
-    # "locals" and "globals" explicitly.
-    eval_locals = dict(stmt=stmt, locals_=locals_, _cexec_impl=_cexec_impl)
-    # Dispatch to function that calls "exec" so that we can control locals
-    # and globals.
-    eval("_cexec_impl(stmt, locals_)", eval_locals, globals_)
-
-
-def _cexec_impl(_stmt, _locals):
-    # Implementation for `_cexec` to capture locals and globals.
-    locals().update(_locals)
-    _old_vars = None
-    _new_vars = None
-    _old_vars = locals().keys()
-    # Execute with context.
-    exec _stmt
-    # Figure out new things.
-    locals_new = locals()
-    _new_vars = set(locals_new.keys()) - set(_old_vars)
-    for var in _locals.keys():
-        if var not in locals_new:
-            del _locals[var]
-        else:
-            _locals[var] = locals()[var]
-    for var in _new_vars:
-        _locals[var] = locals()[var]
 
 
 class _ExecutionCheck(object):
@@ -200,6 +207,36 @@ def default_globals():
         """
         plt.pause(interval)
 
+    def box(bmin, bmax, rstride=1, cstride=1, **kwargs):
+        """Plots a box bmin[i] <= x[i] <= bmax[i] for i < 3."""
+        fig = plt.gcf()
+        ax = fig.gca(projection='3d')
+        u = np.linspace(1, 9, 5) * np.pi / 4
+        U, V = np.meshgrid(u, u)
+        cx, cy, cz = (bmax + bmin) / 2
+        dx, dy, dz = bmax - bmin
+        X = cx + dx * np.cos(U) * np.sin(V)
+        Y = cy + dy * np.sin(U) * np.sin(V)
+        Z = cz + dz * np.cos(V) / np.sqrt(2)
+        ax.plot_surface(X, Y, Z, rstride=rstride, cstride=cstride, **kwargs)
+
+    def plot3(x, y, z, **kwargs):
+        """Plots a 3d line plot."""
+        fig = plt.gcf()
+        ax = fig.gca(projection='3d')
+        ax.plot(x, y, z, **kwargs)
+
+    def sphere(n, rstride=1, cstride=1, **kwargs):
+        """Plots a sphere."""
+        fig = plt.gcf()
+        ax = fig.gca(projection='3d')
+        u = np.linspace(0, np.pi, n)
+        v = np.linspace(0, 2 * np.pi, n)
+        X = np.outer(np.sin(u), np.sin(v))
+        Y = np.outer(np.sin(u), np.cos(v))
+        Z = np.outer(np.cos(u), np.ones_like(v))
+        ax.plot_surface(X, Y, Z, rstride=rstride, cstride=cstride, **kwargs)
+
     def surf(x, y, Z, rstride=1, cstride=1, **kwargs):
         """Plots a 3d surface."""
         fig = plt.gcf()
@@ -250,7 +287,7 @@ class CallPythonClient(object):
     """
     def __init__(self, filename=None, stop_on_error=True,
                  scope_globals=None, scope_locals=None,
-                 threaded=True, wait=False):
+                 threaded=False, wait=False):
         if filename is None:
             # TODO(jamiesnape): Implement and use a
             # drake.common.GetRpcPipeTempDirectory function.
@@ -294,16 +331,17 @@ class CallPythonClient(object):
         self._file = None
 
     def _to_array(self, arg, dtype):
-        # Converts a protobuf argument to the appropriate NumPy array (or
-        # scalar).
+        # Converts a lcmt_call_python argument to the appropriate NumPy array
+        # (or scalar).
         np_raw = np.frombuffer(arg.data, dtype=dtype)
-        if arg.shape_type == MatlabArray.SCALAR:
+        if arg.shape_type == lcmt_call_python_data.SCALAR:
             assert arg.cols == 1 and arg.rows == 1
             return np_raw[0]
-        elif arg.shape_type == MatlabArray.VECTOR:
+        elif arg.shape_type == lcmt_call_python_data.VECTOR:
             assert arg.cols == 1
             return np_raw.reshape(arg.rows)
-        elif arg.shape_type is None or arg.shape_type == MatlabArray.MATRIX:
+        elif arg.shape_type is None or \
+                arg.shape_type == lcmt_call_python_data.MATRIX:
             # TODO(eric.cousineau): Figure out how to ensure `np.frombuffer`
             # creates a column-major array?
             return np_raw.reshape(arg.cols, arg.rows).T
@@ -324,27 +362,25 @@ class CallPythonClient(object):
     def _execute_message_impl(self, msg):
         # Executes relevant portions of a message.
         # Create input arguments.
-        args = msg.rhs
-        nargs = len(args)
         inputs = []
         kwargs = None
-        for i, arg in enumerate(args):
-            arg_raw = arg.data
+        for i, arg in enumerate(msg.rhs):
             value = None
-            if arg.type == MatlabArray.REMOTE_VARIABLE_REFERENCE:
-                id = np.frombuffer(arg_raw, dtype=np.uint64).reshape(1)[0]
+            if (arg.data_type
+                    == lcmt_call_python_data.REMOTE_VARIABLE_REFERENCE):
+                id = np.frombuffer(arg.data, dtype=np.uint64).reshape(1)[0]
                 if id not in self._client_vars:
-                    raise RuntimeError("Unknown local variable. " +
+                    raise RuntimeError("Unknown local variable. "
                                        "Dropping message.")
                 value = self._client_vars[id]
-            elif arg.type == MatlabArray.DOUBLE:
+            elif arg.data_type == lcmt_call_python_data.DOUBLE:
                 value = self._to_array(arg, np.double)
-            elif arg.type == MatlabArray.CHAR:
+            elif arg.data_type == lcmt_call_python_data.CHAR:
                 assert arg.rows == 1
-                value = str(arg_raw)
-            elif arg.type == MatlabArray.LOGICAL:
+                value = arg.data.decode('utf8')
+            elif arg.data_type == lcmt_call_python_data.LOGICAL:
                 value = self._to_array(arg, np.bool)
-            elif arg.type == MatlabArray.INT:
+            elif arg.data_type == lcmt_call_python_data.INT:
                 value = self._to_array(arg, np.int32)
             else:
                 assert False
@@ -357,24 +393,21 @@ class CallPythonClient(object):
         # Call the function
         # N.B. No security measures to sanitize function name.
         function_name = msg.function_name
-        out_id = None
-        if len(msg.lhs) > 0:
-            assert len(msg.lhs) == 1
-            out_id = msg.lhs[0]
+        assert isinstance(function_name, str), type(function_name)
 
         self.scope_locals.update(_tmp_args=inputs, _tmp_kwargs=kwargs or {})
         # N.B. No try-catch block here. Can change this if needed.
         if function_name == "exec":
             assert len(inputs) == 1
             assert kwargs is None or len(kwargs) == 0
-            _cexec(inputs[0], self.scope_globals, self.scope_locals)
+            exec(inputs[0], self.scope_globals, self.scope_locals)
             out = None
         else:
             out = eval(function_name + "(*_tmp_args, **_tmp_kwargs)",
                        self.scope_globals, self.scope_locals)
         self.scope_locals.update(_tmp_out=out)
         # Update outputs.
-        self._client_vars[out_id] = out
+        self._client_vars[msg.lhs] = out
 
     def run(self):
         """Runs the client code.
@@ -390,8 +423,8 @@ class CallPythonClient(object):
         if not self._had_error and execution_check.count != 0:
             self._had_error = True
             sys.stderr.write(
-                "ERROR: Invalid termination. " +
-                "'execution_check.finish' called insufficient number of " +
+                "ERROR: Invalid termination. "
+                "'execution_check.finish' called insufficient number of "
                 "times: {}\n".format(execution_check.count))
         if self._wait and not self._had_error:
             wait_func = self.scope_globals["wait"]
@@ -480,16 +513,9 @@ class CallPythonClient(object):
             self._execute_message(msg)
 
     def _read_next_message(self):
-        # Returns a new incoming message using a generator.
+        """Returns incoming messages using a generator."""
         while not self._done:
-            f = self._get_file()
-            while not self._done:
-                msg = MatlabRPC()
-                status = _read_next(f, msg)
-                if status == _READ_GOOD:
-                    yield msg
-                elif status == _READ_END:
-                    break
+            fifo = self._get_file()
             # Close the file if we reach the end, NOT when exiting the scope
             # (which is why `with` is not used here).
             # This way the user can read a few messages at a time, with the
@@ -497,9 +523,41 @@ class CallPythonClient(object):
             # @note We must close / reopen the file when looping because the
             # C++ program will effectively send a EOF signal when it closes
             # the pipe.
+            while not self._done:
+                message = self._read_fifo_message(fifo)
+                if message is not None:
+                    yield message
             self._close_file()
             if not self._loop:
                 break
+
+    def _read_fifo_message(self, fifo):
+        """Reads at most one message from the given fifo."""
+        # Read the datagram size.  (The C++ code encodes the datagram_size
+        # integer as an ASCII string.)
+        datagram_size = None
+        buffer = bytearray()
+        while not self._done:
+            byte = fifo.read(1)
+            if not byte:  # EOF
+                return None
+            if byte == b'\0':  # EOM
+                datagram_size = int(buffer.decode())
+                break
+            else:
+                buffer.extend(byte)
+
+        # Read the payload.
+        buffer[:] = ()
+        while not self._done:
+            byte = fifo.read(1)
+            if not byte:  # EOF
+                return None
+            buffer.extend(byte)
+            if len(buffer) == datagram_size:
+                byte = fifo.read(1)
+                assert byte == b'\0'  # EOM
+                return lcmt_call_python.decode(bytes(buffer))
 
     def _get_file(self):
         # Gets file handle, opening if needed.
@@ -520,37 +578,15 @@ def _is_fifo(filepath):
     return stat.S_ISFIFO(os.stat(filepath).st_mode)
 
 
-_READ_GOOD = 1
-_READ_END = 2
-
-
-def _read_next(f, msg):
-    # Reads next message from the given file, following suite with C++.
-    # Number of bytes we need to consume so that we may still use
-    # `_DecodeVarint32`.
-    peek_size = 4
-    peek = f.read(peek_size)
-    if len(peek) == 0:
-        # We have reached the end.
-        return _READ_END
-    msg_size, peek_end = _DecodeVarint32(peek, 0)
-    peek_left = peek_size - peek_end
-    # Read remaining and concatenate.
-    remaining = f.read(msg_size - peek_left)
-    msg_raw = peek[peek_end:] + remaining
-    assert len(msg_raw) == msg_size
-    # Now read the message.
-    msg.ParseFromString(msg_raw)
-    return _READ_GOOD
-
-
 def main(argv):
     _ensure_sigint_handler()
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--no_wait", action='store_true',
-        help="Close client after messages are processed. " +
-             "For FIFO, this means the client will close after the C++ " +
+        help="Close client after messages are processed. "
+             "For FIFO, this means the client will close after the C++ "
              "binary is executed once.")
     parser.add_argument(
         "--no_threading", action='store_true',
@@ -559,13 +595,23 @@ def main(argv):
         "--stop_on_error", action='store_true',
         help="Stop client if there is an error when executing a call.")
     parser.add_argument("-f", "--file", type=str, default=None)
+    parser.add_argument(
+        "-c", "--command", type=str, nargs='+', default=None,
+        help="Execute command (e.g. `jupyter notebook`) instead of running "
+             "client.")
     args = parser.parse_args(argv)
 
-    client = CallPythonClient(
-        args.file, stop_on_error=args.stop_on_error,
-        threaded=not args.no_threading, wait=not args.no_wait)
-    good = client.run()
-    return good
+    if args.command is not None:
+        # Execute command s.t. it has access to the relevant PYTHNOPATH.
+        os.execvp(args.command[0], args.command)
+        # Control should not return to this program unless there was an error.
+        return False
+    else:
+        client = CallPythonClient(
+            args.file, stop_on_error=args.stop_on_error,
+            threaded=not args.no_threading, wait=not args.no_wait)
+        good = client.run()
+        return good
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@
 
 #include <gtest/gtest.h>
 
-#include "drake/lcm/drake_mock_lcm.h"
 #include "drake/lcm/lcmt_drake_signal_utils.h"
 #include "drake/lcmt_drake_signal.hpp"
 
@@ -15,10 +14,8 @@ namespace lcm {
 namespace {
 
 using drake::lcm::CompareLcmtDrakeSignalMessages;
-using drake::lcm::DrakeMockLcm;
 
 GTEST_TEST(SerializerTest, BasicTest) {
-  lcm::DrakeMockLcm lcm;
   const std::string channel_name{"channel_name"};
 
   // The device under test.
@@ -26,7 +23,7 @@ GTEST_TEST(SerializerTest, BasicTest) {
 
   // The default value should be zeroed.
   auto abstract_value = dut->CreateDefaultValue();
-  const auto& value = abstract_value->GetValueOrThrow<lcmt_drake_signal>();
+  const auto& value = abstract_value->get_value<lcmt_drake_signal>();
   EXPECT_EQ(value.dim, 0);
   EXPECT_EQ(value.val.size(), 0u);
   EXPECT_EQ(value.coord.size(), 0u);
@@ -44,7 +41,7 @@ GTEST_TEST(SerializerTest, BasicTest) {
   dut->Deserialize(message_bytes.data(), message_bytes.size(),
                    abstract_value.get());
   EXPECT_TRUE(CompareLcmtDrakeSignalMessages(
-      abstract_value->GetValue<lcmt_drake_signal>(), sample_data));
+      abstract_value->get_value<lcmt_drake_signal>(), sample_data));
 }
 
 }  // namespace

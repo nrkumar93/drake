@@ -19,9 +19,10 @@ namespace acrobot {
 
 template <typename T>
 AcrobotPlant<T>::AcrobotPlant()
-    : systems::LeafSystem<T>(systems::SystemTypeTag<acrobot::AcrobotPlant>{}) {
-  this->DeclareVectorInputPort(AcrobotInput<T>());
-  this->DeclareVectorOutputPort(AcrobotState<T>(), &AcrobotPlant::CopyStateOut);
+    : systems::LeafSystem<T>(systems::SystemTypeTag<AcrobotPlant>{}) {
+  this->DeclareVectorInputPort("elbow_torque", AcrobotInput<T>());
+  this->DeclareVectorOutputPort("acrobot_state", AcrobotState<T>(),
+                                &AcrobotPlant::CopyStateOut);
   this->DeclareContinuousState(AcrobotState<T>(), 2 /* num_q */, 2 /* num_v */,
                                0 /* num_z */);
   this->DeclareNumericParameter(AcrobotParams<T>());
@@ -113,13 +114,35 @@ void AcrobotPlant<T>::DoCalcTimeDerivatives(
   const AcrobotState<T>& state = get_state(context);
   const T& tau = get_tau(context);
 
-  Matrix2<T> M = MassMatrix(context);
-  Vector2<T> bias = DynamicsBiasTerm(context);
-  Vector2<T> B(0, 1);  // input matrix
+  const Matrix2<T> M = MassMatrix(context);
+  const Vector2<T> bias = DynamicsBiasTerm(context);
+  const Vector2<T> B(0, 1);  // input matrix
 
   Vector4<T> xdot;
-  xdot << state.theta1dot(), state.theta2dot(), M.inverse() * (B * tau - bias);
+  xdot << state.theta1dot(), state.theta2dot(),
+          M.inverse() * (B * tau - bias);
   derivatives->SetFromVector(xdot);
+}
+
+template <typename T>
+void AcrobotPlant<T>::DoCalcImplicitTimeDerivativesResidual(
+    const systems::Context<T>& context,
+    const systems::ContinuousState<T>& proposed_derivatives,
+    EigenPtr<VectorX<T>> residual) const {
+  const AcrobotState<T>& state = get_state(context);
+  const T& tau = get_tau(context);
+
+  const Matrix2<T> M = MassMatrix(context);
+  const Vector2<T> bias = DynamicsBiasTerm(context);
+  const Vector2<T> B(0, 1);  // input matrix
+
+  const auto& proposed_qdot = proposed_derivatives.get_generalized_position();
+  const auto proposed_vdot =
+      proposed_derivatives.get_generalized_velocity().CopyToVector();
+
+  *residual << proposed_qdot[0] - state.theta1dot(),
+               proposed_qdot[1] - state.theta2dot(),
+               M * proposed_vdot - (B * tau - bias);
 }
 
 template <typename T>
@@ -159,10 +182,10 @@ AcrobotWEncoder<T>::AcrobotWEncoder(bool acrobot_state_as_second_output) {
           4, std::vector<int>{0, 1});
   encoder->set_name("encoder");
   builder.Cascade(*acrobot_plant_, *encoder);
-  builder.ExportInput(acrobot_plant_->get_input_port(0));
-  builder.ExportOutput(encoder->get_output_port());
+  builder.ExportInput(acrobot_plant_->get_input_port(0), "elbow_torque");
+  builder.ExportOutput(encoder->get_output_port(), "measured_joint_positions");
   if (acrobot_state_as_second_output)
-    builder.ExportOutput(acrobot_plant_->get_output_port(0));
+    builder.ExportOutput(acrobot_plant_->get_output_port(0), "acrobot_state");
 
   builder.BuildInto(this);
 }
@@ -182,7 +205,7 @@ std::unique_ptr<systems::AffineSystem<double>> BalancingLQRController(
   auto context = acrobot.CreateDefaultContext();
 
   // Set nominal torque to zero.
-  context->FixInputPort(0, Vector1d::Constant(0.0));
+  acrobot.GetInputPort("elbow_torque").FixValue(context.get(), 0.0);
 
   // Set nominal state to the upright fixed point.
   AcrobotState<double>* x = dynamic_cast<AcrobotState<double>*>(

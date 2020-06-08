@@ -6,11 +6,9 @@ import argparse
 import collections
 import os
 import subprocess
+
 import yaml
 
-import google.protobuf.text_format
-
-from drake.tools.vector_gen import named_vector_pb2
 from drake.tools.lint.clang_format import get_clang_format_path
 from drake.tools.lint.find_data import find_data
 
@@ -116,7 +114,7 @@ def generate_indices_names_accessor_impl(cc, caller_context, fields):
     put(cc, INDICES_NAMES_ACCESSOR_IMPL_END % context, 2)
 
 
-# A second variant of a default constructor (field-by-field setting).
+# A default constructor with field-by-field setting.
 DEFAULT_CTOR_CUSTOM_BEGIN_API = """
   /// Default constructor.  Sets all rows to their default value:
 """
@@ -137,7 +135,6 @@ DEFAULT_CTOR_FIELD_UNKNOWN_DOC_UNITS = 'unknown'
 
 
 def generate_default_ctor(hh, caller_context, fields):
-    # Otherwise, emit a customized ctor.
     put(hh, DEFAULT_CTOR_CUSTOM_BEGIN_API % caller_context, 1)
     for field in fields:
         context = dict(caller_context)
@@ -162,6 +159,35 @@ def generate_default_ctor(hh, caller_context, fields):
         context.update(default_value=default_value)
         put(hh, DEFAULT_CTOR_CUSTOM_FIELD_BODY % context, 1)
     put(hh, DEFAULT_CTOR_CUSTOM_END % caller_context, 2)
+
+
+# The "rule of five methods" (but only four -- default dtor is fine).
+COPY_AND_ASSIGN = """
+  // Note: It's safe to implement copy and move because this class is final.
+
+  /// @name Implements CopyConstructible, CopyAssignable, MoveConstructible,
+  /// MoveAssignable
+  //@{
+  %(camel)s(const %(camel)s& other)
+      : drake::systems::BasicVector<T>(other.values()) {}
+  %(camel)s(%(camel)s&& other) noexcept
+      : drake::systems::BasicVector<T>(std::move(other.values())) {}
+  %(camel)s& operator=(const %(camel)s& other) {
+    this->values() = other.values();
+    return *this;
+  }
+  %(camel)s& operator=(%(camel)s&& other) noexcept {
+    this->values() = std::move(other.values());
+    other.values().resize(0);
+    return *this;
+  }
+  //@}
+"""
+
+
+def generate_copy_and_assign(hh, caller_context):
+    # Otherwise, emit a customized ctor.
+    put(hh, COPY_AND_ASSIGN % caller_context, 2)
 
 
 # SetToNamedVariables (for symbolic::Expression only).
@@ -190,7 +216,7 @@ def generate_set_to_named_variables(hh, caller_context, fields):
 
 
 DO_CLONE = """
-  %(camel)s<T>* DoClone() const final {
+  [[nodiscard]] %(camel)s<T>* DoClone() const final {
     return new %(camel)s;
   }
 """
@@ -214,9 +240,22 @@ ACCESSOR_FIELD_DOC_RANGE = """
   /// @note @c %(field)s has a limited domain of [%(min_doc)s, %(max_doc)s].
 """
 ACCESSOR_FIELD_METHODS = """
-  const T& %(field)s() const { return this->GetAtIndex(K::%(kname)s); }
+  const T& %(field)s() const {
+    ThrowIfEmpty();
+    return this->GetAtIndex(K::%(kname)s);
+  }
+  /// Setter that matches %(field)s().
   void set_%(field)s(const T& %(field)s) {
+    ThrowIfEmpty();
     this->SetAtIndex(K::%(kname)s, %(field)s);
+  }
+  /// Fluent setter that matches %(field)s().
+  /// Returns a copy of `this` with %(field)s set to a new value.
+  [[nodiscard]] %(camel)s<T>
+  with_%(field)s(const T& %(field)s) const {
+    %(camel)s<T> result(*this);
+    result.set_%(field)s(%(field)s);
+    return result;
   }
 """
 ACCESSOR_END = """
@@ -243,6 +282,32 @@ def generate_accessors(hh, caller_context, fields):
     put(hh, ACCESSOR_END % caller_context, 2)
 
 
+SERIALIZE_BEGIN = """
+  /// Visit each field of this named vector, passing them (in order) to the
+  /// given Archive.  The archive can read and/or write to the vector values.
+  /// One common use of Serialize is the //common/yaml tools.
+  template <typename Archive>
+  void Serialize(Archive* a) {
+"""
+SERIALIZE_FIELD = """
+    T& %(field)s_ref = this->GetAtIndex(K::%(kname)s);
+    a->Visit(drake::MakeNameValue("%(field)s", &%(field)s_ref));
+"""
+SERIALIZE_END = """
+  }
+"""
+
+
+def generate_serialize(hh, caller_context, fields):
+    put(hh, SERIALIZE_BEGIN % caller_context, 1)
+    for field in fields:
+        context = dict(caller_context)
+        context.update(field=field['name'])
+        context.update(kname=to_kname(field['name']))
+        put(hh, SERIALIZE_FIELD % context, 1)
+    put(hh, SERIALIZE_END % caller_context, 2)
+
+
 GET_COORDINATE_NAMES = """
     /// See %(camel)sIndices::GetCoordinateNames().
     static const std::vector<std::string>& GetCoordinateNames() {
@@ -250,6 +315,9 @@ GET_COORDINATE_NAMES = """
    }
 """
 
+# TODO(russt): Resolve names differences across the codebase. The vector gen
+# scripts call this IsValid, but the system and solvers Constraint classes call
+# it CheckSatisfied.
 IS_VALID_BEGIN = """
   /// Returns whether the current values of this vector are well-formed.
   drake::boolean<T> IsValid() const {
@@ -287,50 +355,41 @@ def generate_is_valid(hh, caller_context, fields):
     put(hh, IS_VALID_END % caller_context, 2)
 
 
-CALC_INEQUALITY_CONSTRAINT_BEGIN = """
-  // VectorBase override.
-  void CalcInequalityConstraint(drake::VectorX<T>* value) const final {
-    value->resize(%(num_constraints)d);
+GET_ELEMENT_BOUNDS_BEGIN = """
+  void GetElementBounds(Eigen::VectorXd* lower,
+                        Eigen::VectorXd* upper) const final {
+    const double kInf = std::numeric_limits<double>::infinity();
+    *lower = Eigen::Matrix<double, %(nfields)s, 1>::Constant(-kInf);
+    *upper = Eigen::Matrix<double, %(nfields)s, 1>::Constant(kInf);
 """
-CALC_INEQUALITY_CONSTRAINT_MIN_VALUE = """
-    (*value)[%(constraint_index)d] = %(field)s() - T(%(min_value)s);
+GET_ELEMENT_BOUNDS_LOWER = """
+    (*lower)(K::%(kname)s) = %(min_value)s;
 """
-CALC_INEQUALITY_CONSTRAINT_MAX_VALUE = """
-    (*value)[%(constraint_index)d] = T(%(max_value)s) - %(field)s();
+GET_ELEMENT_BOUNDS_UPPER = """
+    (*upper)(K::%(kname)s) = %(max_value)s;
 """
-CALC_INEQUALITY_CONSTRAINT_END = """
+GET_ELEMENT_BOUNDS_END = """
   }
 """
 
 
-def generate_calc_inequality_constraint(hh, caller_context, fields):
-    num_constraints = 0
-    for field in fields:
-        if field['min_value']:
-            num_constraints += 1
-        if field['max_value']:
-            num_constraints += 1
-    if num_constraints == 0:
+def generate_get_element_bounds(hh, caller_context, fields):
+    is_any_element_bounded = any(
+        [field['min_value'] or field['max_value'] for field in fields])
+    if not is_any_element_bounded:
         return
     context = dict(caller_context)
-    context.update(num_constraints=num_constraints)
-    put(hh, CALC_INEQUALITY_CONSTRAINT_BEGIN % context, 1)
-    constraint_index = 0
+    context.update(nfields=len(fields))
+    put(hh, GET_ELEMENT_BOUNDS_BEGIN % context, 1)
     for field in fields:
-        field_context = dict(caller_context)
-        field_context.update(field=field['name'])
+        context.update(kname=to_kname(field['name']))
         if field['min_value']:
-            field_context.update(constraint_index=constraint_index)
-            field_context.update(min_value=field['min_value'])
-            put(hh, CALC_INEQUALITY_CONSTRAINT_MIN_VALUE % field_context, 1)
-            constraint_index += 1
+            context.update(min_value=field['min_value'])
+            put(hh, GET_ELEMENT_BOUNDS_LOWER % context, 1)
         if field['max_value']:
-            field_context.update(constraint_index=constraint_index)
-            field_context.update(max_value=field['max_value'])
-            put(hh, CALC_INEQUALITY_CONSTRAINT_MAX_VALUE % field_context, 1)
-            constraint_index += 1
-    assert constraint_index == num_constraints
-    put(hh, CALC_INEQUALITY_CONSTRAINT_END % context, 2)
+            context.update(max_value=field['max_value'])
+            put(hh, GET_ELEMENT_BOUNDS_UPPER % context, 1)
+    put(hh, GET_ELEMENT_BOUNDS_END % context, 2)
 
 
 VECTOR_HH_PREAMBLE = """
@@ -339,14 +398,17 @@ VECTOR_HH_PREAMBLE = """
 %(generated_code_warning)s
 
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include <Eigen/Core>
 
 #include "drake/common/drake_bool.h"
 #include "drake/common/dummy_value.h"
+#include "drake/common/name_value.h"
 #include "drake/common/never_destroyed.h"
 #include "drake/common/symbolic.h"
 #include "drake/systems/framework/basic_vector.h"
@@ -365,6 +427,14 @@ class %(camel)s final : public drake::systems::BasicVector<T> {
 """
 
 VECTOR_CLASS_END = """
+ private:
+  void ThrowIfEmpty() const {
+    if (this->values().size() == 0) {
+      throw std::out_of_range(
+          "The %(camel)s vector has been moved-from; "
+          "accessor methods may no longer be used");
+    }
+  }
 };
 """
 
@@ -384,132 +454,6 @@ VECTOR_CC_POSTAMBLE = """
 %(closing_namespace)s
 """
 
-TRANSLATOR_HH_PREAMBLE = """
-#pragma once
-
-%(generated_code_warning)s
-
-#include <memory>
-#include <vector>
-
-#include "%(cxx_include_path)s/%(snake)s.h"
-#include "%(lcm_package)s/lcmt_%(snake)s_t.hpp"
-#include "drake/systems/lcm/lcm_and_vector_base_translator.h"
-
-%(opening_namespace)s
-"""
-
-TRANSLATOR_CLASS_DECL = """
-/**
- * Translates between LCM message objects and VectorBase objects for the
- * %(camel)s type.
- */
-class %(camel)sTranslator final
-    : public drake::systems::lcm::LcmAndVectorBaseTranslator {
- public:
-  %(camel)sTranslator()
-      : LcmAndVectorBaseTranslator(%(indices)s::kNumCoordinates) {}
-  std::unique_ptr<drake::systems::BasicVector<double>> AllocateOutputVector()
-      const final;
-  void Deserialize(const void* lcm_message_bytes, int lcm_message_length,
-      drake::systems::VectorBase<double>* vector_base) const final;
-  void Serialize(double time,
-      const drake::systems::VectorBase<double>& vector_base,
-      std::vector<uint8_t>* lcm_message_bytes) const final;
-};
-"""
-
-TRANSLATOR_HH_POSTAMBLE = """
-%(closing_namespace)s
-"""
-
-TRANSLATOR_CC_PREAMBLE = """
-#include "%(cxx_include_path)s/%(snake)s_translator.h"
-
-%(generated_code_warning)s
-
-#include <stdexcept>
-
-#include "drake/common/drake_assert.h"
-
-%(opening_namespace)s
-"""
-
-TRANSLATOR_CC_POSTAMBLE = """
-%(closing_namespace)s
-"""
-
-ALLOCATE_OUTPUT_VECTOR = """
-std::unique_ptr<drake::systems::BasicVector<double>>
-%(camel)sTranslator::AllocateOutputVector() const {
-  return std::make_unique<%(camel)s<double>>();
-}
-"""
-
-
-def generate_allocate_output_vector(cc, caller_context, fields):
-    context = dict(caller_context)
-    put(cc, ALLOCATE_OUTPUT_VECTOR % context, 2)
-
-
-DESERIALIZE_BEGIN = """
-void %(camel)sTranslator::Serialize(
-    double time, const drake::systems::VectorBase<double>& vector_base,
-    std::vector<uint8_t>* lcm_message_bytes) const {
-  const auto* const vector =
-      dynamic_cast<const %(camel)s<double>*>(&vector_base);
-  DRAKE_DEMAND(vector != nullptr);
-  %(lcm_package)s::lcmt_%(snake)s_t message;
-  message.timestamp = static_cast<int64_t>(time * 1000);
-"""
-DESERIALIZE_FIELD = """
-  message.%(field)s = vector->%(field)s();
-"""
-DESERIALIZE_END = """
-  const int lcm_message_length = message.getEncodedSize();
-  lcm_message_bytes->resize(lcm_message_length);
-  message.encode(lcm_message_bytes->data(), 0, lcm_message_length);
-}
-"""
-
-
-def generate_deserialize(cc, caller_context, fields):
-    context = dict(caller_context)
-    put(cc, DESERIALIZE_BEGIN % context, 1)
-    for field in fields:
-        context.update(field=field['name'])
-        put(cc, DESERIALIZE_FIELD % context, 1)
-    put(cc, DESERIALIZE_END % context, 2)
-
-
-SERIALIZE_BEGIN = """
-void %(camel)sTranslator::Deserialize(
-    const void* lcm_message_bytes, int lcm_message_length,
-    drake::systems::VectorBase<double>* vector_base) const {
-  DRAKE_DEMAND(vector_base != nullptr);
-  auto* const my_vector = dynamic_cast<%(camel)s<double>*>(vector_base);
-  DRAKE_DEMAND(my_vector != nullptr);
-
-  %(lcm_package)s::lcmt_%(snake)s_t message;
-  int status = message.decode(lcm_message_bytes, 0, lcm_message_length);
-  if (status < 0) {
-    throw std::runtime_error("Failed to decode LCM message %(snake)s.");
-  }
-"""
-SERIALIZE_FIELD = """  my_vector->set_%(field)s(message.%(field)s);"""
-SERIALIZE_END = """
-}
-"""
-
-
-def generate_serialize(cc, caller_context, fields):
-    context = dict(caller_context)
-    put(cc, SERIALIZE_BEGIN % context, 1)
-    for field in fields:
-        context.update(field=field['name'])
-        put(cc, SERIALIZE_FIELD % context, 1)
-    put(cc, SERIALIZE_END % context, 2)
-
 
 LCMTYPE_PREAMBLE = """
 %(generated_code_warning)s
@@ -526,13 +470,18 @@ LCMTYPE_POSTAMBLE = """
 """
 
 
+def _schema_filename_to_snake(named_vector_filename):
+    basename = os.path.basename(named_vector_filename)
+    assert basename.endswith("_named_vector.yaml")
+    snake = basename[:-len("_named_vector.yaml")]
+    return snake
+
+
 def generate_code(
         named_vector_filename,
         include_prefix=None,
         vector_hh_filename=None,
         vector_cc_filename=None,
-        translator_hh_filename=None,
-        translator_cc_filename=None,
         lcm_filename=None):
 
     cxx_include_path = os.path.dirname(named_vector_filename) + "/gen"
@@ -544,37 +493,30 @@ def generate_code(
         cxx_include_path = "/".join(cxx_include_path.split("/")[2:])
     if include_prefix:
         cxx_include_path = os.path.join(include_prefix, cxx_include_path)
-    snake, _ = os.path.splitext(os.path.basename(named_vector_filename))
+    snake = _schema_filename_to_snake(named_vector_filename)
     screaming_snake = snake.upper()
     camel = "".join([x.capitalize() for x in snake.split("_")])
 
-    # Load the vector's details from protobuf.
-    # In the future, this can be extended for nested messages.
-    with open(named_vector_filename, "r") as f:
-        vec = named_vector_pb2.NamedVector()
-        google.protobuf.text_format.Merge(f.read(), vec)
-        fields = [{
-            'name': el.name,
-            'doc': el.doc,
-            'default_value': el.default_value,
-            'doc_units': el.doc_units,
-            'min_value': el.min_value,
-            'max_value': el.max_value,
-        } for el in vec.element]
-        if vec.namespace:
-            namespace_list = vec.namespace.split("::")
-        else:
-            namespace_list = []
+    # Load the vector's details.
+    with open(named_vector_filename, 'r') as f:
+        data = yaml.safe_load(f)
+    fields = [{
+        'name': str(el['name']),
+        'doc': str(el.get('doc', '')),
+        'default_value': str(el['default_value']),
+        'doc_units': str(el.get('doc_units', '')),
+        'min_value': str(el.get('min_value', '')),
+        'max_value': str(el.get('max_value', '')),
+    } for el in data['elements']]
+    namespace_list = data['namespace'].split('::')
 
     # Default some field attributes if they are missing.
     for item in fields:
-        if len(item['default_value']) == 0:
-            print("error: a default_value for {}.{} is required".format(
-                snake, item['name']))
         if len(item['doc_units']) == 0:
             item['doc_units'] = DEFAULT_CTOR_FIELD_UNKNOWN_DOC_UNITS
 
-    # The C++ namespace open & close dance is as requested in the protobuf.
+    # The C++ namespace open & close dance is as requested in the
+    # `*.named_vector.yaml` specification.
     opening_namespace = "".join(["namespace " + x + "{\n"
                                  for x in namespace_list])
     closing_namespace = "".join(["}  // namespace " + x + "\n"
@@ -608,12 +550,14 @@ def generate_code(
             generate_indices_names_accessor_decl(hh, context)
             put(hh, VECTOR_CLASS_BEGIN % context, 2)
             generate_default_ctor(hh, context, fields)
+            generate_copy_and_assign(hh, context)
             generate_set_to_named_variables(hh, context, fields)
             generate_do_clone(hh, context, fields)
             generate_accessors(hh, context, fields)
+            generate_serialize(hh, context, fields)
             put(hh, GET_COORDINATE_NAMES % context, 2)
             generate_is_valid(hh, context, fields)
-            generate_calc_inequality_constraint(hh, context, fields)
+            generate_get_element_bounds(hh, context, fields)
             put(hh, VECTOR_CLASS_END % context, 2)
             put(hh, VECTOR_HH_POSTAMBLE % context, 1)
 
@@ -625,22 +569,6 @@ def generate_code(
             put(cc, '', 1)
             generate_indices_names_accessor_impl(cc, context, fields)
             put(cc, VECTOR_CC_POSTAMBLE % context, 1)
-
-    if translator_hh_filename:
-        with open(translator_hh_filename, 'w') as hh:
-            cxx_names.append(hh.name)
-            put(hh, TRANSLATOR_HH_PREAMBLE % context, 2)
-            put(hh, TRANSLATOR_CLASS_DECL % context, 2)
-            put(hh, TRANSLATOR_HH_POSTAMBLE % context, 1)
-
-    if translator_cc_filename:
-        with open(translator_cc_filename, 'w') as cc:
-            cxx_names.append(cc.name)
-            put(cc, TRANSLATOR_CC_PREAMBLE % context, 2)
-            generate_allocate_output_vector(cc, context, fields)
-            generate_deserialize(cc, context, fields)
-            generate_serialize(cc, context, fields)
-            put(cc, TRANSLATOR_CC_POSTAMBLE % context, 1)
 
     if lcm_filename:
         with open(lcm_filename, 'w') as lcm:
@@ -655,7 +583,7 @@ def generate_code(
         # settings file is problematic when formatting within bazel-genfiles,
         # so instead we pass its contents on the command line.
         with open(find_data(".clang-format"), "r") as f:
-            yaml_data = yaml.load(f, Loader=yaml.Loader)
+            yaml_data = yaml.safe_load(f)
             style = str(yaml_data)
             # For some reason, clang-format really wants lowercase booleans.
             style = style.replace("False", "false").replace("True", "true")
@@ -667,12 +595,10 @@ def generate_all_code(args):
     # Match srcs to outs.
     src_to_args = collections.OrderedDict()
     for one_src in args.srcs:
-        snake, _ = os.path.splitext(os.path.basename(one_src))
+        snake = _schema_filename_to_snake(one_src)
         basename_to_kind = {
             snake + ".h": "vector_hh_filename",
             snake + ".cc": "vector_cc_filename",
-            snake + "_translator.h": "translator_hh_filename",
-            snake + "_translator.cc": "translator_cc_filename",
             "lcmt_" + snake + "_t.lcm": "lcm_filename",
         }
         kwargs_for_generate = dict([
@@ -715,7 +641,7 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         '--src', metavar="FILE", dest='srcs', action='append', default=[],
-        help="'*.named_vector' description(s) of vector(s)")
+        help="'*_named_vector.yaml' description(s) of vector(s)")
     parser.add_argument(
         '--out', metavar="FILE", dest='outs', action='append', default=[],
         help="generated filename(s) to create")

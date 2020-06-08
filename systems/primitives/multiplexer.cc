@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <utility>
 
 #include "drake/common/default_scalars.h"
@@ -19,7 +20,7 @@ Multiplexer<T>::Multiplexer(int num_scalar_inputs)
 template <typename T>
 Multiplexer<T>::Multiplexer(std::vector<int> input_sizes)
     : Multiplexer<T>(
-          SystemTypeTag<systems::Multiplexer>{}, input_sizes,
+          SystemTypeTag<Multiplexer>{}, input_sizes,
           BasicVector<T>(std::accumulate(input_sizes.begin(), input_sizes.end(),
                                          0, std::plus<int>{}))) {}
 
@@ -55,10 +56,10 @@ void Multiplexer<T>::CombineInputsToOutput(const Context<T>& context,
                                            BasicVector<T>* output) const {
   auto output_vector = output->get_mutable_value();
   int output_vector_index{0};
-  for (int i = 0; i < this->get_num_input_ports(); ++i) {
+  for (int i = 0; i < this->num_input_ports(); ++i) {
     const int input_size = input_sizes_[i];
     output_vector.segment(output_vector_index, input_size) =
-        this->EvalEigenVectorInput(context, i);
+        this->get_input_port(i).Eval(context);
     output_vector_index += input_size;
   }
 }

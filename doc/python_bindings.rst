@@ -4,14 +4,104 @@
 Using Drake from Python
 ***********************
 
-A limited subset of the Drake C++ functionality is available from Python. The
-Drake Python bindings are generated using `pybind11
+A substantial subset of the Drake C++ functionality is available from Python.
+The Drake Python bindings are generated using `pybind11
 <https://github.com/pybind/pybind11>`_, which means that every function or
 class which is exposed to C++ has been explicitly enumerated in one of the
 source files inside the ``bindings/pydrake`` folder. These bindings are
 installed as a single package called ``pydrake``.
 
-Python 2.7 is currently the only supported version for these bindings.
+.. warning::
+   Drake is incompatible with the Python environment supplied by Anaconda.
+   Please uninstall Anaconda or remove the Anaconda ``bin`` directory from the
+   ``PATH`` before building or using the Drake Python bindings.
+
+.. warning::
+   On macOS, Drake only supports Python 3.8, which is located at
+   ``/usr/local/opt/python@3.8/bin/python3`` and is not usually on the
+   ``PATH``.
+
+.. _python-bindings-binary:
+
+Installation
+============
+
+Before attempting installation, please review the
+:ref:`supported configurations <supported-configurations>` to know what
+versions of Python are supported for your platform.
+
+Binary Installation for Python
+------------------------------
+
+First, download and extract an :ref:`available binary package
+<binary-installation>`.
+
+As an example, here is how to download and extract one of the latest releases
+to ``/opt`` (where ``<platform>`` could be ``bionic`` or ``mac``):
+
+.. code-block:: shell
+
+    curl -o drake.tar.gz https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-<platform>.tar.gz
+    rm -rf /opt/drake
+    tar -xvzf drake.tar.gz -C /opt
+
+Ensure that you have the system dependencies:
+
+.. code-block:: shell
+
+    /opt/drake/share/drake/setup/install_prereqs
+
+Next, ensure that your ``PYTHONPATH`` is properly configured.
+
+*Ubuntu 18.04 (Bionic):*
+
+.. code-block:: shell
+
+    export PYTHONPATH=/opt/drake/lib/python3.6/site-packages:${PYTHONPATH}
+
+*macOS:*
+
+.. code-block:: shell
+
+    export PYTHONPATH=/opt/drake/lib/python3.8/site-packages:${PYTHONPATH}
+
+See :ref:`below <using-python-bindings>` for usage instructions.
+
+Inside ``virtualenv``
+^^^^^^^^^^^^^^^^^^^^^
+
+At present, Drake is not installable via ``pip``. However, you can still
+incorporate its install tree into a ``virtualenv``
+`FHS <https://en.wikipedia.org/wiki/Filesystem_Hierarchy_Standard>`_-like
+environment.
+
+An example, where you should replace ``<venv_path>`` and ``<platform>``:
+
+.. code-block:: shell
+
+    # Setup drake, and run prerequisites.
+    curl -o drake.tar.gz https://drake-packages.csail.mit.edu/drake/nightly/drake-latest-<platform>.tar.gz
+    mkdir -p <venv_path>
+    tar -xvzf drake.tar.gz -C <venv_path> --strip-components=1
+    # - You may need `sudo` here.
+    <venv_path>/share/drake/setup/install_prereqs
+
+    # Setup a virtualenv over the drake install.
+    python3 -m virtualenv -p python3 <venv_path> --system-site-packages
+
+.. note::
+
+    You can extract Drake into an existing ``virtualenv`` tree if you have
+    already run ``install_prereqs``; however, you should ensure that you have
+    run ``install_prereqs``. Before you do this, you should capture / freeze
+    your current requirements to reproduce your environment if there are
+    conflicts.
+
+To check if this worked, follow the instructions as
+:ref:`shown below <using-python-bindings>`, but either:
+
+*   Use ``<venv_path>/bin/python`` instead of ``python3``, or
+*   Source ``<venv_path>/bin/activate`` in your current shell session.
 
 Building the Python Bindings
 ----------------------------
@@ -41,51 +131,67 @@ MOSEK, without building tests:
 
     cmake -DWITH_GUROBI=ON -DWITH_MOSEK=ON ../drake
 
-Using the Python Bindings
--------------------------
+You will also need to have your ``PYTHONPATH`` configured correctly.
 
-To use the Drake Python bindings, follow the build steps above or ensure that
-you have installed Drake appropriately. You will also need to have your
-``PYTHONPATH`` configured correctly.
-
-As an example, continuing from the code snippets from above:
+*Ubuntu 18.04 (Bionic):*
 
 .. code-block:: shell
 
     cd drake-build
-    export PYTHONPATH=${PWD}/install/lib/python2.7/site-packages:${PYTHONPATH}
+    export PYTHONPATH=${PWD}/install/lib/python3.6/site-packages:${PYTHONPATH}
 
-To check this:
+*macOS:*
 
 .. code-block:: shell
 
-    python -c 'import pydrake; print(pydrake.__file__)'
+    cd drake-build
+    export PYTHONPATH=${PWD}/install/lib/python3.8/site-packages:${PYTHONPATH}
 
-.. note::
+.. _using-python-bindings:
 
-    If you are using macOS, you must ensure that you are using the ``python2``
-    executable to run these scripts.
+Using the Python Bindings
+=========================
 
-    If you would like to use ``jupyter``, then be sure to install it via
-    ``pip2 install jupyter`` (*not* ``brew install jupyter``) to ensure that it
-    uses the correct ``PYTHONPATH``.
+Check Installation
+------------------
 
-    ..
-        Developers: Ensure this is synchronized with the steps in
-        ``install_prereqs_user_environment.sh``.
+After following the above install steps, check to ensure you can import
+``pydrake``.
+
+*Ubuntu 18.04 (Bionic):*
+
+.. code-block:: shell
+
+    python3 -c 'import pydrake; print(pydrake.__file__)'
+
+*macOS:*
+
+.. code-block:: shell
+
+    /usr/local/opt/python@3.8/bin/python3 -c 'import pydrake; print(pydrake.__file__)'
+
+
+.. _using-python-mac-os-path:
 
 .. note::
 
     If you are using Gurobi, you must either have it installed in the suggested
     location under ``/opt/...`` mentioned in :ref:`gurobi`, or you must ensure
-    that you define the ``${GUROBI_PATH}`` environment variable, or specify
+    that you define the ``${GUROBI_HOME}`` environment variable, or specify
     ``${GUROBI_INCLUDE_DIR}`` via CMake.
+
+.. _whats-available-from-python:
 
 What's Available from Python
 ----------------------------
 
-The most up-to-date demonstrations of what can be done using ``pydrake`` are
-the ``pydrake`` unit tests themselves. You can see all of them inside the
+You should first browse the `Python API <pydrake/index.html#://>`_ to see what
+modules are available. The most up-to-date high-level demonstrations of what
+can be done using ``pydrake`` are in Drake's :ref:`Tutorials <tutorials>` and
+the `Underactuated Robotics Textbook <http://underactuated.mit.edu/>`_.
+
+You can also see lower-level usages of the API in the ``pydrake`` unit tests
+themselves, which you can find inside of the
 ``drake/bindings/python/pydrake/**/test`` folders in the Drake source code.
 
 Here's an example snippet of code from ``pydrake``:
@@ -97,13 +203,18 @@ Here's an example snippet of code from ``pydrake``:
 .. code-block:: python
 
     from pydrake.common import FindResourceOrThrow
-    from pydrake.multibody.rigid_body_plant import RigidBodyPlant
-    from pydrake.multibody.rigid_body_tree import RigidBodyTree
+    from pydrake.multibody.parsing import Parser
+    from pydrake.multibody.plant import AddMultibodyPlantSceneGraph
     from pydrake.systems.analysis import Simulator
+    from pydrake.systems.framework import DiagramBuilder
 
-    tree = RigidBodyTree(
+    builder = DiagramBuilder()
+    plant, _ = AddMultibodyPlantSceneGraph(builder, 0.0)
+    Parser(plant).AddModelFromFile(
         FindResourceOrThrow("drake/examples/pendulum/Pendulum.urdf"))
-    simulator = Simulator(RigidBodyPlant(tree))
+    plant.Finalize()
+    diagram = builder.Build()
+    simulator = Simulator(diagram)
 
 If you are prototyping code in a REPL environment (such as IPython / Jupyter)
 and to reduce the number of import statements, consider using ``pydrake.all`` to
@@ -112,18 +223,23 @@ automatically. If you are writing non-prototype code, avoid using
 ``pydrake.all``; for more details, see ``help(pydrake.all)``.
 
 In all cases, try to avoid using ``from pydrake.all import *``, as it may
-introduce symbol collisions that are difficiult to debug.
+introduce symbol collisions that are difficult to debug.
 
-An example of importing symbols directly from ``pydrake.all``:
+The above example, but using ``pydrake.all``:
 
 .. code-block:: python
 
     from pydrake.all import (
-        FindResourceOrThrow, RigidBodyPlant, RigidBodyTree, Simulator)
+        AddMultibodyPlantSceneGraph, DiagramBuilder, FindResourceOrThrow,
+        Parser, Simulator)
 
-    tree = RigidBodyTree(
+    builder = DiagramBuilder()
+    plant, _ = AddMultibodyPlantSceneGraph(builder, 0.0)
+    Parser(plant).AddModelFromFile(
         FindResourceOrThrow("drake/examples/pendulum/Pendulum.urdf"))
-    simulator = Simulator(RigidBodyPlant(tree))
+    plant.Finalize()
+    diagram = builder.Build()
+    simulator = Simulator(diagram)
 
 An alternative is to use ``pydrake.all`` to import all modules, but then
 explicitly refer to each symbol:
@@ -132,23 +248,23 @@ explicitly refer to each symbol:
 
     import pydrake.all
 
-    tree = pydrake.multibody.rigid_body_tree.RigidBodyTree(
+    builder = pydrake.systems.framework.DiagramBuilder()
+    plant, _ = pydrake.multibody.plant.AddMultibodyPlantSceneGraph(builder, 0.0)
+    pydrake.multibody.parsing.Parser(plant).AddModelFromFile(
         pydrake.common.FindResourceOrThrow(
             "drake/examples/pendulum/Pendulum.urdf"))
-    simulator = pydrake.systems.analysis.Simulator(
-        pydrake.multibody.rigid_body_plant.RigidBodyPlant(tree))
+    plant.Finalize()
+    diagram = builder.Build()
+    simulator = pydrake.systems.analysis.Simulator(diagram)
 
-Documentation
-=============
+Differences with C++ API
+------------------------
 
-There is not yet a comprehensive API documentation for the Python bindings
-(tracked by `#7914 <https://github.com/RobotLocomotion/drake/issues/7914>`_).
-
-In general, the Python API should be close to the
+In general, the `Python API <pydrake/index.html#://>`_ should be close to the
 `C++ API <doxygen_cxx/index.html#://>`_. There are some exceptions:
 
-C++ Template Instantiations in Python
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C++ Class Template Instantiations in Python
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 When you define a general class template, e.g.
 ``template <typename T> class Value``, something like ``Value<std::string>`` is
@@ -227,10 +343,144 @@ Additionally, you may convert an instance (if the conversion is available) using
     >>> print(adder.ToSymbolic())
     <pydrake.systems.primitives.Adder_[Expression] object at 0x...>
 
+C++ Function and Method Template Instantiations in Python
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The above section indicates that C++ types are generally registered with
+Python, and a similar approach could be used for function and method templates.
+However, these templates usually fit a certain pattern and can be Pythonized in
+such a way that simplifies implementation, but may change the "feel" of the
+signature.
+
+Two common (non-metaprogramming) applications of templated functions and
+methods present in Drake are `emplace <https://en.cppreference.com/w/cpp/container/vector/emplace>`_-like
+functionality (using `parameter packs
+<https://en.cppreference.com/w/cpp/language/parameter_pack>`_) and
+`type erasure <https://en.wikipedia.org/wiki/Type_erasure>`_.
+However, Python doesn't literally support these C++ language features. So, in
+binding them, they get "Pythonized".
+
+C++ APIs which use parameter packs, such as:
+
+.. code-block:: cpp
+
+    DiagramBuilder<T>::AddSystem<SystemType>(args...)
+    MultibodyPlant<T>::AddJoint<JointType>(args...)
+    MultibodyPlant<T>::AddFrame<FrameType>(args...)
+
+will become the following in Python:
+
+.. code-block:: pycon
+
+    DiagramBuilder_[T].AddSystem(SystemType(args, ...))
+    MultibodyPlant_[T].AddJoint(JointType(args, ...))
+    MultibodyPlant_[T].AddFrame(FrameType(args, ...))
+
+where the ``*Type`` tokens are replaced with the concrete type in question
+(e.g. ``Adder_[T]``, ``RevoluteJoint_[T]``, ``FixedOffsetFrame_[T]``).
+
+Similarly, type-erasure C++ APIs that look like:
+
+.. code-block:: cpp
+
+    InputPort<T>::Eval<ValueType>(context)
+    GeometryProperties::AddProperty<ValueType>(group_name, name, value)
+
+will become the following in Python:
+
+.. code-block:: pycon
+
+    InputPort_[T].Eval(context)
+    GeometryProperties.AddProperty(group_name, name, value)
+
+Debugging with the Python Bindings
+----------------------------------
+
+You may encounter issues with the Python Bindings that may arise from the
+underlying C++ code, and it may not always be obvious what the root cause is.
+
+The first step to debugging is to consider running your code using the
+``trace`` module. It is best practice to always have a ``main()`` function, and
+have a ``if __name__ == "__main__"`` clause. If you do this, then it is easy to
+trace. As an example:
+
+..
+    N.B. These code snippets should be kept in sync with
+    `drake_py_unittest_main.py`.
+
+.. code-block:: python
+
+    def reexecute_if_unbuffered():
+        """Ensures that output is immediately flushed (e.g. for segfaults).
+        ONLY use this at your entrypoint. Otherwise, you may have code be
+        re-executed that will clutter your console."""
+        import os
+        import shlex
+        import sys
+        if os.environ.get("PYTHONUNBUFFERED") in (None, ""):
+            os.environ["PYTHONUNBUFFERED"] = "1"
+            argv = list(sys.argv)
+            if argv[0] != sys.executable:
+                argv.insert(0, sys.executable)
+            cmd = " ".join([shlex.quote(arg) for arg in argv])
+            sys.stdout.flush()
+            os.execv(argv[0], argv)
+
+
+    def traced(func, ignoredirs=None):
+        """Decorates func such that its execution is traced, but filters out any
+         Python code outside of the system prefix."""
+        import functools
+        import sys
+        import trace
+        if ignoredirs is None:
+            ignoredirs = ["/usr", sys.prefix]
+        tracer = trace.Trace(trace=1, count=0, ignoredirs=ignoredirs)
+
+        @functools.wraps(func)
+        def wrapped(*args, **kwargs):
+            return tracer.runfunc(func, *args, **kwargs)
+
+        return wrapped
+
+
+    # NOTE: You don't have to trace all of your code. If you can identify a
+    # single function, then you can just decorate it with this. If you're
+    # decorating a class method, then be sure to declare these functions above
+    # it.
+    @traced
+    def main():
+        insert_awesome_code_here()
+
+
+    if __name__ == "__main__":
+        reexecute_if_unbuffered()
+        main()
+
+
+
+.. note::
+
+    If you are developing in Drake and are using the ``drake_py_unittest``
+    macro, you can specify the argument ``--trace=user`` to get the same
+    behavior.
+
+This generally should help you trace where the code is dying. However, if you
+still need to dig in, you can build the bindings in debug mode, without symbol
+stripping, so you can debug with ``gdb`` or ``lldb``:
+
+.. code-block:: shell
+
+    cmake -DCMAKE_BUILD_TYPE=Debug ../drake
+
+.. warning::
+
+    If you have SNOPT enabled (either ``-DWITH_SNOPT=ON`` or
+    ``-DWITH_ROBOTLOCOMOTION_SNOPT=ON``), symbols will *still* be stripped.
+
 For Developers
 --------------
 
-If you are developing Python bindings, please see the Doxygen page for
-`Python Bindings <https://drake.mit.edu/doxygen_cxx/python_bindings.html>`_.
-This provides information on programming conventions as well as tips for
-debugging.
+If you are developing Python bindings, please see the Doxygen page
+`Python Bindings <https://drake.mit.edu/doxygen_cxx/group__python__bindings.html>`_ which provides information on programming conventions, documentation, tips
+for debugging, and other advice.

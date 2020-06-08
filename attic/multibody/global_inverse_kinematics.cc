@@ -170,12 +170,13 @@ GlobalInverseKinematics::body_position(int body_index) const {
 }
 
 void GlobalInverseKinematics::ReconstructGeneralizedPositionSolutionForBody(
-    int body_idx, Eigen::Ref<Eigen::VectorXd> q,
+    const solvers::MathematicalProgramResult& result, int body_idx,
+    Eigen::Ref<Eigen::VectorXd> q,
     std::vector<Eigen::Matrix3d>* reconstruct_R_WB) const {
   const RigidBody<double>& body = robot_->get_body(body_idx);
   const RigidBody<double>* parent = body.get_parent();
   if (!body.IsRigidlyFixedToWorld()) {
-    const Matrix3d R_WC = GetSolution(R_WB_[body_idx]);
+    const Matrix3d R_WC = result.GetSolution(R_WB_[body_idx]);
     // R_WP is the rotation matrix of parent frame to the world frame.
     const Matrix3d& R_WP = reconstruct_R_WB->at(parent->get_body_index());
     const DrakeJoint* joint = &(body.getJoint());
@@ -186,7 +187,7 @@ void GlobalInverseKinematics::ReconstructGeneralizedPositionSolutionForBody(
     // the posture for that joint.
     if (joint->is_floating()) {
       // p_WBi is the position of the body frame in the world frame.
-      const Vector3d p_WBi = GetSolution(p_WBo_[body_idx]);
+      const Vector3d p_WBi = result.GetSolution(p_WBo_[body_idx]);
       const math::RotationMatrix<double> normalized_rotmat =
           math::RotationMatrix<double>::ProjectToRotationMatrix(R_WC);
 
@@ -242,8 +243,8 @@ void GlobalInverseKinematics::ReconstructGeneralizedPositionSolutionForBody(
   }
 }
 
-Eigen::VectorXd
-GlobalInverseKinematics::ReconstructGeneralizedPositionSolution() const {
+Eigen::VectorXd GlobalInverseKinematics::ReconstructGeneralizedPositionSolution(
+    const solvers::MathematicalProgramResult& result) const {
   Eigen::VectorXd q(robot_->get_num_positions());
   // reconstruct_R_WB[i] is the orientation of body i'th body frame expressed in
   // the world frame, computed from the reconstructed posture.
@@ -274,8 +275,8 @@ GlobalInverseKinematics::ReconstructGeneralizedPositionSolution() const {
       while (!unvisited_links.empty()) {
         int unvisited_link_idx = unvisited_links.top();
         unvisited_links.pop();
-        ReconstructGeneralizedPositionSolutionForBody(unvisited_link_idx, q,
-                                                      &reconstruct_R_WB);
+        ReconstructGeneralizedPositionSolutionForBody(
+            result, unvisited_link_idx, q, &reconstruct_R_WB);
         is_link_visited[unvisited_link_idx] = true;
         ++num_link_visited;
       }
@@ -409,6 +410,36 @@ GlobalInverseKinematics::BodyPointInOneOfRegions(
   // p_WQ must match the body pose, as p_WQ = p_WBo + R_WB * p_BQ
   AddLinearEqualityConstraint(p_WBo + R_WB * p_BQ - p_WQ,
                               Eigen::Vector3d::Zero());
+
+  return z;
+}
+
+solvers::VectorXDecisionVariable
+GlobalInverseKinematics::BodySphereInOneOfPolytopes(
+    int body_index, const Eigen::Ref<const Eigen::Vector3d>& p_BQ,
+    double radius,
+    const std::vector<GlobalInverseKinematics::Polytope3D>& polytopes) {
+  DRAKE_DEMAND(radius >= 0);
+  const int num_polytopes = static_cast<int>(polytopes.size());
+  const auto z = NewBinaryVariables(num_polytopes, "z");
+  // z1 + ... + zn = 1
+  AddLinearEqualityConstraint(Eigen::RowVectorXd::Ones(num_polytopes), 1, z);
+
+  const auto y =
+      NewContinuousVariables<3, Eigen::Dynamic>(3, num_polytopes, "y");
+  const Vector3<symbolic::Expression> p_WQ =
+      p_WBo_[body_index] + R_WB_[body_index] * p_BQ;
+  // p_WQ = y.col(0) + ... + y.col(n)
+  AddLinearEqualityConstraint(
+      p_WQ - y.cast<symbolic::Expression>().rowwise().sum(),
+      Eigen::Vector3d::Zero());
+
+  for (int i = 0; i < num_polytopes; ++i) {
+    DRAKE_DEMAND(polytopes[i].A.rows() == polytopes[i].b.rows());
+    AddLinearConstraint(
+        polytopes[i].A * y.col(i) <=
+        (polytopes[i].b - polytopes[i].A.rowwise().norm() * radius) * z(i));
+  }
 
   return z;
 }

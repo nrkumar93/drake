@@ -30,7 +30,7 @@ std::unique_ptr<LuenbergerObserver<double>> SteadyStateKalmanFilter(
       SteadyStateKalmanFilter(system->A(), system->C(), W, V);
 
   return std::make_unique<LuenbergerObserver<double>>(
-      std::move(system), system->CreateDefaultContext(), L);
+      std::move(system), *system->CreateDefaultContext(), L);
 }
 
 std::unique_ptr<LuenbergerObserver<double>> SteadyStateKalmanFilter(
@@ -40,7 +40,7 @@ std::unique_ptr<LuenbergerObserver<double>> SteadyStateKalmanFilter(
     const Eigen::Ref<const Eigen::MatrixXd>& V) {
   DRAKE_DEMAND(context->get_continuous_state_vector().size() >
                0);  // Otherwise, I don't need an estimator.
-  DRAKE_DEMAND(system->get_num_output_ports() ==
+  DRAKE_DEMAND(system->num_output_ports() ==
                1);  // Need measurements to estimate state.
 
   // TODO(russt): Demand time-invariant once we can.
@@ -52,7 +52,7 @@ std::unique_ptr<LuenbergerObserver<double>> SteadyStateKalmanFilter(
       SteadyStateKalmanFilter(linear_system->A(), linear_system->C(), W, V);
 
   return std::make_unique<LuenbergerObserver<double>>(std::move(system),
-                                                      std::move(context), L);
+                                                      *context, L);
 }
 
 }  // namespace estimators

@@ -1,7 +1,7 @@
 #include "drake/systems/analysis/test_utilities/controlled_spring_mass_system.h"
 
-#include <Eigen/Dense>
 #include "gtest/gtest.h"
+#include <Eigen/Dense>
 
 using std::make_unique;
 
@@ -50,7 +50,7 @@ TEST_F(SpringMassSystemTest, EvalOutput) {
   model_->set_position(model_context_.get(), x0);
   model_->set_velocity(model_context_.get(), v0);
 
-  ASSERT_EQ(1, output_->get_num_ports());
+  ASSERT_EQ(1, output_->num_ports());
   model_->CalcOutput(*model_context_, output_.get());
 
   // Output equals the state of the spring-mass plant being controlled which
@@ -87,7 +87,7 @@ TEST_F(SpringMassSystemTest, EvalTimeDerivatives) {
 
   // The derivatives of plant.
   const ContinuousState<double>& plant_xcdot =
-      model_->GetSubsystemDerivatives(*derivatives, &model_->get_plant());
+      model_->GetSubsystemDerivatives(model_->get_plant(), *derivatives);
 
   // Position derivative.
   EXPECT_EQ(v0, plant_xcdot.get_vector().GetAtIndex(0));

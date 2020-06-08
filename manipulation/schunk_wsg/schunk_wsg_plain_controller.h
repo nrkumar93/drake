@@ -10,12 +10,13 @@ namespace schunk_wsg {
 
 enum class ControlMode { kPosition = 0, kForce = 1 };
 
+// N.B. Inheritance order must remain fixed for pydrake (#9243).
 /** This class implements a controller for a Schunk WSG gripper as a
  * `systems::Diagram`. The composition of this diagram is determined by the
  * control mode specified for the controller, which can be either
  * ControlMode::kPosition or ControlMode::kForce. In both cases, the overall
  * layout of the diagram is:
- *```
+ * ```
  *             ┌─────────────┐
  * joint       │Joint State  │   ┌──────────┐
  * state ─────▶│To Control   ├──▶│          │
@@ -42,13 +43,14 @@ enum class ControlMode { kPosition = 0, kForce = 1 };
  *                           │   ┌──────────┐   ┌───────────┐   │   │
  *                 ┌─────────│──▶│          │   │Grip Force │   │   │
  *                 │   ┌──┐  └──▶│Saturation├──▶│To Joint   ├──▶│   │
- * max force ──────┴──▶│-1├─────▶│          │   │Force      │   └───┘
+ * max force / 2 ──┴──▶│-1├─────▶│          │   │Force      │   └───┘
  *                     └──┘      └──────────┘   └───────────┘
- *```
+ * ```
  * The blocks with double outlines (══) differ between the two control modes:
- *  - Generate Desired Control State
- *    - ControlMode::kPosition
- *```
+ *
+ * - Generate Desired Control State
+ *   - ControlMode::kPosition
+ * ```
  *        ┌───────────┐
  *        │Desired    │
  *        │Mean Finger├──▶█
@@ -60,9 +62,9 @@ enum class ControlMode { kPosition = 0, kForce = 1 };
  *         grip   ───────▶█
  *         state
  *
- *```
+ * ```
  *    - ControlMode::kForce
- *```
+ * ```
  *        ┌───────────┐
  *        │Desired    │                          desired
  *        │Mean Finger├────────────────────────▶ control
@@ -72,10 +74,10 @@ enum class ControlMode { kPosition = 0, kForce = 1 };
  *         desired        ┌────────┐
  *         grip   ───────▶│IGNORED │
  *         state          └────────┘
- *```
- *  - Handle Feed-Forward Force
- *    - ControlMode::kPosition
- *```
+ * ```
+ * - Handle Feed-Forward Force
+ *   - ControlMode::kPosition
+ * ```
  *                                     █────▶ mean finger force
  *         pid                         █
  *         controller ────────────────▶█
@@ -84,9 +86,9 @@ enum class ControlMode { kPosition = 0, kForce = 1 };
  *         feed           ┌────────┐
  *         forward ──────▶│IGNORED │
  *         force          └────────┘
- *```
- *    - ControlMode::kForce
- *```
+ * ```
+ *   - ControlMode::kForce
+ * ```
  *         pid
  *         controller ──────────────────────▶ mean finger force
  *         output
@@ -95,12 +97,14 @@ enum class ControlMode { kPosition = 0, kForce = 1 };
  *         forward ─────────────────────────▶ grip force
  *         force
  *
- *```
+ * ```
  * The remaining blocks differ only in their numerical parameters.
  *
  * Note that the "feed forward force" input is ignored for
  * ControlMode::kPosition and the "desired grip state" input is ignored for
  * ControlMode::kPosition.
+ *
+ * @ingroup manipulation_systems
  */
 class SchunkWsgPlainController
     : public systems::Diagram<double>,

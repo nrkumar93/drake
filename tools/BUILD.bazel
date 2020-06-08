@@ -1,24 +1,33 @@
 # -*- python -*-
 
+load("//tools/skylark:py.bzl", "py_binary", "py_library")
 load("//tools/lint:lint.bzl", "add_lint_tests")
-load("//tools/skylark:drake_runfiles_binary.bzl", "drake_runfiles_binary")
+load(
+    "@drake//tools/skylark:drake_runfiles_binary.bzl",
+    "drake_runfiles_binary",
+)
 
 package(default_visibility = ["//visibility:public"])
 
-# TODO(eric.cousineau): Consider using a `./run`-like script for this, rather
-# than `drake_runfiles_binary`. Then this can be renamed to `drake_visualizer`.
+py_library(
+    name = "module_py",
+    srcs = ["__init__.py"],
+    visibility = [":__subpackages__"],
+    deps = ["//:module_py"],
+)
+
+# TODO(eric.cousineau): Move this to //tools/workspace:drake_visualizer.
 py_binary(
     name = "drake_visualizer_py",
-    srcs = ["//tools/workspace/drake_visualizer:drake_visualizer.py"],
+    srcs = ["//tools/workspace/drake_visualizer:drake_visualizer_bazel.py"],
     data = [
-        "//automotive/models:prod_models",
         "//examples:prod_models",
         "@drake_visualizer",
     ],
-    main = "//tools/workspace/drake_visualizer:drake_visualizer.py",
-    # Python libraries to import.
+    main = "//tools/workspace/drake_visualizer:drake_visualizer_bazel.py",
     deps = [
-        "//lcmtypes:lcmtypes_py",
+        "//lcmtypes:lcmtypes_drake_py",
+        "//tools/workspace/drake_visualizer:builtin_scripts_py",
         "//tools/workspace/drake_visualizer:stub_pydrake",
         "@drake_visualizer//:drake_visualizer_python_deps",
         "@optitrack_driver//lcmtypes:py_optitrack_lcmtypes",
@@ -31,6 +40,13 @@ drake_runfiles_binary(
 )
 
 # === config_setting rules ===
+
+# When this is set, a Drake build will promote some warnings to errors.
+# See drake/tools/cc_toolchain/bazel.rc for details.
+config_setting(
+    name = "drake_werror",
+    values = {"define": "DRAKE_WERROR=ON"},
+)
 
 config_setting(
     name = "with_gurobi",
@@ -45,6 +61,26 @@ config_setting(
 config_setting(
     name = "with_snopt",
     values = {"define": "WITH_SNOPT=ON"},
+)
+
+# CSDP is an open-source solver, and is included in the Drake build by default.
+# The CSDP solver is irrelevant to some users of MathematicalProgram, so we
+# provide a hidden switch to shut it off for developers who don't actually need
+# it. This is not a supported configuration. Use at your own risk:
+# --define=NO_CSDP=ON
+config_setting(
+    name = "no_csdp",
+    values = {"define": "NO_CSDP=ON"},
+)
+
+# dReal is an open-source solver, and is included in the Drake build by
+# default. The dReal solver is irrelevant to some users of MathematicalProgram,
+# so we provide a hidden switch to shut it off for developers who don't
+# actually need it.  This is not a supported configuration. Use at your own
+# risk: --define=NO_DREAL=ON
+config_setting(
+    name = "no_dreal",
+    values = {"define": "NO_DREAL=ON"},
 )
 
 # IPOPT is an open-source solver, and is included in the Drake build by

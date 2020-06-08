@@ -1,7 +1,7 @@
 # -*- python -*-
 
 load(
-    "//tools:drake.bzl",
+    "@drake//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
@@ -12,30 +12,6 @@ package(
     default_visibility = [":__subpackages__"],
 )
 
-drake_cc_library(
-    name = "jaco_common",
-    srcs = [
-        "jaco_common.cc",
-    ],
-    hdrs = [
-        "jaco_common.h",
-    ],
-    deps = [
-        "//attic/multibody/parsers",
-        "//multibody:rigid_body_tree",
-    ],
-)
-
-drake_cc_library(
-    name = "jaco_lcm",
-    srcs = ["jaco_lcm.cc"],
-    hdrs = ["jaco_lcm.h"],
-    deps = [
-        "//lcmtypes:jaco",
-        "//systems/framework:leaf_system",
-    ],
-)
-
 drake_cc_binary(
     name = "jaco_controller",
     srcs = ["jaco_controller.cc"],
@@ -43,13 +19,13 @@ drake_cc_binary(
         "//manipulation/models/jaco_description:models",
     ],
     deps = [
-        ":jaco_lcm",
+        "//common:add_text_logging_gflags",
         "//common:find_resource",
-        "//common:text_logging_gflags",
         "//lcm",
+        "//manipulation/kinova_jaco",
         "//manipulation/planner:robot_plan_interpolator",
+        "//systems/analysis:simulator",
         "//systems/controllers:pid_controller",
-        "//systems/lcm:lcm_driven_loop",
         "//systems/lcm:lcm_pubsub_system",
         "//systems/primitives:adder",
         "//systems/primitives:demultiplexer",
@@ -61,81 +37,42 @@ drake_cc_binary(
 )
 
 drake_cc_binary(
-    name = "run_passive_jaco_demo",
-    srcs = ["run_passive_jaco_demo.cc"],
+    name = "jaco_simulation",
+    srcs = ["jaco_simulation.cc"],
     add_test_rule = 1,
     data = [
         "//manipulation/models/jaco_description:models",
     ],
     test_rule_args = ["--simulation_sec=0.1"],
     deps = [
-        ":jaco_common",
-        "//attic/multibody/rigid_body_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
+        "//common:add_text_logging_gflags",
         "//common:find_resource",
-        "//common:text_logging_gflags",
-        "//lcm",
-        "//multibody:rigid_body_tree_construction",
+        "//geometry:geometry_visualization",
+        "//geometry:scene_graph",
+        "//manipulation/kinova_jaco",
+        "//multibody/parsing",
+        "//multibody/plant",
         "//systems/analysis:simulator",
-        "//systems/primitives:constant_vector_source",
+        "//systems/controllers:inverse_dynamics_controller",
         "@gflags",
     ],
 )
 
 drake_cc_binary(
-    name = "run_setpose_jaco_demo",
-    srcs = ["run_setpose_jaco_demo.cc"],
-    add_test_rule = 1,
+    name = "move_jaco_ee",
+    srcs = ["move_jaco_ee.cc"],
     data = [
         "//manipulation/models/jaco_description:models",
     ],
-    test_rule_args = ["--simulation_sec=0.1"],
     deps = [
-        ":jaco_common",
-        "//attic/multibody/rigid_body_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
+        "//common:add_text_logging_gflags",
         "//common:find_resource",
-        "//lcm",
-        "//multibody:rigid_body_tree_construction",
-        "//systems/analysis:simulator",
-        "//systems/controllers:inverse_dynamics_controller",
-        "//systems/primitives:constant_vector_source",
-        "@gflags",
-    ],
-)
-
-drake_cc_binary(
-    name = "run_controlled_jaco_demo",
-    srcs = ["run_controlled_jaco_demo.cc"],
-    add_test_rule = 1,
-    data = [
-        "//manipulation/models/jaco_description:models",
-    ],
-    test_rule_args = ["--simulation_sec=0.1"],
-    deps = [
-        ":jaco_common",
-        "//attic/multibody/rigid_body_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
-        "//common:find_resource",
-        "//common/trajectories:piecewise_polynomial",
-        "//lcm",
-        "//multibody:inverse_kinematics",
-        "//multibody:rigid_body_tree_construction",
-        "//systems/analysis:simulator",
-        "//systems/controllers:inverse_dynamics_controller",
-        "//systems/primitives:trajectory_source",
-        "@gflags",
-    ],
-)
-
-# === test/ ===
-
-drake_cc_googletest(
-    name = "jaco_lcm_test",
-    deps = [
-        ":jaco_lcm",
-        "//systems/framework:diagram",
-        "//systems/framework:diagram_builder",
+        "//lcmtypes:jaco",
+        "//manipulation/util:move_ik_demo_base",
+        "//math:geometric_transform",
+        "@lcm",
+        "@lcmtypes_bot2_core",
+        "@lcmtypes_robotlocomotion",
     ],
 )
 

@@ -2,10 +2,13 @@
 #include <cmath>
 #include <initializer_list>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+
+#include <fmt/format.h>
 
 #include "drake/common/symbolic.h"
 
@@ -69,6 +72,23 @@ void Environment::insert(const key_type& key, const mapped_type& elem) {
   map_.emplace(key, elem);
 }
 
+void Environment::insert(
+    const Eigen::Ref<const MatrixX<key_type>>& keys,
+    const Eigen::Ref<const MatrixX<mapped_type>>& elements) {
+  if (keys.rows() != elements.rows() || keys.cols() != elements.cols()) {
+    throw runtime_error(fmt::format(
+        "symbolic::Environment::insert: The size of keys ({} x {}) "
+        "does not match the size of elements ({} x {}).",
+        keys.rows(), keys.cols(), elements.rows(), elements.cols()));
+  }
+
+  for (Eigen::Index i = 0; i < keys.cols(); ++i) {
+    for (Eigen::Index j = 0; j < keys.rows(); ++j) {
+      insert(keys(j, i), elements(j, i));
+    }
+  }
+}
+
 Variables Environment::domain() const {
   Variables dom;
   for (const auto& p : map_) {
@@ -114,5 +134,39 @@ ostream& operator<<(ostream& os, const Environment& env) {
   }
   return os;
 }
+
+Environment PopulateRandomVariables(Environment env, const Variables& variables,
+                                    RandomGenerator* const random_generator) {
+  DRAKE_DEMAND(random_generator != nullptr);
+  for (const Variable& var : variables) {
+    const auto it = env.find(var);
+    if (it != env.end()) {
+      // The variable is already assigned by env, no need to sample.
+      continue;
+    }
+    switch (var.get_type()) {
+      case Variable::Type::CONTINUOUS:
+      case Variable::Type::BINARY:
+      case Variable::Type::BOOLEAN:
+      case Variable::Type::INTEGER:
+        // Do nothing for non-random variables.
+        break;
+      case Variable::Type::RANDOM_UNIFORM:
+        env.insert(var, std::uniform_real_distribution<double>{
+                            0.0, 1.0}(*random_generator));
+        break;
+      case Variable::Type::RANDOM_GAUSSIAN:
+        env.insert(
+            var, std::normal_distribution<double>{0.0, 1.0}(*random_generator));
+        break;
+      case Variable::Type::RANDOM_EXPONENTIAL:
+        env.insert(
+            var, std::exponential_distribution<double>{1.0}(*random_generator));
+        break;
+    }
+  }
+  return env;
+}
+
 }  // namespace symbolic
 }  // namespace drake

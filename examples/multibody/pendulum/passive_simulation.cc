@@ -7,7 +7,7 @@
 #include "drake/geometry/scene_graph.h"
 #include "drake/lcm/drake_lcm.h"
 #include "drake/multibody/benchmarks/pendulum/make_pendulum_plant.h"
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
+#include "drake/multibody/tree/revolute_joint.h"
 #include "drake/systems/analysis/implicit_euler_integrator.h"
 #include "drake/systems/analysis/runge_kutta3_integrator.h"
 #include "drake/systems/analysis/semi_explicit_euler_integrator.h"
@@ -22,7 +22,7 @@ using geometry::SourceId;
 using lcm::DrakeLcm;
 using multibody::benchmarks::pendulum::MakePendulumPlant;
 using multibody::benchmarks::pendulum::PendulumParameters;
-using multibody::multibody_plant::MultibodyPlant;
+using multibody::MultibodyPlant;
 using multibody::RevoluteJoint;
 using systems::ImplicitEulerIntegrator;
 using systems::RungeKutta3Integrator;
@@ -100,16 +100,14 @@ int do_main() {
   systems::IntegratorBase<double>* integrator{nullptr};
   if (FLAGS_integration_scheme == "implicit_euler") {
     integrator =
-        simulator.reset_integrator<ImplicitEulerIntegrator<double>>(
-            *diagram, &simulator.get_mutable_context());
+        &simulator.reset_integrator<ImplicitEulerIntegrator<double>>();
   } else if (FLAGS_integration_scheme == "runge_kutta3") {
     integrator =
-        simulator.reset_integrator<RungeKutta3Integrator<double>>(
-            *diagram, &simulator.get_mutable_context());
+        &simulator.reset_integrator<RungeKutta3Integrator<double>>();
   } else if (FLAGS_integration_scheme == "semi_explicit_euler") {
     integrator =
-        simulator.reset_integrator<SemiExplicitEulerIntegrator<double>>(
-            *diagram, max_time_step, &simulator.get_mutable_context());
+        &simulator.reset_integrator<SemiExplicitEulerIntegrator<double>>(
+            max_time_step);
   } else {
     throw std::runtime_error(
         "Integration scheme '" + FLAGS_integration_scheme +
@@ -124,7 +122,7 @@ int do_main() {
   simulator.set_publish_every_time_step(false);
   simulator.set_target_realtime_rate(FLAGS_target_realtime_rate);
   simulator.Initialize();
-  simulator.StepTo(simulation_time);
+  simulator.AdvanceTo(simulation_time);
 
   // Some sanity checks:
   if (FLAGS_integration_scheme == "semi_explicit_euler") {

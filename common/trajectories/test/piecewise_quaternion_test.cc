@@ -6,7 +6,7 @@
 
 #include "drake/common/drake_assert.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
-#include "drake/util/drakeGeometryUtil.h"
+#include "drake/math/wrap_to.h"
 
 namespace drake {
 namespace trajectories {
@@ -87,7 +87,7 @@ std::vector<Quaternion<Scalar>> GenerateRandomQuaternions(
 }
 
 // Tests CheckSlerpInterpolation and "closestness" for PiecewiseQuaternionSlerp
-// generated from random breaks and knots.
+// generated from random breaks and samples.
 GTEST_TEST(TestPiecewiseQuaternionSlerp,
            TestRandomizedPiecewiseQuaternionSlerp) {
   std::default_random_engine generator(123);
@@ -104,7 +104,7 @@ GTEST_TEST(TestPiecewiseQuaternionSlerp,
     EXPECT_TRUE(CheckSlerpInterpolation(rot_spline, t));
   }
 
-  EXPECT_TRUE(CheckClosest(rot_spline.get_quaternion_knots()));
+  EXPECT_TRUE(CheckClosest(rot_spline.get_quaternion_samples()));
 }
 
 // Tests when the given quaternions are not "closest" to the previous one.
@@ -121,7 +121,7 @@ GTEST_TEST(TestPiecewiseQuaternionSlerp,
 
   PiecewiseQuaternionSlerp<double> rot_spline(time, quat);
   const std::vector<Quaternion<double>>& internal_quat =
-      rot_spline.get_quaternion_knots();
+      rot_spline.get_quaternion_samples();
 
   EXPECT_TRUE(CheckClosest(internal_quat));
   EXPECT_FALSE(CheckClosest(quat));
@@ -130,7 +130,9 @@ GTEST_TEST(TestPiecewiseQuaternionSlerp,
     EXPECT_TRUE(CompareMatrices(rot_spline.orientation(time[i]).coeffs(),
                                 internal_quat[i].coeffs(), 1e-10,
                                 MatrixCompareType::absolute));
-    double omega = angleDiff(ang[i], ang[i + 1]) / (time[i + 1] - time[i]);
+    double ang_diff = ang[i + 1] - ang[i];
+    double time_diff = time[i + 1] - time[i];
+    double omega = math::wrap_to(ang_diff, -M_PI, M_PI) / time_diff;
     EXPECT_TRUE(CompareMatrices(rot_spline.angular_velocity(time[i]),
                                 omega * axis, 1e-10,
                                 MatrixCompareType::absolute));
@@ -156,7 +158,7 @@ GTEST_TEST(TestPiecewiseQuaternionSlerp,
   double t = 0.3 * time[0] + 0.7 * time[1];
 
   const std::vector<Quaternion<double>>& internal_quats =
-      rot_spline.get_quaternion_knots();
+      rot_spline.get_quaternion_samples();
   EXPECT_TRUE(CompareMatrices(
       rot_spline.orientation(t).coeffs(),
       internal_quats[0].coeffs(), 1e-10,

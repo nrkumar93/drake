@@ -2,10 +2,17 @@
 CLion IDE setup
 ***************
 
-This guide describes how to set up Drake in the JetBrains CLion IDE.
+.. note::
 
-**NOTE: EVERY SETUP STEP IN THIS DOCUMENT IS CRITICAL TO GET CLION WORKING
-PROPERLY.  Read carefully, and don't skip anything.**
+  EVERY SETUP STEP IN THIS DOCUMENT IS CRITICAL TO GET CLION WORKING
+  PROPERLY.  Read carefully, and do not skip anything.
+
+.. note::
+
+  The Bazel plugin for CLion does not support macOS, per
+  `bazelbuild/intellij#109 <https://github.com/bazelbuild/intellij/issues/109>`_.
+
+This guide describes how to set up Drake in the JetBrains CLion IDE on Ubuntu.
 
 Using CLion with Bazel
 ======================
@@ -26,17 +33,15 @@ Installing CLion
    academic license `here <https://www.jetbrains.com/shop/eform/students>`_.
 
 The most recent versions that we have tested for compatibility are:
-  - Ubuntu 16.04
-  - Bazel 0.16.1
-  - CLion 2018.1.6 with:
+  - Ubuntu 18.04
+  - Bazel 1.1.0 (October 21, 2019)
+  - CLion 2019.2.4 (October 9, 2019) with:
 
-    - Bazel plug-in 2018.08.06.0.1.
+    - Bazel plugin 2019.10.14.0.0 (October 25, 2019).
 
-Many versions the above (Bazel / CLion / plug-in) are *not* compatible with
-each other.  We strongly suggest using only the versions shown above, when
+Many versions of the above (Bazel / CLion / Bazel plugin) are *not* compatible
+with each other.  We strongly suggest using only the versions shown above, when
 working with Drake.
-
-For developers on macOS, see the :ref:`macOS` details.
 
 Upgrading CLion
 ---------------
@@ -66,7 +71,6 @@ To use Drake in CLion you **must** use Drake's bazel wrapper.
 Open ``Settings > Bazel Settings``.  For ``Bazel binary location`` select the
 path to ``drake/tools/clion/bazel_wrapper`` from any recent Drake source tree
 (it doesn't have to match the current project open in CLion).
-
 
 Setting up Drake in CLion
 -------------------------
@@ -137,7 +141,8 @@ parameters derived from the CLion GUI. Below, we outline a number of common
 tools to aid with compliance with the Drake style guide. The work to create
 a new external tool is the same in all cases; only the specific tool settings
 differ from tool to tool. We'll outline the general work here and provide
-per-tool details below.
+per-tool details below. The GUI description applies to version 2018.1.6 and
+may be slightly different in previous versions.
 
 1. Open the Settings dialog (``File`` > ``Settings``) or ``Alt+Ctrl+S``.
 2. Navigate to ``Tools`` > ``External Tools``.
@@ -170,7 +175,7 @@ CLion such that the modification may not be immediately apparent. When in doubt,
 select away from the target file and back; this will cause the file to refresh
 and you can confirm that the file has been modified as expected.
 
-First, make sure you have installed ``clang-format-4.0``
+First, make sure you have installed ``clang-format-9``
 (see :doc:`code_style_tools`).
 
 Clang format selected file
@@ -181,9 +186,10 @@ following values for the fields:
 
   :Name: ``Clang Format Full File``
   :Description: ``Apply clang-format to the active file``
-  :Program: ``clang-format-4.0``
-  :Parameters: ``-i $FileName$``
+  :Program: ``clang-format-9``
+  :Arguments: ``-i $FileName$``
   :Working directory: ``$FileDir$``
+  :Advanced Options: Uncheck ``Open console for tool output``
 
 Leave the checkbox options in their default state.
 
@@ -195,9 +201,10 @@ following values for the fields:
 
   :Name: ``Clang Format Selected Lines``
   :Description: ``Apply clang-format to the selected lines``
-  :Program: ``clang-format-4.0``
-  :Parameters: ``-lines $SelectionStartLine$:$SelectionEndLine$ -i $FileName$``
+  :Program: ``clang-format-9``
+  :Arguments: ``-lines $SelectionStartLine$:$SelectionEndLine$ -i $FileName$``
   :Working directory: ``$FileDir$``
+  :Advanced Options: Uncheck ``Open console for tool output``
 
 Leave the checkbox options in their default state.
 
@@ -211,8 +218,9 @@ following values for the fields:
   :Description: ``Runs the clang format for correcting includes on the current
                   file``
   :Program: ``bazel``
-  :Parameters: ``run //tools/lint:clang-format-includes -- $FilePath$``
+  :Arguments: ``run //tools/lint:clang-format-includes -- $FilePath$``
   :Working directory: ``$Projectpath$``
+  :Advanced Options: Uncheck ``Open console for tool output``
 
 Leave the checkbox options in their default state.
 
@@ -252,23 +260,15 @@ following values for the fields:
   :Name: ``Cpplint File``
   :Description: ``Apply cpplint to the current file``
   :Program: ``bazel``
-  :Parameters: ``run @styleguide//:cpplint -- --output=eclipse
+  :Arguments: ``run @styleguide//:cpplint -- --output=eclipse
                  $FilePath$``
   :Working directory: ``$Projectpath$``
+  :Advanced Options: Confirm ``Open console for tool output`` is checked
 
-To configure the clickable links:
+To configure the clickable links, enter the following string in the ``Advanced
+Options`` > ``Output filters`` window:
 
-1. Click the ``Output Filters...`` button.
-2. Click the :raw-html:`<font size="5" color="green">+</font>` sign to add a
-   filter.
-3. Add the following values in the following fields (and click "OK):
-
-  :Name: ``Extract Links``
-  :Description: ``Convert file/line references into clickable links.``
-  :Regular expression to match output: ``$FILE_PATH$:$LINE$``
-
-4. Click ``OK`` on the ``Edit filter`` dialog.
-5. Click ``OK`` on the ``Output Filters`` dialog.
+    ``$FILE_PATH$:$LINE$``
 
 Lint selected file for Drake style addenda
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -284,8 +284,9 @@ following values for the fields:
   :Name: ``Drake Lint File``
   :Description: ``Apply drake lint to the current file``
   :Program: ``bazel``
-  :Parameters: ``run //tools/lint:drakelint -- $FilePath$``
+  :Arguments: ``run //tools/lint:drakelint -- $FilePath$``
   :Working directory: ``$Projectpath$``
+  :Advanced Options: Confirm ``Open console for tool output`` is checked
 
 In the event of finding a lint problem (e.g., out-of-order include files), the
 CLion output will contain a *single* clickable link. This link is only the
@@ -317,7 +318,7 @@ Google style guide linting
 Change the following fields in the instructions given above:
 
   :Program: ``bazel-bin/external/styleguide/cpplint_binary``
-  :Parameters: ``--output=eclipse $FilePath$``
+  :Arguments: ``--output=eclipse $FilePath$``
 
 Building the google styleguide lint tool:
 
@@ -328,68 +329,9 @@ Drake style addenda
 
 Change the following fields in the instructions given above:
 
-  :Program: ``/bazel-bin/tools/lint/drakelint``
-  :Parameters: ``$FilePath$``
+  :Program: ``bazel-bin/tools/lint/drakelint``
+  :Arguments: ``$FilePath$``
 
 Building the drake addenda lint tool:
 
 ``bazel build //tools/lint:drakelint``
-
-.. _macos:
-
-macOS support
-=============
-
-Google's Bazel plug-in for CLion does not officially support macOS, per
-`bazelbuild/intellij#109 <https://github.com/bazelbuild/intellij/issues/109>`_.
-However, on a best-effort basis, we will document here any tips that Drake
-developers have discovered to fix the compatibility problems.
-
-CPP toolchain
--------------
-
-CLion users on macOS **must** set this environment variable before starting
-CLion:
-
-``export BAZEL_USE_CPP_ONLY_TOOLCHAIN=1``
-
-CLion's editor needs to locate all C/C++ targets and parse their code (e.g.,
-resolve ``#include`` statements).  Without this variable, the compiler
-auto-detection works well enough to compile the code, but fails to report
-itself as a C/C++ compiler to the IDE.
-
-When this variable is set and the IDE is working correctly, the Bazel Console
-will report a line such as this:
-
-``953 unique C configurations (0 reused), 1104 C targets``
-
-When this variable is *not* set, the IDE will show pervasive "unknown symbol"
-red squiggles, and the Bazel Console will report a line such as this:
-
-``0 unique C configurations (0 reused), 0 C targets``
-
-Environment Variables
----------------------
-
-CLion forwards environment variables to the processes it launches, including
-the Bazel client and server. We have a number of Bazel repository rules that
-consult environment variables to locate external dependencies, e.g.,
-``SNOPT_PATH`` or ``GUROBI_PATH``. Therefore, some care is necessary to make
-sure CLion is launched with the environment you actually want!
-
-macOS users will get broken behavior by default.  When you run an macOS app
-graphically, the parent process is `launchd` (PID 1), which provides its own
-standard environment variables to the child process.  In particular, it provides
-a minimal ``PATH`` that does not include ``/usr/local/bin``, where most Homebrew
-executables are installed.  Consequently, the Bazel build may fail to find
-Homebrew dependencies like ``glib`` and ``pkg-config``.
-
-The simplest solution is not to launch CLion graphically. Instead, configure
-your shell environment properly in ``.bashrc``, and launch CLion from the
-command line::
-
-  /Applications/CLion.app/Contents/MacOS/clion
-
-If you strongly prefer clicking on buttons, you might be able to configure the
-``launchd`` environment using ``launchctl``, but this process is finicky. We
-have no reliable recipe for it yet.

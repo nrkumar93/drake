@@ -3,12 +3,11 @@
 #include <gflags/gflags.h>
 
 #include "drake/common/drake_assert.h"
-#include "drake/common/text_logging_gflags.h"
 #include "drake/geometry/geometry_visualization.h"
 #include "drake/geometry/scene_graph.h"
 #include "drake/lcm/drake_lcm.h"
 #include "drake/multibody/benchmarks/acrobot/make_acrobot_plant.h"
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
+#include "drake/multibody/tree/revolute_joint.h"
 #include "drake/systems/analysis/implicit_euler_integrator.h"
 #include "drake/systems/analysis/runge_kutta3_integrator.h"
 #include "drake/systems/analysis/semi_explicit_euler_integrator.h"
@@ -23,7 +22,7 @@ using geometry::SourceId;
 using lcm::DrakeLcm;
 using multibody::benchmarks::acrobot::AcrobotParameters;
 using multibody::benchmarks::acrobot::MakeAcrobotPlant;
-using multibody::multibody_plant::MultibodyPlant;
+using multibody::MultibodyPlant;
 using multibody::RevoluteJoint;
 using systems::ImplicitEulerIntegrator;
 using systems::RungeKutta3Integrator;
@@ -105,16 +104,14 @@ int do_main() {
   systems::IntegratorBase<double>* integrator{nullptr};
   if (FLAGS_integration_scheme == "implicit_euler") {
     integrator =
-        simulator.reset_integrator<ImplicitEulerIntegrator<double>>(
-            *diagram, &simulator.get_mutable_context());
+        &simulator.reset_integrator<ImplicitEulerIntegrator<double>>();
   } else if (FLAGS_integration_scheme == "runge_kutta3") {
     integrator =
-        simulator.reset_integrator<RungeKutta3Integrator<double>>(
-            *diagram, &simulator.get_mutable_context());
+        &simulator.reset_integrator<RungeKutta3Integrator<double>>();
   } else if (FLAGS_integration_scheme == "semi_explicit_euler") {
     integrator =
-        simulator.reset_integrator<SemiExplicitEulerIntegrator<double>>(
-            *diagram, max_time_step, &simulator.get_mutable_context());
+        &simulator.reset_integrator<SemiExplicitEulerIntegrator<double>>(
+            max_time_step);
   } else {
     throw std::runtime_error(
         "Integration scheme '" + FLAGS_integration_scheme +
@@ -129,7 +126,7 @@ int do_main() {
   simulator.set_publish_every_time_step(false);
   simulator.set_target_realtime_rate(FLAGS_target_realtime_rate);
   simulator.Initialize();
-  simulator.StepTo(simulation_time);
+  simulator.AdvanceTo(simulation_time);
 
   // Some sanity checks:
   if (FLAGS_integration_scheme == "semi_explicit_euler") {
@@ -174,10 +171,9 @@ int do_main() {
 
 int main(int argc, char* argv[]) {
   gflags::SetUsageMessage(
-      "A simple acrobot demo using Drake's MultibodyTree,"
+      "A simple acrobot demo using Drake's MultibodyPlant,"
       "with SceneGraph visualization. "
       "Launch drake-visualizer before running this example.");
   gflags::ParseCommandLineFlags(&argc, &argv, true);
-  drake::logging::HandleSpdlogGflags();
   return drake::examples::multibody::acrobot::do_main();
 }

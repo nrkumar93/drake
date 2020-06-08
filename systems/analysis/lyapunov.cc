@@ -2,10 +2,12 @@
 
 #include <string>
 
+#include "drake/common/symbolic.h"
 #include "drake/common/text_logging.h"
 #include "drake/math/autodiff.h"
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/mathematical_program.h"
+#include "drake/solvers/solve.h"
 
 namespace drake {
 namespace systems {
@@ -41,7 +43,7 @@ Eigen::VectorXd SampleBasedLyapunovAnalysis(
 
   // TODO(russt): handle discrete state.
   DRAKE_DEMAND(context.has_only_continuous_state());
-  DRAKE_DEMAND(context.get_continuous_state().size() == state_size);
+  DRAKE_DEMAND(context.num_continuous_states() == state_size);
 
   // TODO(russt): check that the system is time-invariant.
 
@@ -105,14 +107,14 @@ Eigen::VectorXd SampleBasedLyapunovAnalysis(
   }
 
   drake::log()->info("Solving program.");
-  const solvers::SolutionResult result = prog.Solve();
-  if (result != solvers::SolutionResult::kSolutionFound) {
+  const solvers::MathematicalProgramResult result = Solve(prog);
+  if (!result.is_success()) {
     drake::log()->error("No solution found.  SolutionResult = " +
-                        to_string(result));
+                        to_string(result.get_solution_result()));
   }
   drake::log()->info("Done solving program.");
 
-  return prog.GetSolution(params);
+  return result.GetSolution(params);
 }
 
 }  // namespace analysis

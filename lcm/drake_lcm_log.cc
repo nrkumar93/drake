@@ -3,6 +3,7 @@
 #include <chrono>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 #include "drake/common/drake_assert.h"
@@ -27,7 +28,7 @@ DrakeLcmLog::DrakeLcmLog(const std::string& file_name, bool is_write,
 }
 
 void DrakeLcmLog::Publish(const std::string& channel, const void* data,
-                          int data_size, optional<double> time_sec) {
+                          int data_size, std::optional<double> time_sec) {
   if (!is_write_) {
     throw std::logic_error("Publish is only available for log saving.");
   }
@@ -51,25 +52,22 @@ void DrakeLcmLog::Publish(const std::string& channel, const void* data,
   }
 }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-void DrakeLcmLog::Subscribe(const std::string& channel,
-                            DrakeLcmMessageHandlerInterface* handler) {
-  Subscribe(channel, std::bind(
-      std::mem_fn(&DrakeLcmMessageHandlerInterface::HandleMessage), handler,
-      channel, std::placeholders::_1, std::placeholders::_2));
-}
-#pragma GCC diagnostic pop  // pop -Wdeprecated-declarations
-
-void DrakeLcmLog::Subscribe(const std::string& channel,
-                            HandlerFunction handler) {
+std::shared_ptr<DrakeSubscriptionInterface> DrakeLcmLog::Subscribe(
+    const std::string& channel, HandlerFunction handler) {
   if (is_write_) {
     throw std::logic_error("Subscribe is only available for log playback.");
   }
-
   std::lock_guard<std::mutex> lock(mutex_);
-
   subscriptions_.emplace(channel, std::move(handler));
+  return nullptr;
+}
+
+int DrakeLcmLog::HandleSubscriptions(int) {
+  if (is_write_) {
+    throw std::logic_error(
+        "HandleSubscriptions is only available for log playback.");
+  }
+  return 0;
 }
 
 double DrakeLcmLog::GetNextMessageTime() const {
@@ -109,6 +107,11 @@ void DrakeLcmLog::DispatchMessageAndAdvanceLog(double current_time) {
 
   // Advance log.
   next_event_ = log_->readNextEvent();
+}
+
+void DrakeLcmLog::OnHandleSubscriptionsError(const std::string& error_message) {
+  // We are not called via LCM C code, so it's safe to throw there.
+  throw std::runtime_error(error_message);
 }
 
 }  // namespace lcm

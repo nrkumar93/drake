@@ -3,11 +3,13 @@
 #include <memory>
 #include <string>
 
+#include "drake/attic_warning.h"
 #include "drake/common/constants.h"
 #include "drake/common/eigen_types.h"
 #include "drake/common/unused.h"
 #include "drake/math/normalize_vector.h"
 #include "drake/math/quaternion.h"
+#include "drake/math/rigid_transform.h"
 #include "drake/math/rotation_conversion_gradient.h"
 #include "drake/multibody/joints/drake_joint_impl.h"
 #include "drake/util/drakeGeometryUtil.h"
@@ -72,12 +74,10 @@ class QuaternionBallJoint : public DrakeJointImpl<QuaternionBallJoint> {
   template <typename DerivedQ>
   Eigen::Transform<typename DerivedQ::Scalar, 3, Eigen::Isometry>
   jointTransform(const Eigen::MatrixBase<DerivedQ>& q) const {
-    Eigen::Transform<typename DerivedQ::Scalar, 3, Eigen::Isometry> ret;
-    drake::Vector4<typename DerivedQ::Scalar> quat(q[0], q[1], q[2], q[3]);
-    ret.linear() = drake::math::quat2rotmat(quat);
-    ret.translation().setZero();
-    ret.makeAffine();
-    return ret;
+    Eigen::Quaternion<typename DerivedQ::Scalar> quat(q[0], q[1], q[2], q[3]);
+    const drake::math::RotationMatrix<typename DerivedQ::Scalar> R_PB(quat);
+    const drake::math::RigidTransform<typename DerivedQ::Scalar> X_PB(R_PB);
+    return X_PB.GetAsIsometry3();
   }
 
   template <typename DerivedQ, typename DerivedMS>
@@ -275,23 +275,11 @@ class QuaternionBallJoint : public DrakeJointImpl<QuaternionBallJoint> {
 
   bool is_floating() const override { return false; };
 
-  // TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use is_floating().")
-  bool isFloating() const override { return is_floating(); }
-
   std::string get_position_name(int index) const override;
   std::string get_velocity_name(int index) const override;
   Eigen::VectorXd zeroConfiguration() const override;
   Eigen::VectorXd randomConfiguration(
       std::default_random_engine& generator) const override;
-
-  // TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use get_position_name().")
-  std::string getPositionName(int index) const override;
-
-  // TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use get_velocity_name().")
-  std::string getVelocityName(int index) const override;
 
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW

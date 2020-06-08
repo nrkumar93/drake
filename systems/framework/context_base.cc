@@ -9,20 +9,21 @@ namespace drake {
 namespace systems {
 
 std::unique_ptr<ContextBase> ContextBase::Clone() const {
-  std::unique_ptr<ContextBase> clone_ptr(CloneWithoutPointers(*this));
+  if (!is_root_context()) {
+      throw std::logic_error(fmt::format(
+          "Context::Clone(): Cannot clone a non-root Context; "
+          "this Context was created by '{}'.", system_name_));
+  }
 
-  // Verify that the most-derived Context didn't forget to override
-  // DoCloneWithoutPointers().
-  const ContextBase& source = *this;  // Deref here to avoid typeid warning.
+  std::unique_ptr<ContextBase> clone_ptr(CloneWithoutPointers(*this));
   ContextBase& clone = *clone_ptr;
-  DRAKE_ASSERT(typeid(source) == typeid(clone));
 
   // Create a complete mapping of tracker pointers.
   DependencyTracker::PointerMap tracker_map;
   BuildTrackerPointerMap(*this, clone, &tracker_map);
 
   // Then do a pointer fixup pass.
-  FixContextPointers(source, tracker_map, &clone);
+  FixContextPointers(*this, tracker_map, &clone);
   return clone_ptr;
 }
 
@@ -39,22 +40,28 @@ std::string ContextBase::GetSystemPathname() const {
 FixedInputPortValue& ContextBase::FixInputPort(
     int index, std::unique_ptr<AbstractValue> value) {
   std::unique_ptr<FixedInputPortValue> fixed =
-      detail::ContextBaseFixedInputAttorney::CreateFixedInputPortValue(
+      internal::ContextBaseFixedInputAttorney::CreateFixedInputPortValue(
           std::move(value));
   FixedInputPortValue& fixed_ref = *fixed;
   SetFixedInputPortValue(InputPortIndex(index), std::move(fixed));
   return fixed_ref;
 }
 
-void ContextBase::AddInputPort(InputPortIndex expected_index,
-                               DependencyTicket ticket) {
+void ContextBase::AddInputPort(
+    InputPortIndex expected_index, DependencyTicket ticket,
+    std::function<void(const AbstractValue&)> fixed_input_type_checker) {
   DRAKE_DEMAND(expected_index.is_valid() && ticket.is_valid());
-  DRAKE_DEMAND(expected_index == get_num_input_ports());
+  DRAKE_DEMAND(expected_index == num_input_ports());
   DRAKE_DEMAND(input_port_tickets_.size() == input_port_values_.size());
+  DRAKE_DEMAND(input_port_tickets_.size() == input_port_type_checkers_.size());
+  if (!fixed_input_type_checker) {
+    fixed_input_type_checker = [](const AbstractValue&) {};
+  }
   auto& ui_tracker = graph_.CreateNewDependencyTracker(
       ticket, "u_" + std::to_string(expected_index));
   input_port_values_.emplace_back(nullptr);
   input_port_tickets_.emplace_back(ticket);
+  input_port_type_checkers_.emplace_back(std::move(fixed_input_type_checker));
   auto& u_tracker = graph_.get_mutable_tracker(
       DependencyTicket(internal::kAllInputPortsTicket));
   u_tracker.SubscribeToPrerequisite(&ui_tracker);
@@ -64,7 +71,7 @@ void ContextBase::AddOutputPort(
     OutputPortIndex expected_index, DependencyTicket ticket,
     const internal::OutputPortPrerequisite& prerequisite) {
   DRAKE_DEMAND(expected_index.is_valid() && ticket.is_valid());
-  DRAKE_DEMAND(expected_index == get_num_output_ports());
+  DRAKE_DEMAND(expected_index == num_output_ports());
   auto& yi_tracker = graph_.CreateNewDependencyTracker(
       ticket, "y_" + std::to_string(expected_index));
   output_port_tickets_.push_back(ticket);
@@ -81,8 +88,11 @@ void ContextBase::AddOutputPort(
 void ContextBase::SetFixedInputPortValue(
     InputPortIndex index,
     std::unique_ptr<FixedInputPortValue> port_value) {
-  DRAKE_DEMAND(0 <= index && index < get_num_input_ports());
+  DRAKE_DEMAND(0 <= index && index < num_input_ports());
   DRAKE_DEMAND(port_value != nullptr);
+
+  // Fail-fast if the user supplied the wrong type or size.
+  input_port_type_checkers_[index](port_value->get_value());
 
   DependencyTracker& port_tracker =
       get_mutable_tracker(input_port_tickets_[index]);
@@ -106,9 +116,9 @@ void ContextBase::SetFixedInputPortValue(
   }
 
   // Fill in the FixedInputPortValue object and install it.
-  detail::ContextBaseFixedInputAttorney::set_ticket(port_value.get(),
-                                                    ticket_to_use);
-  detail::ContextBaseFixedInputAttorney::set_owning_subcontext(
+  internal::ContextBaseFixedInputAttorney::set_ticket(port_value.get(),
+                                                      ticket_to_use);
+  internal::ContextBaseFixedInputAttorney::set_owning_subcontext(
       port_value.get(), this);
   input_port_values_[index] = std::move(port_value);
 
@@ -199,6 +209,25 @@ void ContextBase::CreateBuiltInTrackers() {
   auto& u_tracker = graph.CreateNewDependencyTracker(
       DependencyTicket(internal::kAllInputPortsTicket), "u");
 
+  // Allocate the "all sources except input ports" tracker. The complete list of
+  // known sources is t,a,x,p. Note that cache entries are not included.
+  // Usually that won't matter since cache entries typically depend on at least
+  // one of t,a,x, or p so will be invalided for the same reason the current
+  // computation is. However, any dependency on a cache entry that depends only
+  // on input ports would have to be declared explicitly. (In practice specific
+  // input port trackers should be active with this one and logically that
+  // should take care of cache entries also -- otherwise there is a contributing
+  // input port that wasn't listed.)
+  auto& all_sources_except_input_ports_tracker =
+      graph.CreateNewDependencyTracker(
+          DependencyTicket(internal::kAllSourcesExceptInputPortsTicket),
+          "all sources except input ports");
+  all_sources_except_input_ports_tracker.SubscribeToPrerequisite(&time_tracker);
+  all_sources_except_input_ports_tracker.SubscribeToPrerequisite(
+      &accuracy_tracker);
+  all_sources_except_input_ports_tracker.SubscribeToPrerequisite(&x_tracker);
+  all_sources_except_input_ports_tracker.SubscribeToPrerequisite(&p_tracker);
+
   // Allocate the "all sources" tracker. The complete list of known sources
   // is t,a,x,p,u. Note that cache entries are not included. Under normal
   // operation that doesn't matter because cache entries are invalidated only
@@ -207,10 +236,8 @@ void ContextBase::CreateBuiltInTrackers() {
   // same reason so doesn't need to explicitly list cache entries.
   auto& all_sources_tracker = graph.CreateNewDependencyTracker(
       DependencyTicket(internal::kAllSourcesTicket), "all sources");
-  all_sources_tracker.SubscribeToPrerequisite(&time_tracker);
-  all_sources_tracker.SubscribeToPrerequisite(&accuracy_tracker);
-  all_sources_tracker.SubscribeToPrerequisite(&x_tracker);
-  all_sources_tracker.SubscribeToPrerequisite(&p_tracker);
+  all_sources_tracker.SubscribeToPrerequisite(
+      &all_sources_except_input_ports_tracker);
   all_sources_tracker.SubscribeToPrerequisite(&u_tracker);
 
   // Allocate kinematics trackers to provide a level of abstraction from the
@@ -296,7 +323,7 @@ void ContextBase::FixContextPointers(
   clone->cache_.RepairCachePointers(clone);
   for (auto& fixed_input : clone->input_port_values_) {
     if (fixed_input != nullptr) {
-      detail::ContextBaseFixedInputAttorney::set_owning_subcontext(
+      internal::ContextBaseFixedInputAttorney::set_owning_subcontext(
           fixed_input.get_mutable(), clone);
     }
   }

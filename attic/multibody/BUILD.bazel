@@ -8,13 +8,39 @@ load(
     drake_cc_test = "attic_drake_cc_test",
 )
 load(
-    "@drake//tools/skylark:drake_proto.bzl",
-    "drake_cc_proto_library",
+    "@drake//tools/skylark:drake_cc.bzl",
+    "drake_cc_package_library",
 )
-load("//tools/skylark:test_tags.bzl", "gurobi_test_tags")
+load("@drake//tools/skylark:test_tags.bzl", "gurobi_test_tags")
 load("//tools/lint:lint.bzl", "add_lint_tests")
 
 package(default_visibility = ["//visibility:public"])
+
+drake_cc_package_library(
+    name = "multibody",
+    deps = [
+        ":approximate_ik",
+        ":global_inverse_kinematics",
+        ":inverse_kinematics",
+        ":kinematics_cache",
+        ":kinematics_cache_helper",
+        ":resolve_center_of_pressure",
+        ":rigid_body",
+        ":rigid_body_actuator",
+        ":rigid_body_constraint",
+        ":rigid_body_distance_constraint",
+        ":rigid_body_frame",
+        ":rigid_body_loop",
+        ":rigid_body_tree",
+        ":rigid_body_tree_alias_groups",
+        ":rigid_body_tree_cc",
+        ":rigid_body_tree_cc_0",
+        ":rigid_body_tree_cc_1",
+        ":rigid_body_tree_construction",
+        ":rigid_body_tree_contact",
+        ":rigid_body_tree_datatypes",
+    ],
+)
 
 drake_cc_library(
     name = "global_inverse_kinematics",
@@ -97,6 +123,7 @@ drake_cc_library(
         "//common:unused",
         "//math:gradient",
         "//solvers:mathematical_program",
+        "//solvers:solve",
     ],
 )
 
@@ -115,6 +142,7 @@ drake_cc_library(
     hdrs = ["rigid_body_constraint.h"],
     deps = [
         ":rigid_body_tree",
+        "//math:geometric_transform",
     ],
 )
 
@@ -140,9 +168,9 @@ drake_cc_library(
     deps = [
         "//attic/multibody/collision",
         "//attic/multibody/joints",
+        "//attic/util",
         "//common:autodiff",
         "//common:essential",
-        "//util",
     ],
 )
 
@@ -227,11 +255,11 @@ _RBT_SHARD_COUNT = 2
             "//attic/multibody/collision",
             "//attic/multibody/joints",
             "//attic/multibody/shapes",
+            "//attic/util",
             "//common:autodiff",
             "//common:essential",
             "//math:geometric_transform",
             "//math:gradient",
-            "//util",
         ],
     )
     for i in range(_RBT_SHARD_COUNT)
@@ -335,23 +363,13 @@ drake_cc_library(
     ],
 )
 
-drake_cc_proto_library(
-    name = "rigid_body_tree_alias_groups_proto",
-    srcs = [
-        "alias_groups.proto",
-    ],
-    visibility = ["//visibility:private"],
-)
-
 drake_cc_library(
     name = "rigid_body_tree_alias_groups",
     srcs = ["rigid_body_tree_alias_groups.cc"],
     hdrs = ["rigid_body_tree_alias_groups.h"],
     deps = [
         ":rigid_body_tree",
-        ":rigid_body_tree_alias_groups_proto",
         "//common:essential",
-        "//common/proto:protobuf",
     ],
 )
 
@@ -533,10 +551,8 @@ drake_cc_googletest(
     srcs = ["test/rigid_body_tree/rigid_body_tree_clone_test.cc"],
     data = [
         ":test_models",
-        "//automotive/models",
         "//examples/atlas:models",
         "//examples/pendulum:models",
-        "//examples/valkyrie:models",
     ],
     deps = [
         ":rigid_body_tree_compare_to_clone",
@@ -583,7 +599,7 @@ drake_cc_googletest(
     ],
 )
 
-drake_cc_googletest(
+drake_cc_test(
     name = "test_kinematics_cache_checks",
     data = ["//examples/atlas:models"],
     deps = [
@@ -599,17 +615,6 @@ drake_cc_googletest(
         "//examples/atlas:models",
         "//manipulation/models/iiwa_description:models",
     ],
-    deps = [
-        ":inverse_kinematics",
-        "//attic/multibody/parsers",
-        "//common:find_resource",
-        "//common/test_utilities:eigen_matrix_compare",
-    ],
-)
-
-drake_cc_googletest(
-    name = "test_ik_pointwise",
-    data = ["//examples/atlas:models"],
     deps = [
         ":inverse_kinematics",
         "//attic/multibody/parsers",
@@ -657,8 +662,7 @@ drake_cc_googletest(
     srcs = ["test/rigid_body_tree_alias_groups_test.cc"],
     data = [
         "test/rigid_body_tree/two_dof_robot.urdf",
-        "test/test.alias_groups",
-        "//multibody:test_models",
+        "//attic/multibody:test_models",
     ],
     deps = [
         ":rigid_body_tree_alias_groups",

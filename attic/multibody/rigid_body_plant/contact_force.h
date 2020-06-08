@@ -1,5 +1,6 @@
 #pragma once
 
+#include "drake/attic_warning.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
 
@@ -11,6 +12,7 @@ namespace systems {
 
  Ultimately, a contact force consists of an application point, a spatial
  force, and a unit vector. The spatial force includes:
+
     - a translational force, that is a pure force applied at a point,
     - a torque, the rotational force. This is not the same as the moment
       induced by the translational force.  This torque can arise from a
@@ -30,6 +32,7 @@ namespace systems {
  @tparam T The scalar type. Must be a valid Eigen scalar.
 
  Instantiated templates for the following ScalarTypes are provided:
+
     - double
     - AutoDiffXd
  */
@@ -99,8 +102,8 @@ class ContactForce {
 
    @returns the resultant spatial force.
    */
-  SpatialForce <T> get_spatial_force() const {
-    SpatialForce<T> spatial_force;
+  Vector6<T> get_spatial_force() const {
+    Vector6<T> spatial_force;
     spatial_force.template head<3>() = torque_;
     spatial_force.template tail<3>() = force_;
     return spatial_force;

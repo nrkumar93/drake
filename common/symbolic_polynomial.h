@@ -5,9 +5,11 @@
 #warning Do not directly include this file. Include "drake/common/symbolic.h".
 #endif
 
+#include <algorithm>
 #include <functional>
+#include <map>
 #include <ostream>
-#include <unordered_map>
+#include <utility>
 
 #include <Eigen/Core>
 
@@ -16,6 +18,40 @@
 
 namespace drake {
 namespace symbolic {
+namespace internal {
+// Compares two monomials using the lexicographic order. It is used in
+// symbolic::Polynomial::MapType. See
+// https://en.wikipedia.org/wiki/Monomial_order for different monomial orders.
+struct CompareMonomial {
+  bool operator()(const Monomial& m1, const Monomial& m2) const {
+    const auto& powers1 = m1.get_powers();
+    const auto& powers2 = m2.get_powers();
+    return std::lexicographical_compare(
+        powers1.begin(), powers1.end(), powers2.begin(), powers2.end(),
+        [](const std::pair<const Variable, int>& p1,
+           const std::pair<const Variable, int>& p2) {
+          const Variable& v1{p1.first};
+          const int i1{p1.second};
+          const Variable& v2{p2.first};
+          const int i2{p2.second};
+          if (v1.less(v2)) {
+            // m2 does not have the variable v1 explicitly, so we treat it as if
+            // it has (v1)⁰. That is, we need "return i1 < 0", but i1 should be
+            // positive, so this case always returns false.
+            return false;
+          }
+          if (v2.less(v1)) {
+            // m1 does not have the variable v2 explicitly, so we treat it as
+            // if it has (v2)⁰. That is, we need "return 0 < i2", but i2 should
+            // be positive, so it always returns true.
+            return true;
+          }
+          return i1 < i2;
+        });
+  }
+};
+}  // namespace internal
+
 /// Represents symbolic polynomials. A symbolic polynomial keeps a mapping from
 /// a monomial of indeterminates to its coefficient in a symbolic expression.
 ///
@@ -29,7 +65,7 @@ namespace symbolic {
 /// we need this information to perform arithmetic operations over Polynomials.
 class Polynomial {
  public:
-  using MapType = std::unordered_map<Monomial, Expression>;
+  using MapType = std::map<Monomial, Expression, internal::CompareMonomial>;
 
   /// Constructs a zero polynomial.
   Polynomial() = default;
@@ -65,13 +101,31 @@ class Polynomial {
   ///
   /// @throws std::runtime_error if @p e is not a polynomial in @p
   /// indeterminates.
-  Polynomial(const Expression& e, const Variables& indeterminates);
+  Polynomial(const Expression& e, Variables indeterminates);
 
   /// Returns the indeterminates of this polynomial.
-  Variables indeterminates() const;
+  const Variables& indeterminates() const;
 
   /// Returns the decision variables of this polynomial.
-  Variables decision_variables() const;
+  const Variables& decision_variables() const;
+
+  /// Sets the indeterminates to `new_indeterminates`.
+  ///
+  /// Changing the indeterminates would change `monomial_to_coefficient_map()`,
+  /// and also potentially the degree of the polynomial. Here is an example.
+  ///
+  /// @code
+  /// // p is a quadratic polynomial with x being the indeterminates.
+  /// symbolic::Polynomial p(a * x * x + b * x + c, {x});
+  /// // p.monomial_to_coefficient_map() contains {1: c, x: b, x*x:a}.
+  /// std::cout << p.TotalDegree(); // prints 2.
+  /// // Now set (a, b, c) to the indeterminates. p becomes a linear
+  /// // polynomial of a, b, c.
+  /// p.SetIndeterminates({a, b, c});
+  /// // p.monomial_to_coefficient_map() now is {a: x * x, b: x, c: 1}.
+  /// std::cout << p.TotalDegree(); // prints 1.
+  /// @endcode
+  void SetIndeterminates(const Variables& new_indeterminates);
 
   /// Returns the highest degree of this polynomial in a variable @p v.
   int Degree(const Variable& v) const;
@@ -141,17 +195,29 @@ class Polynomial {
   Polynomial& operator+=(const Polynomial& p);
   Polynomial& operator+=(const Monomial& m);
   Polynomial& operator+=(double c);
+  Polynomial& operator+=(const Variable& v);
 
   Polynomial& operator-=(const Polynomial& p);
   Polynomial& operator-=(const Monomial& m);
   Polynomial& operator-=(double c);
+  Polynomial& operator-=(const Variable& v);
 
   Polynomial& operator*=(const Polynomial& p);
   Polynomial& operator*=(const Monomial& m);
   Polynomial& operator*=(double c);
+  Polynomial& operator*=(const Variable& v);
 
   /// Returns true if this polynomial and @p p are structurally equal.
   bool EqualTo(const Polynomial& p) const;
+
+  /// Returns true if this polynomial and @p p are equal, after expanding the
+  /// coefficients.
+  bool EqualToAfterExpansion(const Polynomial& p) const;
+
+  /// Returns true if this polynomial and @p are almost equal (the difference
+  /// in the corresponding coefficients are all less than @p tol), after
+  /// expanding the coefficients.
+  bool CoefficientsAlmostEqual(const Polynomial& p, double tol) const;
 
   /// Returns a symbolic formula representing the condition where this
   /// polynomial and @p p are the same.
@@ -171,16 +237,20 @@ class Polynomial {
       hash_append(hasher, p.second);
     }
   }
+  friend Polynomial operator/(Polynomial p, double v);
 
  private:
   // Throws std::runtime_error if there is a variable appeared in both of
   // decision_variables() and indeterminates().
   void CheckInvariant() const;
+
   MapType monomial_to_coefficient_map_;
+  Variables indeterminates_;
+  Variables decision_variables_;
 };
 
 /// Unary minus operation for polynomial.
-Polynomial operator-(Polynomial p);
+Polynomial operator-(const Polynomial& p);
 
 Polynomial operator+(Polynomial p1, const Polynomial& p2);
 Polynomial operator+(Polynomial p, const Monomial& m);
@@ -190,6 +260,8 @@ Polynomial operator+(const Monomial& m1, const Monomial& m2);
 Polynomial operator+(const Monomial& m, double c);
 Polynomial operator+(double c, Polynomial p);
 Polynomial operator+(double c, const Monomial& m);
+Polynomial operator+(Polynomial p, const Variable& v);
+Polynomial operator+(const Variable& v, Polynomial p);
 
 Polynomial operator-(Polynomial p1, const Polynomial& p2);
 Polynomial operator-(Polynomial p, const Monomial& m);
@@ -199,6 +271,8 @@ Polynomial operator-(const Monomial& m1, const Monomial& m2);
 Polynomial operator-(const Monomial& m, double c);
 Polynomial operator-(double c, Polynomial p);
 Polynomial operator-(double c, const Monomial& m);
+Polynomial operator-(Polynomial p, const Variable& v);
+Polynomial operator-(const Variable& v, const Polynomial& p);
 
 Polynomial operator*(Polynomial p1, const Polynomial& p2);
 Polynomial operator*(Polynomial p, const Monomial& m);
@@ -209,6 +283,11 @@ Polynomial operator*(const Monomial& m, Polynomial p);
 Polynomial operator*(const Monomial& m, double c);
 Polynomial operator*(double c, Polynomial p);
 Polynomial operator*(double c, const Monomial& m);
+Polynomial operator*(Polynomial p, const Variable& v);
+Polynomial operator*(const Variable& v, Polynomial p);
+
+/// Returns `p / v`.
+Polynomial operator/(Polynomial p, double v);
 
 /// Returns polynomial @p rasied to @p n.
 Polynomial pow(const Polynomial& p, int n);
@@ -216,13 +295,14 @@ Polynomial pow(const Polynomial& p, int n);
 std::ostream& operator<<(std::ostream& os, const Polynomial& p);
 
 /// Provides the following seven operations:
-///  - Matrix<Polynomial> * Matrix<Monomial> => Matrix<Polynomial>
-///  - Matrix<Polynomial> * Matrix<double> => Matrix<Polynomial>
-///  - Matrix<Monomial> * Matrix<Polynomial> => Matrix<Polynomial>
-///  - Matrix<Monomial> * Matrix<Monomial> => Matrix<Polynomial>
-///  - Matrix<Monomial> * Matrix<double> => Matrix<Polynomial>
-///  - Matrix<double> * Matrix<Polynomial> => Matrix<Polynomial>
-///  - Matrix<double> * Matrix<Monomial> => Matrix<Polynomial>
+///
+/// - Matrix<Polynomial> * Matrix<Monomial> => Matrix<Polynomial>
+/// - Matrix<Polynomial> * Matrix<double> => Matrix<Polynomial>
+/// - Matrix<Monomial> * Matrix<Polynomial> => Matrix<Polynomial>
+/// - Matrix<Monomial> * Matrix<Monomial> => Matrix<Polynomial>
+/// - Matrix<Monomial> * Matrix<double> => Matrix<Polynomial>
+/// - Matrix<double> * Matrix<Polynomial> => Matrix<Polynomial>
+/// - Matrix<double> * Matrix<Monomial> => Matrix<Polynomial>
 ///
 /// @note that these operator overloadings are necessary even after providing
 /// Eigen::ScalarBinaryOpTraits. See
@@ -262,6 +342,7 @@ operator*(const MatrixL& lhs, const MatrixR& rhs) {
   return lhs.template cast<Polynomial>() * rhs.template cast<Polynomial>();
 }
 #endif
+
 }  // namespace symbolic
 }  // namespace drake
 
@@ -370,3 +451,31 @@ EIGEN_DEVICE_FUNC inline drake::symbolic::Expression cast(
 }  // namespace internal
 }  // namespace Eigen
 #endif  // !defined(DRAKE_DOXYGEN_CXX)
+
+namespace drake {
+namespace symbolic {
+/// Evaluates a matrix `m` of symbolic polynomials using `env`.
+///
+/// @returns a matrix of double whose size is the size of @p m.
+/// @throws std::runtime_error if NaN is detected during evaluation.
+/// @pydrake_mkdoc_identifier{polynomial}
+template <typename Derived>
+std::enable_if_t<
+    std::is_same<typename Derived::Scalar, Polynomial>::value,
+    Eigen::Matrix<double, Derived::RowsAtCompileTime,
+                  Derived::ColsAtCompileTime, 0, Derived::MaxRowsAtCompileTime,
+                  Derived::MaxColsAtCompileTime>>
+Evaluate(const Eigen::MatrixBase<Derived>& m, const Environment& env) {
+  return m.unaryExpr([&env](const Polynomial& p) { return p.Evaluate(env); });
+}
+
+/// Computes the Jacobian matrix J of the vector function @p f with respect to
+/// @p vars. J(i,j) contains ∂f(i)/∂vars(j).
+///
+/// @pre {@p vars is non-empty}.
+/// @pydrake_mkdoc_identifier{polynomial}
+MatrixX<Polynomial> Jacobian(const Eigen::Ref<const VectorX<Polynomial>>& f,
+                             const Eigen::Ref<const VectorX<Variable>>& vars);
+
+}  // namespace symbolic
+}  // namespace drake

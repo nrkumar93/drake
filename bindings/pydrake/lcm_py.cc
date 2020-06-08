@@ -4,8 +4,8 @@
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 
+#include "drake/bindings/pydrake/documentation_pybind.h"
 #include "drake/bindings/pydrake/pydrake_pybind.h"
-#include "drake/bindings/pydrake/util/drake_optional_pybind.h"
 #include "drake/lcm/drake_lcm.h"
 #include "drake/lcm/drake_lcm_interface.h"
 #include "drake/lcm/drake_mock_lcm.h"
@@ -16,6 +16,7 @@ namespace pydrake {
 PYBIND11_MODULE(lcm, m) {
   // NOLINTNEXTLINE(build/namespaces): Emulate placement in namespace.
   using namespace drake::lcm;
+  constexpr auto& doc = pydrake_doc.drake.lcm;
 
   // Use `py::bytes` as a mid-point between C++ LCM (`void* + int` /
   // `vector<uint8_t>`) and Python LCM (`str`).
@@ -23,58 +24,56 @@ PYBIND11_MODULE(lcm, m) {
 
   {
     using Class = DrakeLcmInterface;
-
-    py::class_<Class>(m, "DrakeLcmInterface")
+    constexpr auto& cls_doc = doc.DrakeLcmInterface;
+    py::class_<Class>(m, "DrakeLcmInterface", cls_doc.doc)
         // N.B. We do not bind `Subscribe` as multi-threading from C++ may
         // wreak havoc on the Python GIL with a callback.
-        .def("Publish", [](
-              Class* self, const std::string& channel,
-              py::bytes buffer, optional<double> time_sec) {
-            // TODO(eric.cousineau): See if there is a way to extra the raw
-            // bytes from `buffer` without copying.
-            std::string str = buffer;
-            self->Publish(channel, str.data(), str.size(), time_sec);
-          },
-          py::arg("channel"), py::arg("buffer"),
-          py::arg("time_sec") = py::none());
+        .def(
+            "Publish",
+            [](Class* self, const std::string& channel, py::bytes buffer,
+                std::optional<double> time_sec) {
+              // TODO(eric.cousineau): See if there is a way to extra the raw
+              // bytes from `buffer` without copying.
+              std::string str = buffer;
+              self->Publish(channel, str.data(), str.size(), time_sec);
+            },
+            py::arg("channel"), py::arg("buffer"),
+            py::arg("time_sec") = py::none(), cls_doc.Publish.doc)
+        .def("HandleSubscriptions", &DrakeLcmInterface::HandleSubscriptions,
+            py::arg("timeout_millis"), cls_doc.HandleSubscriptions.doc);
   }
 
   {
     using Class = DrakeLcm;
-    py::class_<Class, DrakeLcmInterface>(m, "DrakeLcm")
-        .def(py::init<>())
-        .def("StartReceiveThread", &Class::StartReceiveThread)
-        .def("StopReceiveThread", &Class::StopReceiveThread);
+    constexpr auto& cls_doc = doc.DrakeLcm;
+    py::class_<Class, DrakeLcmInterface>(m, "DrakeLcm", cls_doc.doc)
+        .def(py::init<>(), cls_doc.ctor.doc_0args)
+        .def(
+            py::init<std::string>(), py::arg("lcm_url"), cls_doc.ctor.doc_1args)
+        .def(
+            "Subscribe",
+            [](Class* self, const std::string& channel,
+                PyHandlerFunction handler) {
+              auto subscription = self->Subscribe(
+                  channel, [handler](const void* data, int size) {
+                    handler(py::bytes(static_cast<const char*>(data), size));
+                  });
+              DRAKE_DEMAND(subscription != nullptr);
+              // This is already the default, but for clarity we'll repeat it.
+              subscription->set_unsubscribe_on_delete(false);
+            },
+            py::arg("channel"), py::arg("handler"), cls_doc.Subscribe.doc);
     // TODO(eric.cousineau): Add remaining methods.
   }
 
   {
     using Class = DrakeMockLcm;
-    py::class_<Class, DrakeLcmInterface>(m, "DrakeMockLcm")
-        .def(py::init<>())
-        .def("Subscribe", [](
-              Class* self, const std::string& channel,
-              PyHandlerFunction handler) {
-            self->Subscribe(
-                channel,
-                [handler](const void* data, int size) {
-                  handler(py::bytes(static_cast<const char*>(data), size));
-                });
-          }, py::arg("channel"), py::arg("handler"))
-        .def("InduceSubscriberCallback", [](
-              Class* self, const std::string& channel, py::bytes buffer) {
-            std::string str = buffer;
-            self->InduceSubscriberCallback(channel, str.data(), str.size());
-          }, py::arg("channel"), py::arg("buffer"))
-        .def("get_last_published_message", [](
-              const Class* self, const std::string& channel) {
-            const std::vector<uint8_t>& bytes =
-                self->get_last_published_message(channel);
-            return py::bytes(
-                reinterpret_cast<const char*>(bytes.data()), bytes.size());
-          }, py::arg("channel"));
-    // TODO(eric.cousineau): Add remaining methods.
+    constexpr auto& cls_doc = doc.DrakeMockLcm;
+    py::class_<Class, DrakeLcm>(m, "DrakeMockLcm", cls_doc.doc)
+        .def(py::init<>(), cls_doc.ctor.doc);
   }
+
+  ExecuteExtraPythonCode(m);
 }
 
 }  // namespace pydrake

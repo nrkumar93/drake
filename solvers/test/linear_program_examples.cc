@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/solvers/solver_type_converter.h"
 #include "drake/solvers/test/mathematical_program_test_util.h"
 
 using Eigen::Vector4d;
@@ -61,8 +62,9 @@ LinearFeasibilityProgram::LinearFeasibilityProgram(
   }
 }
 
-void LinearFeasibilityProgram::CheckSolution(SolverType) const {
-  auto x_val = prog()->GetSolution(x_);
+void LinearFeasibilityProgram::CheckSolution(
+    const MathematicalProgramResult& result) const {
+  auto x_val = result.GetSolution(x_);
   Vector3d A_times_x(x_val(0) + 2 * x_val(1) + 3 * x_val(2),
                      x_val(1) - 2 * x_val(2), 0);
   EXPECT_GE(A_times_x(0), 0 - 1e-10);
@@ -70,7 +72,7 @@ void LinearFeasibilityProgram::CheckSolution(SolverType) const {
   EXPECT_LE(A_times_x(1), 3 + 1E-10);
   EXPECT_LE(A_times_x(2), 0 + 1E-10);
   EXPECT_GE(A_times_x(2), 0 - 1E-10);
-  EXPECT_GE(prog()->GetSolution(x_(1)), 1 - 1E-10);
+  EXPECT_GE(result.GetSolution(x_(1)), 1 - 1E-10);
 }
 
 LinearProgram0::LinearProgram0(CostForm cost_form,
@@ -130,11 +132,13 @@ LinearProgram0::LinearProgram0(CostForm cost_form,
   }
 }
 
-void LinearProgram0::CheckSolution(SolverType solver_type) const {
-  double tol = GetSolverSolutionDefaultCompareTolerance(solver_type);
-  EXPECT_TRUE(CompareMatrices(prog()->GetSolution(x_), x_expected_, tol,
+void LinearProgram0::CheckSolution(
+    const MathematicalProgramResult& result) const {
+  const double tol = GetSolverSolutionDefaultCompareTolerance(
+      SolverTypeConverter::IdToType(result.get_solver_id()).value());
+  EXPECT_TRUE(CompareMatrices(result.GetSolution(x_), x_expected_, tol,
                               MatrixCompareType::absolute));
-  ExpectSolutionCostAccurate(*prog(), tol);
+  ExpectSolutionCostAccurate(*prog(), result, tol);
 }
 
 LinearProgram1::LinearProgram1(CostForm cost_form,
@@ -171,11 +175,13 @@ LinearProgram1::LinearProgram1(CostForm cost_form,
   }
 }
 
-void LinearProgram1::CheckSolution(SolverType solver_type) const {
-  double tol = GetSolverSolutionDefaultCompareTolerance(solver_type);
-  EXPECT_TRUE(CompareMatrices(prog()->GetSolution(x_), x_expected_, tol,
+void LinearProgram1::CheckSolution(
+    const MathematicalProgramResult& result) const {
+  const double tol = GetSolverSolutionDefaultCompareTolerance(
+      SolverTypeConverter::IdToType(result.get_solver_id()).value());
+  EXPECT_TRUE(CompareMatrices(result.GetSolution(x_), x_expected_, tol,
                               MatrixCompareType::absolute));
-  ExpectSolutionCostAccurate(*prog(), tol);
+  ExpectSolutionCostAccurate(*prog(), result, tol);
 }
 
 LinearProgram2::LinearProgram2(CostForm cost_form,
@@ -259,11 +265,13 @@ LinearProgram2::LinearProgram2(CostForm cost_form,
   }
 }
 
-void LinearProgram2::CheckSolution(SolverType solver_type) const {
-  double tol = GetSolverSolutionDefaultCompareTolerance(solver_type);
-  EXPECT_TRUE(CompareMatrices(prog()->GetSolution(x_), x_expected_, tol,
+void LinearProgram2::CheckSolution(
+    const MathematicalProgramResult& result) const {
+  const double tol = GetSolverSolutionDefaultCompareTolerance(
+      SolverTypeConverter::IdToType(result.get_solver_id()).value());
+  EXPECT_TRUE(CompareMatrices(result.GetSolution(x_), x_expected_, tol,
                               MatrixCompareType::absolute));
-  ExpectSolutionCostAccurate(*prog(), tol);
+  ExpectSolutionCostAccurate(*prog(), result, tol);
 }
 
 LinearProgram3::LinearProgram3(CostForm cost_form,
@@ -331,8 +339,11 @@ LinearProgram3::LinearProgram3(CostForm cost_form,
   }
 }
 
-void LinearProgram3::CheckSolution(SolverType solver_type) const {
+void LinearProgram3::CheckSolution(
+    const MathematicalProgramResult& result) const {
   // Mosek has a looser tolerance.
+  const SolverType solver_type =
+      SolverTypeConverter::IdToType(result.get_solver_id()).value();
   double tol = GetSolverSolutionDefaultCompareTolerance(solver_type);
   if (solver_type == SolverType::kMosek) {
     tol = 1E-6;
@@ -342,9 +353,9 @@ void LinearProgram3::CheckSolution(SolverType solver_type) const {
   if (solver_type == SolverType::kIpopt) {
     cost_tol = 1E-5;
   }
-  EXPECT_TRUE(CompareMatrices(prog()->GetSolution(x_), x_expected_, tol,
+  EXPECT_TRUE(CompareMatrices(result.GetSolution(x_), x_expected_, tol,
                               MatrixCompareType::absolute));
-  ExpectSolutionCostAccurate(*prog(), cost_tol);
+  ExpectSolutionCostAccurate(*prog(), result, cost_tol);
 }
 
 LinearProgramTest::LinearProgramTest() {
@@ -409,6 +420,48 @@ UnboundedLinearProgramTest1::UnboundedLinearProgramTest1()
   prog_->AddLinearConstraint(x(0) + x(1) - x(2) + x(3) <= 3);
   prog_->AddLinearConstraint(x(0) + 2 * x(1) - 2 * x(2) + 4 * x(3), 1, 3);
   prog_->AddBoundingBoxConstraint(0, 1, VectorDecisionVariable<2>(x(0), x(2)));
+}
+
+void TestLPDualSolution1(const SolverInterface& solver, double tol) {
+  MathematicalProgram prog;
+  auto x = prog.NewContinuousVariables<2>();
+  Eigen::Matrix<double, 5, 2> A;
+  // clang-format off
+  A << 1, 2,
+       3, 4,
+       2, 1,
+       1, 5,
+       3, 2;
+  // clang-format on
+  const double kInf = std::numeric_limits<double>::infinity();
+  Eigen::Matrix<double, 5, 1> lb, ub;
+  lb << -kInf, -2, -3, -kInf, 4;
+  ub << 3, kInf, 4, kInf, 5;
+  auto constraint = prog.AddLinearConstraint(A, lb, ub, x);
+  auto cost = prog.AddLinearCost(2 * x[0] + 3 * x[1]);
+  if (solver.available()) {
+    MathematicalProgramResult result1;
+    solver.Solve(prog, {}, {}, &result1);
+    EXPECT_TRUE(result1.is_success());
+    Eigen::Matrix<double, 5, 1> dual_solution_expected;
+    // This dual solution is computed by first finding the active constraint at
+    // the optimal solution, denoted as Aeq * x = beq, then the dual solution
+    // equals to cᵀAeq⁻¹.
+    dual_solution_expected << 0, 0.8, -0.2, 0, 0;
+    EXPECT_TRUE(CompareMatrices(result1.GetDualSolution(constraint),
+                                dual_solution_expected, tol));
+
+    cost.evaluator()->UpdateCoefficients(Eigen::Vector2d(-3, -4));
+    MathematicalProgramResult result2;
+    solver.Solve(prog, {}, {}, &result2);
+    EXPECT_TRUE(result2.is_success());
+    Eigen::Matrix2d Aeq;
+    Aeq.row(0) = A.row(0);
+    Aeq.row(1) = A.row(4);
+    dual_solution_expected << -1.5, 0, 0, 0, -0.5;
+    EXPECT_TRUE(CompareMatrices(result2.GetDualSolution(constraint),
+                                dual_solution_expected, tol));
+  }
 }
 }  // namespace test
 }  // namespace solvers

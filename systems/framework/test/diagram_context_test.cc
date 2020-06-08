@@ -4,10 +4,13 @@
 #include <vector>
 
 #include <Eigen/Dense>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include "drake/common/pointer_cast.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
+#include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/systems/framework/basic_vector.h"
 #include "drake/systems/framework/fixed_input_port_value.h"
 #include "drake/systems/framework/leaf_context.h"
@@ -66,9 +69,7 @@ class DiagramContextTest : public ::testing::Test {
  protected:
   void SetUp() override {
     adder0_ = std::make_unique<Adder<double>>(2 /* inputs */, kSize);
-    adder0_->set_name("adder0");
     adder1_ = std::make_unique<Adder<double>>(2 /* inputs */, kSize);
-    adder1_->set_name("adder1");
 
     integrator0_.reset(new Integrator<double>(kSize));
     integrator1_.reset(new Integrator<double>(kSize));
@@ -80,9 +81,21 @@ class DiagramContextTest : public ::testing::Test {
     system_with_abstract_parameters_ =
         std::make_unique<SystemWithAbstractParameters>();
 
+    adder0_->set_name("adder0");
+    adder1_->set_name("adder1");
+    integrator0_->set_name("integrator0");
+    integrator1_->set_name("integrator1");
+    discrete_state_system_->set_name("discrete_state_system");
+    abstract_state_system_->set_name("abstract_state_system");
+    system_with_numeric_parameters_->set_name("system_with_numeric_parameters");
+    system_with_abstract_parameters_->set_name(
+        "system_with_abstract_parameters");
+
     // This chunk of code is partially mimicking Diagram::DoAllocateContext()
     // which is normally in charge of making DiagramContexts.
     context_ = std::make_unique<DiagramContext<double>>(kNumSystems);
+    internal::SystemBaseContextBaseAttorney::set_system_id(
+        context_.get(), internal::SystemId::get_new_id());
 
     // Don't change these indexes -- tests below depend on them.
     AddSystem(*adder0_, SubsystemIndex(0));
@@ -95,29 +108,29 @@ class DiagramContextTest : public ::testing::Test {
     AddSystem(*system_with_abstract_parameters_, SubsystemIndex(7));
 
     // Fake up some input ports for this diagram.
-    context_->AddInputPort(InputPortIndex(0), DependencyTicket(100));
-    context_->AddInputPort(InputPortIndex(1), DependencyTicket(101));
+    context_->AddInputPort(InputPortIndex(0), DependencyTicket(100), {});
+    context_->AddInputPort(InputPortIndex(1), DependencyTicket(101), {});
 
     context_->MakeState();
     context_->MakeParameters();
     context_->SubscribeDiagramCompositeTrackersToChildrens();
 
-    context_->set_time(kTime);
+    context_->SetTime(kTime);
     ContinuousState<double>& xc = context_->get_mutable_continuous_state();
-    xc.get_mutable_vector().SetAtIndex(0, 42.0);
-    xc.get_mutable_vector().SetAtIndex(1, 43.0);
+    xc.get_mutable_vector()[0] = 42.0;
+    xc.get_mutable_vector()[1] = 43.0;
 
     DiscreteValues<double>& xd = context_->get_mutable_discrete_state();
-    xd.get_mutable_vector(0).SetAtIndex(0, 44.0);
+    xd.get_mutable_vector(0)[0] = 44.0;
 
-    context_->get_mutable_numeric_parameter(0).SetAtIndex(0, 76.0);
-    context_->get_mutable_numeric_parameter(0).SetAtIndex(1, 77.0);
+    context_->get_mutable_numeric_parameter(0)[0] = 76.0;
+    context_->get_mutable_numeric_parameter(0)[1] = 77.0;
 
     // Sanity checks: tests below count on these dimensions.
-    EXPECT_EQ(context_->get_continuous_state().size(), 2);
-    EXPECT_EQ(context_->get_num_discrete_state_groups(), 1);
-    EXPECT_EQ(context_->get_num_abstract_states(), 1);
-    EXPECT_EQ(context_->num_numeric_parameters(), 1);
+    EXPECT_EQ(context_->num_continuous_states(), 2);
+    EXPECT_EQ(context_->num_discrete_state_groups(), 1);
+    EXPECT_EQ(context_->num_abstract_states(), 1);
+    EXPECT_EQ(context_->num_numeric_parameter_groups(), 1);
     EXPECT_EQ(context_->num_abstract_parameters(), 1);
     EXPECT_EQ(context_->num_subcontexts(), kNumSystems);
   }
@@ -265,22 +278,22 @@ namespace {
 void VerifyClonedState(const State<double>& clone) {
   // - Continuous
   const ContinuousState<double>& xc = clone.get_continuous_state();
-  EXPECT_EQ(42.0, xc.get_vector().GetAtIndex(0));
-  EXPECT_EQ(43.0, xc.get_vector().GetAtIndex(1));
+  EXPECT_EQ(42.0, xc.get_vector()[0]);
+  EXPECT_EQ(43.0, xc.get_vector()[1]);
   // - Discrete
   const DiscreteValues<double>& xd = clone.get_discrete_state();
-  EXPECT_EQ(44.0, xd.get_vector(0).GetAtIndex(0));
+  EXPECT_EQ(44.0, xd.get_vector(0)[0]);
   // - Abstract
   const AbstractValues& xa = clone.get_abstract_state();
-  EXPECT_EQ(42, xa.get_value(0).GetValue<int>());
+  EXPECT_EQ(42, xa.get_value(0).get_value<int>());
 }
 
 // Verifies that the @p params are a clone of the params constructed in
 // DiagramContextTest::SetUp.
 void VerifyClonedParameters(const Parameters<double>& params) {
-  ASSERT_EQ(1, params.num_numeric_parameters());
-  EXPECT_EQ(76.0, params.get_numeric_parameter(0).GetAtIndex(0));
-  EXPECT_EQ(77.0, params.get_numeric_parameter(0).GetAtIndex(1));
+  ASSERT_EQ(1, params.num_numeric_parameter_groups());
+  EXPECT_EQ(76.0, params.get_numeric_parameter(0)[0]);
+  EXPECT_EQ(77.0, params.get_numeric_parameter(0)[1]);
   ASSERT_EQ(1, params.num_abstract_parameters());
   EXPECT_EQ(2048, UnpackIntValue(params.get_abstract_parameter(0)));
 }
@@ -306,7 +319,7 @@ TEST_F(DiagramContextTest, RetrieveConstituents) {
 TEST_F(DiagramContextTest, Time) {
   auto before = SaveNotifications(SystemBase::time_ticket());
 
-  context_->set_time(42.0);
+  context_->SetTime(42.0);
   VerifyTimeValue(42.);
   VerifyNotifications("Time", SystemBase::time_ticket(), &before);
 }
@@ -317,7 +330,7 @@ TEST_F(DiagramContextTest, Accuracy) {
   auto before = SaveNotifications(SystemBase::accuracy_ticket());
 
   const double new_accuracy = 1e-12;
-  context_->set_accuracy(new_accuracy);
+  context_->SetAccuracy(new_accuracy);
   VerifyAccuracyValue(new_accuracy);
   VerifyNotifications("Accuracy", SystemBase::accuracy_ticket(), &before);
 }
@@ -507,13 +520,13 @@ TEST_F(DiagramContextTest, MutableEverythingNotifications) {
   const double new_pn = -2;
   const int new_pa = 101;
 
-  clone->set_time(new_time);
-  clone->set_accuracy(new_accuracy);
+  clone->SetTime(new_time);
+  clone->SetAccuracy(new_accuracy);
   clone->SetContinuousState(new_xc);
-  clone->get_mutable_discrete_state(0).SetAtIndex(0, new_xd);
+  clone->get_mutable_discrete_state(0)[0] = new_xd;
   clone->get_mutable_abstract_state<int>(0) = new_xa;
   clone->get_mutable_numeric_parameter(0).SetAtIndex(0, new_pn);
-  clone->get_mutable_abstract_parameter(0).SetValue<int>(new_pa);
+  clone->get_mutable_abstract_parameter(0).set_value<int>(new_pa);
 
   auto t_before = SaveNotifications(SystemBase::time_ticket());
   auto a_before = SaveNotifications(SystemBase::accuracy_ticket());
@@ -547,9 +560,9 @@ TEST_F(DiagramContextTest, MutableEverythingNotifications) {
   EXPECT_EQ(context_->GetSubsystemContext(SubsystemIndex(6))  // numeric param.
                 .get_numeric_parameter(0)[0],
             new_pn);
-  EXPECT_EQ(context_->get_abstract_parameter(0).GetValue<int>(), new_pa);
+  EXPECT_EQ(context_->get_abstract_parameter(0).get_value<int>(), new_pa);
   EXPECT_EQ(context_->GetSubsystemContext(SubsystemIndex(7))  // abstract param.
-                .get_abstract_parameter(0).GetValue<int>(),
+                .get_abstract_parameter(0).get_value<int>(),
             new_pa);
 
   VerifyNotifications("SetTimeStateAndParametersFrom: t",
@@ -598,21 +611,21 @@ TEST_F(DiagramContextTest, State) {
   ContinuousState<double>& integrator1_xc =
       context_->GetMutableSubsystemContext(SubsystemIndex(3))
           .get_mutable_continuous_state();
-  EXPECT_EQ(42.0, integrator0_xc.get_vector().GetAtIndex(0));
-  EXPECT_EQ(43.0, integrator1_xc.get_vector().GetAtIndex(0));
+  EXPECT_EQ(42.0, integrator0_xc.get_vector()[0]);
+  EXPECT_EQ(43.0, integrator1_xc.get_vector()[0]);
   // - Discrete
   DiscreteValues<double>& discrete_xd =
       context_->GetMutableSubsystemContext(SubsystemIndex(4))
           .get_mutable_discrete_state();
-  EXPECT_EQ(44.0, discrete_xd.get_vector(0).GetAtIndex(0));
+  EXPECT_EQ(44.0, discrete_xd.get_vector(0)[0]);
 
   // Changes to constituent system states appear in the diagram state.
   // - Continuous
-  integrator1_xc.get_mutable_vector().SetAtIndex(0, 1000.0);
-  EXPECT_EQ(1000.0, xc.get_vector().GetAtIndex(1));
+  integrator1_xc.get_mutable_vector()[0] = 1000.0;
+  EXPECT_EQ(1000.0, xc.get_vector()[1]);
   // - Discrete
-  discrete_xd.get_mutable_vector(0).SetAtIndex(0, 1001.0);
-  EXPECT_EQ(1001.0, xd.get_vector(0).GetAtIndex(0));
+  discrete_xd.get_mutable_vector(0)[0] = 1001.0;
+  EXPECT_EQ(1001.0, xd.get_vector(0)[0]);
 }
 
 // Tests that the pointers to substates in the DiagramState are equal to the
@@ -630,7 +643,7 @@ TEST_F(DiagramContextTest, DiagramState) {
 // Tests that no exception is thrown when connecting a valid source
 // and destination port.
 TEST_F(DiagramContextTest, ConnectValid) {
-  EXPECT_NO_THROW(context_->SubscribeInputPortToOutputPort(
+  DRAKE_EXPECT_NO_THROW(context_->SubscribeInputPortToOutputPort(
       {SubsystemIndex(0) /* adder0_ */, OutputPortIndex(0)},
       {SubsystemIndex(1) /* adder1_ */, InputPortIndex(1)}));
 }
@@ -638,10 +651,25 @@ TEST_F(DiagramContextTest, ConnectValid) {
 // Tests that input ports can be assigned to the DiagramContext and then
 // retrieved.
 TEST_F(DiagramContextTest, SetAndGetInputPorts) {
-  ASSERT_EQ(2, context_->get_num_input_ports());
+  ASSERT_EQ(2, context_->num_input_ports());
   AttachInputPorts();
   EXPECT_EQ(128, ReadVectorInputPort(*context_, 0)->get_value()[0]);
   EXPECT_EQ(256, ReadVectorInputPort(*context_, 1)->get_value()[0]);
+}
+
+TEST_F(DiagramContextTest, ToString) {
+  const std::string str = context_->to_string();
+  EXPECT_THAT(str, ::testing::HasSubstr("integrator0"));
+  EXPECT_THAT(str, ::testing::HasSubstr("integrator1"));
+  EXPECT_THAT(str, ::testing::HasSubstr("discrete_state_system"));
+  EXPECT_THAT(str, ::testing::HasSubstr("abstract_state_system"));
+  EXPECT_THAT(str, ::testing::HasSubstr("system_with_numeric_parameters"));
+  EXPECT_THAT(str, ::testing::HasSubstr("system_with_abstract_parameters"));
+
+  // Adders named adder0 and adder1 are part of the diagram, but don't have
+  // any context that is useful to print, so are excluded.
+  EXPECT_THAT(str, ::testing::Not(::testing::HasSubstr("adder0")));
+  EXPECT_THAT(str, ::testing::Not(::testing::HasSubstr("adder1")));
 }
 
 // Test that start_next_change_event() returns a sequentially increasing
@@ -680,6 +708,13 @@ TEST_F(DiagramContextTest, Clone) {
   // Verify that the time was copied.
   EXPECT_EQ(kTime, clone->get_time());
 
+  // Verify that the system id was copied.
+  EXPECT_TRUE(clone->get_system_id().is_valid());
+  EXPECT_EQ(clone->get_system_id(), context_->get_system_id());
+  const ContinuousState<double>& xc = clone->get_continuous_state();
+  EXPECT_TRUE(xc.get_system_id().is_valid());
+  EXPECT_EQ(xc.get_system_id(), context_->get_system_id());
+
   // Verify that the state has the same value.
   VerifyClonedState(clone->get_state());
   // Verify that the parameters have the same value.
@@ -687,13 +722,13 @@ TEST_F(DiagramContextTest, Clone) {
 
   // Verify that changes to the state do not write through to the original
   // context.
-  clone->get_mutable_continuous_state_vector().SetAtIndex(0, 1024.0);
+  clone->get_mutable_continuous_state_vector()[0] = 1024.0;
   EXPECT_EQ(1024.0, clone->get_continuous_state()[0]);
   EXPECT_EQ(42.0, context_->get_continuous_state()[0]);
 
   // Verify that the cloned input ports contain the same data,
   // but are different pointers.
-  EXPECT_EQ(2, clone->get_num_input_ports());
+  EXPECT_EQ(2, clone->num_input_ports());
   for (int i = 0; i < 2; ++i) {
     const BasicVector<double>* orig_port = ReadVectorInputPort(*context_, i);
     const BasicVector<double>* clone_port = ReadVectorInputPort(*clone, i);
@@ -709,9 +744,13 @@ TEST_F(DiagramContextTest, CloneState) {
   VerifyClonedState(*state);
   // Verify that the underlying type was preserved.
   EXPECT_NE(nullptr, dynamic_cast<DiagramState<double>*>(state.get()));
+  ContinuousState<double>& xc = state->get_mutable_continuous_state();
+  // Verify that the system id was copied.
+  EXPECT_TRUE(xc.get_system_id().is_valid());
+  EXPECT_EQ(xc.get_system_id(), context_->get_system_id());
   // Verify that changes to the state do not write through to the original
   // context.
-  state->get_mutable_continuous_state()[1] = 1024.0;
+  xc[1] = 1024.0;
   EXPECT_EQ(1024.0, state->get_continuous_state()[1]);
   EXPECT_EQ(43.0, context_->get_continuous_state()[1]);
 }
@@ -723,9 +762,17 @@ TEST_F(DiagramContextTest, CloneAccuracy) {
 
   // Verify that setting the accuracy is reflected in cloning.
   const double unity = 1.0;
-  context_->set_accuracy(unity);
+  context_->SetAccuracy(unity);
   std::unique_ptr<Context<double>> clone = context_->Clone();
   EXPECT_EQ(clone->get_accuracy().value(), unity);
+}
+
+TEST_F(DiagramContextTest, SubcontextCloneIsError) {
+  const auto& subcontext = context_->GetSubsystemContext(SubsystemIndex{0});
+  DRAKE_EXPECT_THROWS_MESSAGE(
+      subcontext.Clone(), std::logic_error,
+      "Context::Clone..: Cannot clone a non-root Context; "
+      "this Context was created by 'adder0'.");
 }
 
 }  // namespace

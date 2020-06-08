@@ -4,6 +4,7 @@
 
 #include "drake/common/eigen_types.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/common/trajectories/piecewise_polynomial.h"
 
@@ -76,7 +77,7 @@ class HermitianDenseOutputTest : public ::testing::Test {
 // HermitianDenseOutput types to test.
 typedef ::testing::Types<double, AutoDiffXd> OutputTypes;
 
-TYPED_TEST_CASE(HermitianDenseOutputTest, OutputTypes);
+TYPED_TEST_SUITE(HermitianDenseOutputTest, OutputTypes);
 
 // Checks that HermitianDenseOutput consistency is ensured.
 TYPED_TEST(HermitianDenseOutputTest, OutputConsistency) {
@@ -148,8 +149,8 @@ TYPED_TEST(HermitianDenseOutputTest, OutputConsistency) {
   EXPECT_EQ(dense_output.start_time(), first_step.start_time());
   EXPECT_EQ(dense_output.end_time(), first_step.end_time());
   EXPECT_EQ(dense_output.size(), first_step.size());
-  EXPECT_NO_THROW(dense_output.Evaluate(this->kMidTime));
-  EXPECT_NO_THROW(dense_output.EvaluateNth(
+  DRAKE_EXPECT_NO_THROW(dense_output.Evaluate(this->kMidTime));
+  DRAKE_EXPECT_NO_THROW(dense_output.EvaluateNth(
       this->kMidTime, this->kValidElementIndex));
 
   // Verifies that invalid evaluation arguments generate errors.
@@ -303,7 +304,7 @@ TYPED_TEST(HermitianDenseOutputTest, CorrectEvaluation) {
           this->kInitialStateDerivative, this->kMidStateDerivative,
           this->kFinalStateDerivative};
   const trajectories::PiecewisePolynomial<double> hermite_spline =
-      trajectories::PiecewisePolynomial<double>::Cubic(
+      trajectories::PiecewisePolynomial<double>::CubicHermite(
           spline_times, spline_states, spline_state_derivatives);
   // Instantiates dense output.
   HermitianDenseOutput<TypeParam> dense_output;
@@ -332,6 +333,34 @@ TYPED_TEST(HermitianDenseOutputTest, CorrectEvaluation) {
     EXPECT_TRUE(CompareMatrices(dense_output.Evaluate(t),
                                 vector_value, kAccuracy));
   }
+}
+
+// Construct a HermitianDenseOutput<T> from PiecewisePolynomial<U>.
+template <typename T>
+void TestScalarType() {
+  const Vector3<T> breaks(0.0, 1.0, 2.0);
+  const RowVector3<T> samples(6.0, 5.0, 4.0);
+
+  const auto foh =
+      trajectories::PiecewisePolynomial<T>::FirstOrderHold(breaks, samples);
+
+  const HermitianDenseOutput<T> hdo(foh);
+
+  EXPECT_EQ(ExtractDoubleOrThrow(hdo.start_time()),
+            ExtractDoubleOrThrow(breaks(0)));
+  EXPECT_EQ(ExtractDoubleOrThrow(hdo.end_time()),
+            ExtractDoubleOrThrow(breaks(2)));
+
+  for (const T& time : {0.1, 0.4, 1.6}) {
+    EXPECT_NEAR(ExtractDoubleOrThrow(hdo.Evaluate(time)(0)),
+                ExtractDoubleOrThrow(foh.value(time)(0)), 1e-14);
+  }
+}
+
+GTEST_TEST(HermitianDenseOutputTest, ConstructFromPiecewisePolynomialTest) {
+  TestScalarType<double>();
+  TestScalarType<AutoDiffXd>();
+  TestScalarType<symbolic::Expression>();
 }
 
 }  // namespace

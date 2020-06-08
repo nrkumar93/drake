@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/math/quaternion.h"
 
@@ -36,42 +37,147 @@ GTEST_TEST(RotationMatrix, RotationMatrixConstructor) {
   Matrix3d zero_matrix = m - R1.matrix();
   EXPECT_TRUE((zero_matrix.array() == 0).all());
 
-#ifdef DRAKE_ASSERT_IS_ARMED
-  // Really poor non-orthogonal matrix should throw an exception.
-  m << 1, 2,  3,
-       4, 5,  6,
-       7, 8, -10;
-  DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
-                              "Error: Rotation matrix is not orthonormal.*")
+  if (kDrakeAssertIsArmed) {
+    // Really poor non-orthogonal matrix should throw an exception.
+    m << 1, 2,  3,
+         4, 5,  6,
+         7, 8, -10;
+    DRAKE_EXPECT_THROWS_MESSAGE(
+        RotationMatrix<double>{m}, std::logic_error,
+        "Error: Rotation matrix is not orthonormal[\\s\\S]*");
 
-  // Barely non-orthogonal matrix should throw an exception.
-  m << 1, 9000*kEpsilon, 9000*kEpsilon,
-       0, cos_theta, sin_theta,
-       0, -sin_theta, cos_theta;
-  DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
-                              "Error: Rotation matrix is not orthonormal.*");
+    // Barely non-orthogonal matrix should throw an exception.
+    m << 1, 9000*kEpsilon, 9000*kEpsilon,
+         0, cos_theta, sin_theta,
+         0, -sin_theta, cos_theta;
+    DRAKE_EXPECT_THROWS_MESSAGE(
+        RotationMatrix<double>{m}, std::logic_error,
+        "Error: Rotation matrix is not orthonormal[\\s\\S]*");
 
-  // Orthogonal matrix with determinant = -1 should throw an exception.
-  m << 1, 0, 0,
-       0, 1, 0,
-       0, 0, -1;
-  DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
-                            "Error: Rotation matrix determinant is negative.*");
+    // Orthogonal matrix with determinant = -1 should throw an exception.
+    m << 1, 0, 0,
+         0, 1, 0,
+         0, 0, -1;
+    DRAKE_EXPECT_THROWS_MESSAGE(
+        RotationMatrix<double>{m}, std::logic_error,
+        "Error: Rotation matrix determinant is negative.*");
+
+    // Matrix with a NaN should throw an exception.
+    m << 1, 0, 0,
+         0, 1, 0,
+         0, 0, std::numeric_limits<double>::quiet_NaN();
+    DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
+        "Error: Rotation matrix contains an element that is infinity or NaN.*");
+
+    // Matrix with an infinity should throw an exception.
+    m << 1, 0, 0,
+         0, 1, 0,
+         0, 0, std::numeric_limits<double>::infinity();
+    DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
+        "Error: Rotation matrix contains an element that is infinity or NaN.*");
+  }
+}
+
+// Test making a RotationMatrix from three right-handed orthogonal unit vectors.
+GTEST_TEST(RotationMatrix, MakeFromOrthonormalRowsOrColumns) {
+  const double cos_theta = std::cos(0.5);
+  const double sin_theta = std::sin(0.5);
+
+  // Construct a matrix whose rows are right-handed orthogonal unit vectors.
+  const Vector3d Ax(1, 0, 0);
+  const Vector3d Ay(0, cos_theta, -sin_theta);
+  const Vector3d Az(0, sin_theta,  cos_theta);
+  Matrix3d m_row;
+  m_row.row(0) = Ax;
+  m_row.row(1) = Ay;
+  m_row.row(2) = Az;
+
+  // Make the rows of a RotationMatrix R from the unit vectors Ax, Ay, Az.
+  // Ensure m_row is identical to the 3x3 matrix underlying R.
+  RotationMatrix<double> R =
+      RotationMatrix<double>::MakeFromOrthonormalRows(Ax, Ay, Az);
+  const Matrix3d zero_row_matrix = m_row - R.matrix();
+  EXPECT_TRUE((zero_row_matrix.array() == 0).all());
+
+  // Construct a matrix whose columns are right-handed orthogonal unit vectors.
+  Matrix3d m_column;
+  m_column.col(0) = Ax;
+  m_column.col(1) = Ay;
+  m_column.col(2) = Az;
+
+  // Make the columns of a RotationMatrix R2 from the unit vectors Ax, Ay, Az.
+  // Ensure m_column is identical to the 3x3 matrix underlying R2.
+  RotationMatrix<double> R2 =
+      RotationMatrix<double>::MakeFromOrthonormalColumns(Ax, Ay, Az);
+  const Matrix3d zero_column_matrix = m_column - R2.matrix();
+  EXPECT_TRUE((zero_column_matrix.array() == 0).all());
+
+  // Test that RotationMatrix R2 is the inverse (transpose) of R2.
+  EXPECT_TRUE(R.IsExactlyEqualTo(R2.inverse()));
+  EXPECT_TRUE(R.IsExactlyEqualTo(R2.transpose()));
+
+  // The next test intentionally creates an invalid RotationMatrix that deviates
+  // from a valid RotationMatrix by a factor of 8.  The factor of 8 times the
+  // internal orthonormality tolerance provides a tolerance to the loss of up to
+  // three bits of precision (2^3 = 8) and allows for possible imprecision
+  // issues associated with variations in compilers, operating systems, etc.
+  const double delta =
+      8 * RotationMatrix<double>::get_internal_tolerance_for_orthonormality();
+  const Vector3d Fx(1, 0, delta);
+  const Vector3d Fy(0, cos_theta, -sin_theta);
+  const Vector3d Fz(0, sin_theta,  cos_theta);
+
+  // Non-orthogonal matrix should throw an exception (at least in debug builds).
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalRows(Fx, Fy, Fz),
+      std::logic_error, "Error: Rotation matrix is not orthonormal[\\s\\S]*");
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalColumns(Fx, Fy, Fz),
+      std::logic_error, "Error: Rotation matrix is not orthonormal[\\s\\S]*");
+
+  // Non-right handed matrix with determinant < 0 should throw an exception.
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalRows(
+          Vector3d(-1, 0, 0), Fy, Fz), std::logic_error,
+      "Error: Rotation matrix determinant is negative.*");
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalColumns(
+          Vector3d(-1, 0, 0), Fy, Fz), std::logic_error,
+      "Error: Rotation matrix determinant is negative.*");
 
   // Matrix with a NaN should throw an exception.
-  m << 1, 0, 0,
-       0, 1, 0,
-       0, 0, std::numeric_limits<double>::quiet_NaN();
-  DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalRows(
+          Vector3d(std::numeric_limits<double>::quiet_NaN(), 0, 0), Fy, Fz),
+      std::logic_error,
+      "Error: Rotation matrix contains an element that is infinity or NaN.*");
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalColumns(
+          Vector3d(std::numeric_limits<double>::quiet_NaN(), 0, 0), Fy, Fz),
+          std::logic_error,
         "Error: Rotation matrix contains an element that is infinity or NaN.*");
 
   // Matrix with an infinity should throw an exception.
-  m << 1, 0, 0,
-       0, 1, 0,
-       0, 0, std::numeric_limits<double>::infinity();
-  DRAKE_EXPECT_THROWS_MESSAGE(RotationMatrix<double>{m}, std::logic_error,
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalRows(
+          Vector3d(std::numeric_limits<double>::infinity(), 0, 0), Fy, Fz),
+      std::logic_error,
+      "Error: Rotation matrix contains an element that is infinity or NaN.*");
+  DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
+      R = RotationMatrix<double>::MakeFromOrthonormalColumns(
+          Vector3d(std::numeric_limits<double>::infinity(), 0, 0), Fy, Fz),
+          std::logic_error,
         "Error: Rotation matrix contains an element that is infinity or NaN.*");
-#endif
+
+  if (kDrakeAssertIsDisarmed) {
+    // In release builds, check for invalid matrix.
+    DRAKE_EXPECT_NO_THROW(
+        R = RotationMatrix<double>::MakeFromOrthonormalRows(Fx, Fy, Fz));
+    EXPECT_FALSE(R.IsValid());
+    DRAKE_EXPECT_NO_THROW(
+        R = RotationMatrix<double>::MakeFromOrthonormalColumns(Fx, Fy, Fz));
+    EXPECT_FALSE(R.IsValid());
+  }
 }
 
 // Test setting a RotationMatrix from a Matrix3.
@@ -92,11 +198,33 @@ GTEST_TEST(RotationMatrix, SetRotationMatrix) {
   m << 1, 9000*kEpsilon, 9000*kEpsilon,
        0, cos_theta, sin_theta,
        0, -sin_theta, cos_theta;
-#ifdef DRAKE_ASSERT_IS_ARMED
-  EXPECT_THROW(R.set(m), std::logic_error);
-#else
-  EXPECT_NO_THROW(R.set(m));
-#endif
+  if (kDrakeAssertIsArmed) {
+    EXPECT_THROW(R.set(m), std::logic_error);
+  } else {
+    DRAKE_EXPECT_NO_THROW(R.set(m));
+  }
+}
+
+// Test getting rows or columns from a RotationMatrix.
+GTEST_TEST(RotationMatrix, GetRowsOrColumnsFromRotationmatrix) {
+  const double q = 1.2345;  // Angle in radians.
+  RotationMatrix<double> R_AB = RotationMatrix<double>::MakeZRotation(q);
+  const Vector3d Ax_B = R_AB.row(0);
+  const Vector3d Ay_B = R_AB.row(1);
+  const Vector3d Az_B = R_AB.row(2);
+  const Vector3d Bx_A = R_AB.col(0);
+  const Vector3d By_A = R_AB.col(1);
+  const Vector3d Bz_A = R_AB.col(2);
+
+  constexpr double tolerance = 32 * kEpsilon;
+  const double cos_q = std::cos(q);
+  const double sin_q = std::sin(q);
+  EXPECT_TRUE(CompareMatrices(Ax_B, Vector3d(cos_q, -sin_q, 0), tolerance));
+  EXPECT_TRUE(CompareMatrices(Ay_B, Vector3d(sin_q, cos_q, 0), tolerance));
+  EXPECT_TRUE(CompareMatrices(Az_B, Vector3d(0, 0, 1), tolerance));
+  EXPECT_TRUE(CompareMatrices(Bx_A, Vector3d(cos_q, sin_q, 0), tolerance));
+  EXPECT_TRUE(CompareMatrices(By_A, Vector3d(-sin_q, cos_q, 0), tolerance));
+  EXPECT_TRUE(CompareMatrices(Bz_A, Vector3d(0, 0, 1), tolerance));
 }
 
 // Test setting a RotationMatrix to an identity matrix.
@@ -191,8 +319,8 @@ GTEST_TEST(RotationMatrix, ConstructorWithRollPitchYaw) {
   EXPECT_TRUE(R_rpy.IsExactlyEqualTo(R_expected));
 }
 
-// Test calculating the inverse of a RotationMatrix.
-GTEST_TEST(RotationMatrix, Inverse) {
+// Test calculating the inverse and transpose of a RotationMatrix.
+GTEST_TEST(RotationMatrix, InverseAndTranspose) {
   const double cos_theta = std::cos(0.5);
   const double sin_theta = std::sin(0.5);
   Matrix3d m;
@@ -200,9 +328,11 @@ GTEST_TEST(RotationMatrix, Inverse) {
       0, cos_theta, sin_theta,
       0, -sin_theta, cos_theta;
   RotationMatrix<double> R(m);
-  RotationMatrix<double> RRinv = R * R.inverse();
+  RotationMatrix<double> RRinverse   = R * R.inverse();
+  RotationMatrix<double> RRtranspose = R * R.transpose();
   const RotationMatrix<double>& I = RotationMatrix<double>::Identity();
-  EXPECT_TRUE(RRinv.IsNearlyEqualTo(I, 8 * kEpsilon));
+  EXPECT_TRUE(RRinverse.IsNearlyEqualTo(I, 8 * kEpsilon));
+  EXPECT_TRUE(RRtranspose.IsNearlyEqualTo(I, 8 * kEpsilon));
 }
 
 // Test rotation matrix multiplication and IsNearlyEqualTo.
@@ -276,34 +406,38 @@ GTEST_TEST(RotationMatrix, IsExactlyIdentity) {
 
   // Test that setting R to an identity matrix does not throw an exception.
   Matrix3d m;
+  // clang-format off
   m << 1, 0, 0,
        0, 1, 0,
        0, 0, 1;
+  // clang-format on
   R.set(m);
   EXPECT_TRUE(R.IsExactlyIdentity());
 
   // Test impact of absolute mininimum deviation from identity matrix.
   m(0, 2) = std::numeric_limits<double>::denorm_min();  // ≈ 4.94066e-324
-  EXPECT_NO_THROW(R.set(m));
+  DRAKE_EXPECT_NO_THROW(R.set(m));
   EXPECT_FALSE(R.IsExactlyIdentity());
 
   // Test that setting a RotationMatrix to a 3x3 matrix that is close to a valid
   // RotationMatrix does not throw an exception, whereas setting to a 3x3 matrix
   // that is slightly too-far from a valid RotationMatrix throws an exception.
   m(0, 2) = 127 * kEpsilon;
-  EXPECT_NO_THROW(R.set(m));
+  DRAKE_EXPECT_NO_THROW(R.set(m));
   m(0, 2) = 129 * kEpsilon;
-#ifdef DRAKE_ASSERT_IS_ARMED
-  EXPECT_THROW(R.set(m), std::logic_error);
-#else
-  EXPECT_NO_THROW(R.set(m));
-#endif
+  if (kDrakeAssertIsArmed) {
+    EXPECT_THROW(R.set(m), std::logic_error);
+  } else {
+    DRAKE_EXPECT_NO_THROW(R.set(m));
+  }
 
   const double cos_theta = std::cos(0.5);
   const double sin_theta = std::sin(0.5);
+  // clang-format off
   m << 1, 0, 0,
        0, cos_theta, sin_theta,
        0, -sin_theta, cos_theta;
+  // clang-format on
   R.set(m);
   EXPECT_FALSE(R.IsExactlyIdentity());
 }
@@ -336,9 +470,11 @@ GTEST_TEST(RotationMatrix, ProjectToRotationMatrix) {
   EXPECT_TRUE(std::abs(quality_factor - 2.0) < 40*kEpsilon);
 
   // Test a 3x3 matrix that is far from orthonormal.
+  // clang-format off
   m << 1,   0.1, 0.1,
       -0.2, 1.0, 0.1,
        0.5, 0.6, 0.8;
+  // clang-format on
   EXPECT_FALSE(RotationMatrix<double>::IsValid(m, 64000 * kEpsilon));
   R = RotationMatrix<double>::ProjectToRotationMatrix(m, &quality_factor);
   EXPECT_TRUE(R.IsValid());
@@ -346,27 +482,33 @@ GTEST_TEST(RotationMatrix, ProjectToRotationMatrix) {
   EXPECT_TRUE(std::abs(quality_factor - 0.4688222) < 1E-5);
 
   // Test another 3x3 matrix that is far from orthonormal.
+  // clang-format off
   m << 1, 2,  3,
        4, 5,  6,
        7, 8, -10;
+  // clang-format on
   R = RotationMatrix<double>::ProjectToRotationMatrix(m, &quality_factor);
   EXPECT_TRUE(R.IsValid());
   // Singular values from MotionGenesis [14.61524, 9.498744, 0.4105846]
   EXPECT_TRUE(std::abs(quality_factor - 14.61524) < 1E-5);
 
   // Test another 3x3 matrix that is far from orthonormal.
+  // clang-format off
   m << 1E-7, 2, 3,
           4, 5, 6,
           7, 8, -1E6;
+  // clang-format on
   R = RotationMatrix<double>::ProjectToRotationMatrix(m, &quality_factor);
   EXPECT_TRUE(R.IsValid());
   // Singular values from MotionGenesis [1000000, 6.597777, 1.21254]
   EXPECT_TRUE(std::abs(quality_factor - 1000000) < 1E-1);
 
   // Test a 3x3 near-zero matrix whose determinant is positive (det = 1E-47).
+  // clang-format off
   m << kEpsilon, 0, 0,
        0, kEpsilon, 0,
        0, 0, kEpsilon;
+  // clang-format on
   EXPECT_TRUE(0 < m.determinant() &&
               m.determinant() < 64 * kEpsilon * kEpsilon * kEpsilon);
   R = RotationMatrix<double>::ProjectToRotationMatrix(m, &quality_factor);
@@ -377,18 +519,22 @@ GTEST_TEST(RotationMatrix, ProjectToRotationMatrix) {
                                 64 * kEpsilon));
 
   // Test a 3x3 near-zero matrix whose determinant is negative (det = -1E-47).
+  // clang-format off
   m << kEpsilon, 0, 0,
       0, kEpsilon, 0,
       0, 0, -kEpsilon;
+  // clang-format on
   EXPECT_TRUE(-64 * kEpsilon * kEpsilon * kEpsilon < m.determinant() &&
                m.determinant() < 0);
   EXPECT_THROW(RotationMatrix<double>::ProjectToRotationMatrix(m,
                &quality_factor), std::logic_error);
 
   // Test a 3x3 orthogonal matrix but whose determinant is negative (-1).
+  // clang-format off
   m << 1, 0, 0,
        0, 1, 0,
        0, 0, -1;
+  // clang-format on
   EXPECT_TRUE(std::abs(m.determinant() + 1) < 64 * kEpsilon);
   EXPECT_THROW(RotationMatrix<double>::ProjectToRotationMatrix(m,
                &quality_factor), std::logic_error);
@@ -401,9 +547,11 @@ GTEST_TEST(RotationMatrix, ProjectToRotationMatrix) {
   // which means that it has a barely negative determinant [det(m) ≈ -3e-13].
   // One can see that matrix m below is near singular by noticing either:
   // row(0) + row(2) ≈ 2 * row(1)  or  col(0) + col(2) ≈ 2 * col(1).
+  // clang-format off
   m << 1, 2, 3,
        4, 5, 6,
        7, 8, 9 + 400 * kEpsilon;
+  // clang-format on
   EXPECT_TRUE(-1600 * kEpsilon < m.determinant() && m.determinant() < 0);
   EXPECT_THROW(RotationMatrix<double>::ProjectToRotationMatrix(m,
                &quality_factor), std::logic_error);
@@ -416,9 +564,11 @@ GTEST_TEST(RotationMatrix, ProjectToRotationMatrix) {
   // means that it has a barely positive determinant [det(m) ≈ 3e-13].
   // One can see that matrix m below is near singular by noticing either:
   // row(0) + row(2) ≈ 2 * row(1)  or  col(0) + col(2) ≈ 2 * col(1).
+  // clang-format off
   m << 1, 2, 3,
        4, 5, 6,
        7, 8, 9 - 400 * kEpsilon;
+  // clang-format on
   EXPECT_TRUE(0 < m.determinant() && m.determinant() < 1600 * kEpsilon);
   RotationMatrix<double>::ProjectToRotationMatrix(m, &quality_factor);
   EXPECT_TRUE(quality_factor > 0 && std::abs(quality_factor) < 1600 * kEpsilon);
@@ -427,23 +577,28 @@ GTEST_TEST(RotationMatrix, ProjectToRotationMatrix) {
   // have been improper (the resulting rotation matrix would have a determinant
   // of -1 instead of +1).  One way to generate an improper rotation matrix is
   // to try to project a matrix m whose determinant is negative [det(m) = -6].
+  // clang-format off
   m << 1, 2, 3,
        4, 5, 6,
       -7, -8, -7;
+  // clang-format on
   EXPECT_LT(m.determinant(), 0);
   EXPECT_THROW(RotationMatrix<double>::ProjectToRotationMatrix(m,
                &quality_factor), std::logic_error);
 
   // Check that returned rotation matrix is orthonormal.  In other words, its
   // transpose should be equal to its inverse so  that R * Rᵀ = IdentityMatrix.
+  // clang-format off
   m << 1, 2, 3,
        4, 5, 6,
        7, 8, 7;
+  // clang-format on
   EXPECT_GT(m.determinant(), 0);
   R = RotationMatrix<double>::ProjectToRotationMatrix(m, &quality_factor);
   const RotationMatrix<double> I = R * R.inverse();
   EXPECT_TRUE(I.IsNearlyEqualTo(RotationMatrix<double>(Matrix3d::Identity()),
-                                10 * kEpsilon));
+                                8 * kEpsilon));
+  EXPECT_TRUE(R.inverse().IsNearlyEqualTo(R.transpose(), 8 * kEpsilon));
 }
 
 
@@ -478,20 +633,22 @@ GTEST_TEST(RotationMatrix, SymbolicConstructionTest) {
   // set(m_symbolic) only sets the rotation matrix, with no validity checks
   // e.g., ThrowIfNotValid() is a "no-op" (does nothing).
   Matrix3<Expression> m_symbolic;
+  // clang-format off
   m_symbolic << 1, 2, 3,  // This is an obviously invalid rotation matrix.
                 4, 5, 6,
                 7, 8, 9;
+  // clang-format on
   // Note: The function under test in the next line is ThrowIfNotValid().
   // Since this function is private, it cannot be directly tested.
   // Instead, it is tested via the set() method which calls ThrowIfNotValid()
   // when assertions are armed.
   RotationMatrix<Expression> R;
-  EXPECT_NO_THROW(R.set(m_symbolic));
+  DRAKE_EXPECT_NO_THROW(R.set(m_symbolic));
 
   // Set one of the matrix terms to a variable.  Still no throw.
   const symbolic::Variable x{"x"};
   m_symbolic(0, 0) = x;
-  EXPECT_NO_THROW(R.set(m_symbolic));
+  DRAKE_EXPECT_NO_THROW(R.set(m_symbolic));
 }
 
 // Verify RotationMatrix projection with symbolic::Expression behaves as
@@ -533,9 +690,11 @@ GTEST_TEST(RotationMatrix, SymbolicProjectionTest) {
   // is not already orthonormal since an already-orthonormal matrix may produce
   // an early-return from Eigen's SVD.
   Matrix3d m;
+  // clang-format off
   m << 1, 2,  3,
        4, 5,  6,
        7, 8, -10;
+  // clang-format on
   m_symbolic = m.template cast<Expression>();
   RotMatExpr::ProjectToRotationMatrix(m_symbolic, &quality);
   EXPECT_GT(quality, 10.0);
@@ -622,9 +781,11 @@ GTEST_TEST(RotationMatrixTest, TestProjectionWithAxis) {
   CheckProjectionWithAxis(M, axis, -2 * M_PI, -M_PI);
 
   // A random matrix.
+  // clang-format off
   M << 0.1, 0.4, 1.2,
       -0.4, 2.3, 1.5,
       1.3, -.4, -0.2;
+  // clang-format on
   CheckProjectionWithAxis(M, axis, M_PI, 2 * M_PI);
   CheckProjectionWithAxis(M, axis, -2 * M_PI, 0);
   CheckProjectionWithAxis(M, axis, 0.1, 0.2);
@@ -632,6 +793,90 @@ GTEST_TEST(RotationMatrixTest, TestProjectionWithAxis) {
   CheckProjectionWithAxis(M, axis, -M_PI, infinity_dbl);
   CheckProjectionWithAxis(M, axis, -2 * M_PI, 4 * M_PI);
 }
+
+// Tests RotationMatrix R_AB multiplied by a 3 x n matrix whose columns are
+// arbitrary vectors, expressed in B.  The result is tested to be a 3 x n matrix
+// whose columns are those same vectors but expressed in A.
+GTEST_TEST(RotationMatrixTest, OperatorMultiplyByMatrix3X) {
+  // Create a somewhat arbitrary RotationMatrix.
+  const double r(0.5), p(0.4), y(0.3);
+  const RollPitchYaw<double> rpy(r, p, y);
+  const RotationMatrix<double> R_AB(rpy);
+
+  // Multiply the RigidTransform R_AB by three vectors to test operator* for a
+  // 3 x n matrix, where n = 3 is known before compilation.
+  Eigen::Matrix3d v_B;
+  const Vector3d v1_B(-12, -9, 7);   v_B.col(0) = v1_B;
+  const Vector3d v2_B(-11, -8, 10);  v_B.col(1) = v2_B;
+  const Vector3d v3_B(-10, -7, 12);  v_B.col(2) = v3_B;
+  const auto v_A = R_AB * v_B;
+
+  // Ensure the compiler's declared type for v_A has the proper number of
+  // rows and columns before compilation.  Then verify the results.
+  EXPECT_EQ(decltype(v_A)::RowsAtCompileTime, 3);
+  EXPECT_EQ(decltype(v_A)::ColsAtCompileTime, 3);
+
+  // Ensure the results for v_A match those from Eigen's matrix multiply.
+  // Note: Validating v_A is important because its results are reused below.
+  EXPECT_TRUE(CompareMatrices(v_A.col(0), R_AB.matrix() * v1_B, kEpsilon));
+  EXPECT_TRUE(CompareMatrices(v_A.col(1), R_AB.matrix() * v2_B, kEpsilon));
+
+  // Multiply the RotationMatrix R_AB by n = 2 vectors to test operator* for a
+  // 3 x n matrix, where n is not known before compilation.
+  const int number_of_vectors = 2;
+  Eigen::Matrix3Xd w_B(3, number_of_vectors);
+  w_B.col(0) = v1_B;
+  w_B.col(1) = v2_B;
+  const auto w_A = R_AB * w_B;
+
+  // Ensure the compiler's declared type for w_A has the proper number of
+  // rows before compilation (dictated by the return type of operator*) and
+  // has the proper number of columns at run time.
+  EXPECT_EQ(decltype(w_A)::RowsAtCompileTime, 3);
+  EXPECT_EQ(w_A.cols(), number_of_vectors);
+  for (int i = 0; i < number_of_vectors; ++i) {
+    const Vector3d wi_A = w_A.col(i);
+    const Vector3d wi_A_expected = v_A.col(i);  // Previous result.
+    EXPECT_TRUE(CompareMatrices(wi_A, wi_A_expected, kEpsilon));
+  }
+
+  // Test RotationMatrix operator* can multiply an Eigen expression, namely the
+  // Eigen expression arising from a 3x1 matrix multiplied by a 1x4 matrix.
+  const Eigen::MatrixXd s_A = R_AB * (Eigen::Vector3d(1, 2, 3) *
+      Eigen::RowVector4d(1, 2, 3, 4));
+  EXPECT_EQ(s_A.rows(), 3);
+  EXPECT_EQ(s_A.cols(), 4);
+  Eigen::Matrix<double, 3, 4> m34_expected;
+  // clang-format off
+  m34_expected << 1, 2, 3, 4,
+                  2, 4, 6, 8,
+                  3, 6, 9, 12;
+  // clang-format on
+  EXPECT_TRUE(CompareMatrices(s_A, R_AB.matrix() * m34_expected, kEpsilon));
+
+  // Test RotationMatrix operator* can multiply a different looking Eigen
+  // expression that produces the same result.
+  const auto z_A_expected = R_AB *
+      (Eigen::MatrixXd(3, 4) << Eigen::Vector3d(1, 2, 3),
+          Eigen::Vector3d(2, 4, 6),
+          Eigen::Vector3d(3, 6, 9),
+          Eigen::Vector3d(4, 8, 12)).finished();
+  EXPECT_EQ(decltype(z_A_expected)::RowsAtCompileTime, 3);
+  EXPECT_EQ(z_A_expected.cols(), 4);
+  EXPECT_TRUE(CompareMatrices(s_A, z_A_expected, kEpsilon));
+
+  // Test that operator* disallows weirdly-sized matrix multiplication.
+  if (kDrakeAssertIsArmed) {
+    Eigen::MatrixXd m_7x8(7, 8);
+    m_7x8 = Eigen::MatrixXd::Identity(7, 8);
+    Eigen::MatrixXd bad_matrix_multiply;
+    EXPECT_THROW(bad_matrix_multiply = R_AB * m_7x8, std::logic_error);
+    DRAKE_EXPECT_THROWS_MESSAGE(
+        bad_matrix_multiply = R_AB * m_7x8, std::logic_error,
+        "Error: Inner dimension for matrix multiplication is not 3.");
+  }
+}
+
 
 class RotationMatrixConversionTests : public ::testing::Test {
  public:
@@ -673,8 +918,8 @@ class RotationMatrixConversionTests : public ::testing::Test {
   std::vector<Eigen::Quaterniond> quaternion_test_cases_;
 };
 
-TEST_F(RotationMatrixConversionTests, RotationMatrixToQuaternionViceVersa) {
-  constexpr double tolerance = 40 * kEpsilon;
+TEST_F(RotationMatrixConversionTests, RotationMatrixToQuaternion) {
+  constexpr double tol = 40 * kEpsilon;
   for (const Eigen::Quaterniond& qi : quaternion_test_cases_) {
     // Step 1: Convert the quaternion qi to a 3x3 matrix mi.
     // Step 2: Construct a RotationMatrix Ri from the 3x3 matrix.
@@ -682,8 +927,52 @@ TEST_F(RotationMatrixConversionTests, RotationMatrixToQuaternionViceVersa) {
     // Step 4: Ensure qi and q_expected represent the same orientation.
     const Matrix3d mi = qi.toRotationMatrix();
     const RotationMatrix<double> Ri(mi);
-    const Eigen::Quaterniond q_expected = Ri.ToQuaternion();
-    EXPECT_TRUE(AreQuaternionsEqualForOrientation(qi, q_expected, tolerance));
+    const Eigen::Quaterniond q_actual = Ri.ToQuaternion();
+    ASSERT_TRUE(AreQuaternionsEqualForOrientation(qi, q_actual, tol));
+  }
+}
+
+// Repeat the prior test case with T = Expression without using Variables.
+TEST_F(RotationMatrixConversionTests, RotationMatrixToQuaternionSymbolic) {
+  using symbolic::Expression;
+  constexpr double tol = 40 * kEpsilon;
+  for (const Eigen::Quaterniond& qi : quaternion_test_cases_) {
+    const Matrix3<Expression> mi = qi.toRotationMatrix();
+    const RotationMatrix<Expression> Ri(mi);
+    const Eigen::Quaternion<Expression> q_actual_expr = Ri.ToQuaternion();
+    const Eigen::Quaterniond q_actual_double(q_actual_expr.coeffs().unaryExpr(
+        [](const Expression& x) { return ExtractDoubleOrThrow(x); }));
+    ASSERT_TRUE(AreQuaternionsEqualForOrientation(qi, q_actual_double, tol));
+  }
+}
+
+// Repeat the prior test case with T = Expression and using Variables.
+TEST_F(RotationMatrixConversionTests, RotationMatrixToQuaternionVariable) {
+  using symbolic::Environment;
+  using symbolic::Expression;
+  using symbolic::Variable;
+  constexpr double tol = 40 * kEpsilon;
+
+  // Perform a fully-symbolic ToQuaternion, where R is only Variables.
+  const Matrix3<Variable> m_var =
+      symbolic::MakeMatrixContinuousVariable<3, 3>("m");
+  const RotationMatrix<Expression> R_expr(m_var);
+  const Eigen::Quaternion<Expression> q_expr = R_expr.ToQuaternion();
+
+  // Evaluate the Quaterionion<Expression> for each Ri.
+  for (const Eigen::Quaterniond& qi : quaternion_test_cases_) {
+    // Prepare the variable substitutions.
+    const Matrix3d mi = qi.toRotationMatrix();
+    Environment env;
+    for (int row = 0; row < 3; ++row) {
+      for (int col = 0; col < 3; ++col) {
+        env.insert(m_var(row, col), mi(row, col));
+      }
+    }
+    // Evaluate and compare.
+    const Eigen::Quaterniond q_actual_double(q_expr.coeffs().unaryExpr(
+        [&env](const Expression& x) { return x.Evaluate(env); }));
+    ASSERT_TRUE(AreQuaternionsEqualForOrientation(qi, q_actual_double, tol));
   }
 }
 
@@ -694,19 +983,19 @@ TEST_F(RotationMatrixConversionTests, QuaternionToRotationMatrix) {
     const Matrix3d m_expected = qi.toRotationMatrix();
     const RotationMatrix<double> R_expected(m_expected);
     const RotationMatrix<double> R(qi);
-    EXPECT_TRUE(R.IsNearlyEqualTo(R_expected, 40 * kEpsilon));
+    ASSERT_TRUE(R.IsNearlyEqualTo(R_expected, 40 * kEpsilon));
   }
 
-#ifdef DRAKE_ASSERT_IS_ARMED
-  // A zero quaternion should throw an exception.
-  const Eigen::Quaterniond q_zero(0, 0, 0, 0);
-  EXPECT_THROW(const RotationMatrix<double> R_bad(q_zero), std::logic_error);
+  if (kDrakeAssertIsArmed) {
+    // A zero quaternion should throw an exception.
+    const Eigen::Quaterniond q_zero(0, 0, 0, 0);
+    EXPECT_THROW(const RotationMatrix<double> R_bad(q_zero), std::logic_error);
 
-  // A quaternion containing a NaN throw an exception.
-  double nan = std::numeric_limits<double>::quiet_NaN();
-  const Eigen::Quaterniond q_nan(nan, 0, 0, 0);
-  EXPECT_THROW(const RotationMatrix<double> R_nan(q_nan), std::logic_error);
-#endif
+    // A quaternion containing a NaN throw an exception.
+    double nan = std::numeric_limits<double>::quiet_NaN();
+    const Eigen::Quaterniond q_nan(nan, 0, 0, 0);
+    EXPECT_THROW(const RotationMatrix<double> R_nan(q_nan), std::logic_error);
+  }
 }
 
 TEST_F(RotationMatrixConversionTests, AngleAxisToRotationMatrix) {
@@ -716,7 +1005,7 @@ TEST_F(RotationMatrixConversionTests, AngleAxisToRotationMatrix) {
     // Compare R with the RotationMatrix constructor that uses Eigen::AngleAxis.
     const Eigen::AngleAxisd angle_axis(qi);
     const RotationMatrix<double> R_expected(angle_axis);
-    EXPECT_TRUE(R.IsNearlyEqualTo(R_expected, 200 * kEpsilon));
+    ASSERT_TRUE(R.IsNearlyEqualTo(R_expected, 200 * kEpsilon));
 
     // Check that inverting this operation (calculating the AngleAxis from
     // rotation matrix R_expected) corresponds to the same orientation.
@@ -726,22 +1015,23 @@ TEST_F(RotationMatrixConversionTests, AngleAxisToRotationMatrix) {
     Eigen::AngleAxis<double> inverse_angle_axis;
     inverse_angle_axis.fromRotationMatrix(R_expected.matrix());
     const RotationMatrix<double> R_test(inverse_angle_axis);
-    EXPECT_TRUE(R.IsNearlyEqualTo(R_test, 200 * kEpsilon));
+    ASSERT_TRUE(R.IsNearlyEqualTo(R_test, 200 * kEpsilon));
     // Ensure the angle returned via Eigen's AngleAxis is between 0 and PI.
     const double angle = inverse_angle_axis.angle();
-    EXPECT_TRUE(0 <= angle && angle <= M_PI);
+    ASSERT_TRUE(0 <= angle && angle <= M_PI);
   }
 
-#ifdef DRAKE_ASSERT_IS_ARMED
-  // An AngleAxis with a zero unit vector should throw an exception.
-  const Eigen::AngleAxisd aa_zero(5, Vector3d(0, 0, 0));
-  EXPECT_THROW(const RotationMatrix<double> R_zero(aa_zero), std::logic_error);
+  if (kDrakeAssertIsArmed) {
+    // An AngleAxis with a zero unit vector should throw an exception.
+    const Eigen::AngleAxisd aa_zero(5, Vector3d(0, 0, 0));
+    EXPECT_THROW(const RotationMatrix<double> R_zero(aa_zero),
+        std::logic_error);
 
-  // An AngleAxis containing a NaN should throw an exception.
-  double nan = std::numeric_limits<double>::quiet_NaN();
-  const Eigen::AngleAxisd aa_nan(nan, Vector3d(1, 0, 0));
-  EXPECT_THROW(const RotationMatrix<double> R_nan(aa_nan), std::logic_error);
-#endif
+    // An AngleAxis containing a NaN should throw an exception.
+    double nan = std::numeric_limits<double>::quiet_NaN();
+    const Eigen::AngleAxisd aa_nan(nan, Vector3d(1, 0, 0));
+    EXPECT_THROW(const RotationMatrix<double> R_nan(aa_nan), std::logic_error);
+  }
 }
 
 }  // namespace

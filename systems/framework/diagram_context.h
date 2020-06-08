@@ -2,11 +2,14 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/systems/framework/basic_vector.h"
 #include "drake/systems/framework/context.h"
@@ -112,8 +115,7 @@ class DiagramState : public State<T> {
 /// In general, users should not need to interact with a DiagramContext
 /// directly. Use the accessors on Diagram instead.
 ///
-/// @tparam T The mathematical type of the context, which must be a valid Eigen
-///           scalar.
+/// @tparam_default_scalar
 template <typename T>
 class DiagramContext final : public Context<T> {
  public:
@@ -165,7 +167,7 @@ class DiagramContext final : public Context<T> {
     const InputPortIndex subsystem_iport_index = subsystem_input_port.second;
     Context<T>& subcontext = GetMutableSubsystemContext(subsystem_index);
     DRAKE_DEMAND(0 <= subsystem_iport_index &&
-                 subsystem_iport_index < subcontext.get_num_input_ports());
+                 subsystem_iport_index < subcontext.num_input_ports());
 
     // Get this Diagram's input port that serves as the source.
     const DependencyTicket iport_ticket =
@@ -193,7 +195,7 @@ class DiagramContext final : public Context<T> {
     const OutputPortIndex subsystem_oport_index = subsystem_output_port.second;
     Context<T>& subcontext = GetMutableSubsystemContext(subsystem_index);
     DRAKE_DEMAND(0 <= subsystem_oport_index &&
-                 subsystem_oport_index < subcontext.get_num_output_ports());
+                 subsystem_oport_index < subcontext.num_output_ports());
 
     // Get the child subsystem's output port tracker that serves as the source.
     const DependencyTicket subcontext_oport_ticket =
@@ -225,14 +227,14 @@ class DiagramContext final : public Context<T> {
     const OutputPortIndex oport_index = output_port.second;
     Context<T>& oport_context = GetMutableSubsystemContext(oport_system_index);
     DRAKE_DEMAND(oport_index >= 0);
-    DRAKE_DEMAND(oport_index < oport_context.get_num_output_ports());
+    DRAKE_DEMAND(oport_index < oport_context.num_output_ports());
 
     // Identify and validate the destination input port.
     const SubsystemIndex iport_system_index = input_port.first;
     const InputPortIndex iport_index = input_port.second;
     Context<T>& iport_context = GetMutableSubsystemContext(iport_system_index);
     DRAKE_DEMAND(iport_index >= 0);
-    DRAKE_DEMAND(iport_index < iport_context.get_num_input_ports());
+    DRAKE_DEMAND(iport_index < iport_context.num_input_ports());
 
     // Dig out the dependency trackers for both ports so we can subscribe the
     // input port tracker to the output port tracker.
@@ -302,6 +304,7 @@ class DiagramContext final : public Context<T> {
       state->set_substate(i, &Context<T>::access_mutable_state(&subcontext));
     }
     state->Finalize();
+    state->get_mutable_continuous_state().set_system_id(this->get_system_id());
     state_ = std::move(state);
   }
 
@@ -316,7 +319,7 @@ class DiagramContext final : public Context<T> {
       // Using `access` here to avoid sending invalidations.
       Parameters<T>& subparams =
           Context<T>::access_mutable_parameters(&*subcontext);
-      for (int i = 0; i < subparams.num_numeric_parameters(); ++i) {
+      for (int i = 0; i < subparams.num_numeric_parameter_groups(); ++i) {
         numeric_params.push_back(&subparams.get_mutable_numeric_parameter(i));
       }
       for (int i = 0; i < subparams.num_abstract_parameters(); ++i) {
@@ -331,20 +334,20 @@ class DiagramContext final : public Context<T> {
     this->init_parameters(std::move(params));
   }
 
+  // TODO(david-german-tri): Rename to get_subsystem_context.
   /// Returns the context structure for a given constituent system @p index.
   /// Aborts if @p index is out of bounds, or if no system has been added to the
   /// DiagramContext at that index.
-  /// TODO(david-german-tri): Rename to get_subsystem_context.
   const Context<T>& GetSubsystemContext(SubsystemIndex index) const {
     DRAKE_DEMAND(index >= 0 && index < num_subcontexts());
     DRAKE_DEMAND(contexts_[index] != nullptr);
     return *contexts_[index].get();
   }
 
+  // TODO(david-german-tri): Rename to get_mutable_subsystem_context.
   /// Returns the context structure for a given subsystem @p index.
   /// Aborts if @p index is out of bounds, or if no system has been added to the
   /// DiagramContext at that index.
-  /// TODO(david-german-tri): Rename to get_mutable_subsystem_context.
   Context<T>& GetMutableSubsystemContext(SubsystemIndex index) {
     DRAKE_DEMAND(index >= 0 && index < num_subcontexts());
     DRAKE_DEMAND(contexts_[index] != nullptr);
@@ -395,6 +398,52 @@ class DiagramContext final : public Context<T> {
     return clone;
   }
 
+  // Print summary information for the diagram context and recurse into
+  // the (non-empty) subcontexts.
+  std::string do_to_string() const final {
+    std::ostringstream os;
+
+    os << this->GetSystemPathname() << " Context (of a Diagram)\n";
+    os << std::string(this->GetSystemPathname().size() + 24, '-') << "\n";
+    if (this->num_continuous_states())
+      os << this->num_continuous_states() << " total continuous states\n";
+    if (this->num_discrete_state_groups()) {
+      int num_discrete_states = 0;
+      for (int i = 0; i < this->num_discrete_state_groups(); i++) {
+        num_discrete_states += this->get_discrete_state(i).size();
+      }
+      os << num_discrete_states << " total discrete states in "
+         << this->num_discrete_state_groups() << " groups\n";
+    }
+    if (this->num_abstract_states())
+      os << this->num_abstract_states() << " total abstract states\n";
+
+    if (this->num_numeric_parameter_groups()) {
+      int num_numeric_parameters = 0;
+      for (int i = 0; i < this->num_numeric_parameter_groups(); i++) {
+        num_numeric_parameters += this->get_numeric_parameter(i).size();
+      }
+      os << num_numeric_parameters << " total numeric parameters in "
+         << this->num_numeric_parameter_groups() << " groups\n";
+    }
+    if (this->num_abstract_parameters())
+      os << this->num_abstract_parameters() << " total abstract parameters\n";
+
+    for (systems::SubsystemIndex i{0}; i < num_subcontexts(); i++) {
+      const Context<T>& subcontext = this->GetSubsystemContext(i);
+      // Only print this context if it has something useful to print.
+      if (subcontext.get_continuous_state_vector().size() ||
+          subcontext.num_discrete_state_groups() ||
+          subcontext.num_abstract_states() ||
+          subcontext.num_numeric_parameter_groups() ||
+          subcontext.num_abstract_parameters()) {
+        os << "\n" << subcontext.to_string();
+      }
+    }
+
+    return os.str();
+  }
+
   // Returns the number of immediate child subcontexts in this DiagramContext.
   int num_subcontexts() const {
     return static_cast<int>(contexts_.size());
@@ -411,15 +460,18 @@ class DiagramContext final : public Context<T> {
   }
 
   // Recursively sets the time on all subcontexts.
-  void DoPropagateTimeChange(const T& time_sec, int64_t change_event) final {
+  void DoPropagateTimeChange(const T& time_sec,
+                             const std::optional<T>& true_time,
+                             int64_t change_event) final {
     for (auto& subcontext : contexts_) {
       DRAKE_ASSERT(subcontext != nullptr);
-      Context<T>::PropagateTimeChange(&*subcontext, time_sec, change_event);
+      Context<T>::PropagateTimeChange(&*subcontext, time_sec, true_time,
+                                      change_event);
     }
   }
 
   // Recursively sets the accuracy on all subcontexts.
-  void DoPropagateAccuracyChange(const optional<double>& accuracy,
+  void DoPropagateAccuracyChange(const std::optional<double>& accuracy,
                                  int64_t change_event) final {
     for (auto& subcontext : contexts_) {
       DRAKE_ASSERT(subcontext != nullptr);
@@ -481,3 +533,9 @@ class DiagramContext final : public Context<T> {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::DiagramState)
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::DiagramContext)

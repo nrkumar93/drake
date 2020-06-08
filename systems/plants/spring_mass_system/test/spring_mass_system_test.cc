@@ -71,7 +71,7 @@ class SpringMassSystemTest : public ::testing::Test {
 
 TEST_F(SpringMassSystemTest, Construction) {
   // Asserts zero inputs for this case.
-  EXPECT_EQ(0, context_->get_num_input_ports());
+  EXPECT_EQ(0, context_->num_input_ports());
   EXPECT_EQ("test_system", system_->get_name());
   EXPECT_EQ(kSpring, system_->get_spring_constant());
   EXPECT_EQ(kMass, system_->get_mass());
@@ -111,7 +111,7 @@ TEST_F(SpringMassSystemTest, Output) {
   // Displacement 100cm, vel 250cm/s (.25 is exact in binary).
   InitializeState(0.1, 0.25);
   system_->CalcOutput(*context_, system_output_.get());
-  ASSERT_EQ(1, system_output_->get_num_ports());
+  ASSERT_EQ(1, system_output_->num_ports());
 
   // Check the output through the application-specific interface.
   EXPECT_NEAR(0.1, output_->get_position(), 1e-14);
@@ -185,19 +185,15 @@ TEST_F(SpringMassSystemTest, DynamicsWithExternalForce) {
   EXPECT_FALSE(system_->HasAnyDirectFeedthrough());
 
   // Asserts exactly one input for this case expecting an external force.
-  ASSERT_EQ(1, context_->get_num_input_ports());
-
-  // Creates a vector holding the data entry to the supplied input force.
-  auto force_vector = make_unique<BasicVector<double>>(1 /* size */);
+  ASSERT_EQ(1, context_->num_input_ports());
 
   // Sets the input force.
   const double kExternalForce = 1.0;
-  force_vector->get_mutable_value() << kExternalForce;
 
   // Creates a free standing input port not actually connected to the output of
-  // another system but that has its own data in force_vector.
+  // another system but that has its own data.
   // This is done in order to be able to test this system standalone.
-  context_->FixInputPort(0, std::move(force_vector));
+  system_->get_input_port(0).FixValue(context_.get(), kExternalForce);
 
   InitializeState(0.1, 0.1);  // Displacement 0.1m, velocity 0.1m/sec.
   system_->CalcTimeDerivatives(*context_, system_derivatives_.get());
@@ -284,7 +280,7 @@ void StepExplicitEuler(
       context.get_mutable_continuous_state_vector();
   const auto& dxc = derivs.get_vector();
   xc.PlusEqScaled(h, dxc);  // xc += h*dxc
-  context.set_time(t + h);
+  context.SetTime(t + h);
 }
 
 /* Semi-explicit Euler (neutrally stable):
@@ -310,7 +306,7 @@ void StepSemiExplicitEuler(
   const auto& dxv = derivs.get_generalized_velocity();
   xv.PlusEqScaled(h, dxv);  // xv += h*dxv
 
-  context.set_time(t + h);
+  context.SetTime(t + h);
 
   // Invalidate q-dependent quantities.
   VectorBase<double>& xq = xc.get_mutable_generalized_position();
@@ -341,7 +337,7 @@ void StepImplicitEuler(
   const auto vx0 = x1.CopyToVector();
   const auto& dx0 = derivs.get_vector();
   x1.PlusEqScaled(h, dx0);  // x1 += h*dx0 (initial guess)
-  context.set_time(t + h);   // t=t1
+  context.SetTime(t + h);   // t=t1
   const int nx = static_cast<int>(vx0.size());
   const auto I = MatrixX<double>::Identity(nx, nx);
 
@@ -400,7 +396,7 @@ TEST_F(SpringMassSystemTest, Integrate) {
 
   // Set initial conditions in each Context.
   for (auto& context : contexts) {
-    context->set_time(0);
+    context->SetTime(0);
     system_->set_position(context.get(), 0.1);  // Displacement 0.1m, vel. 0m/s.
     system_->set_velocity(context.get(), 0.);
   }
@@ -461,7 +457,7 @@ TEST_F(SpringMassSystemTest, IntegrateConservativePower) {
       system_->AllocateTimeDerivatives();
 
   // Set initial conditions..
-  context->set_time(0);
+  context->SetTime(0);
   system_->set_position(context.get(), 0.1);  // Displacement 0.1m, vel. 0m/s.
   system_->set_velocity(context.get(), 0.);
   system_->set_conservative_work(context.get(), 0.);  // W(0)=0

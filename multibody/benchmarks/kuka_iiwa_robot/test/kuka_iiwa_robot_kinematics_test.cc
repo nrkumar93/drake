@@ -11,7 +11,7 @@ namespace {
 
 using Eigen::Vector3d;
 using Eigen::Matrix3d;
-using drake::multibody::multibody_tree::test_utilities::SpatialKinematicsPVA;
+using test_utilities::SpatialKinematicsPVA;
 
 // Compare Drake's MultibodyTree kinematics with MotionGenesis solution.
 void TestEndEffectorKinematics(const Eigen::Ref<const VectorX<double>>& q,
@@ -35,8 +35,8 @@ void TestEndEffectorKinematics(const Eigen::Ref<const VectorX<double>>& q,
 
   // Kinematics: Compare Drake results with MotionGenesis (expected) results.
   constexpr double kEpsilon = 10 * std::numeric_limits<double>::epsilon();
-  EXPECT_TRUE(drake_kinematics.rotation_matrix().isApprox(
-      MG_kinematics.rotation_matrix(), kEpsilon));
+  EXPECT_TRUE(drake_kinematics.rotation_matrix().matrix().isApprox(
+      MG_kinematics.rotation_matrix().matrix(), kEpsilon));
   EXPECT_TRUE(drake_kinematics.position_vector().isApprox(
       MG_kinematics.position_vector(), kEpsilon));
   EXPECT_TRUE(drake_kinematics.angular_velocity().isApprox(

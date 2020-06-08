@@ -10,22 +10,20 @@
  *
  */
 #include <memory>
+#include <thread>
 
 #include <gflags/gflags.h>
 
-#include "drake/common/find_resource.h"
+#include "drake/examples/acrobot/acrobot_geometry.h"
 #include "drake/examples/acrobot/acrobot_lcm.h"
 #include "drake/examples/acrobot/acrobot_plant.h"
-#include "drake/lcm/drake_lcm.h"
+#include "drake/geometry/geometry_visualization.h"
 #include "drake/lcmt_acrobot_u.hpp"
 #include "drake/lcmt_acrobot_x.hpp"
-#include "drake/multibody/joints/floating_base_types.h"
-#include "drake/multibody/parsers/urdf_parser.h"
-#include "drake/multibody/rigid_body_plant/drake_visualizer.h"
-#include "drake/multibody/rigid_body_tree.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/framework/diagram_builder.h"
 #include "drake/systems/framework/leaf_system.h"
+#include "drake/systems/lcm/lcm_interface_system.h"
 #include "drake/systems/lcm/lcm_publisher_system.h"
 #include "drake/systems/lcm/lcm_subscriber_system.h"
 
@@ -47,27 +45,26 @@ int DoMain() {
   drake::systems::DiagramBuilder<double> builder;
   const std::string channel_x = "acrobot_xhat";
   const std::string channel_u = "acrobot_u";
+  auto lcm = builder.AddSystem<systems::lcm::LcmInterfaceSystem>();
 
-  lcm::DrakeLcm lcm;
-  auto tree = std::make_unique<RigidBodyTree<double>>();
-  parsers::urdf::AddModelInstanceFromUrdfFileToWorld(
-      FindResourceOrThrow("drake/examples/acrobot/Acrobot.urdf"),
-      multibody::joints::kFixed, tree.get());
-  auto publisher = builder.AddSystem<systems::DrakeVisualizer>(*tree, &lcm);
   auto acrobot = builder.AddSystem<AcrobotPlant>();
-  // Connects plant to visualizer.
-  builder.Connect(acrobot->get_output_port(0), publisher->get_input_port(0));
+  acrobot->set_name("acrobot");
+
+  auto scene_graph = builder.AddSystem<geometry::SceneGraph>();
+  AcrobotGeometry::AddToBuilder(
+      &builder, acrobot->get_output_port(0), scene_graph);
+  ConnectDrakeVisualizer(&builder, *scene_graph, lcm);
 
   // Creates command receiver and subscriber.
   auto command_sub = builder.AddSystem(
-      systems::lcm::LcmSubscriberSystem::Make<lcmt_acrobot_u>(channel_u, &lcm));
+      systems::lcm::LcmSubscriberSystem::Make<lcmt_acrobot_u>(channel_u, lcm));
   auto command_receiver = builder.AddSystem<AcrobotCommandReceiver>();
   builder.Connect(command_sub->get_output_port(),
                   command_receiver->get_input_port(0));
 
   // Creates state sender and publisher.
   auto state_pub = builder.AddSystem(
-      systems::lcm::LcmPublisherSystem::Make<lcmt_acrobot_x>(channel_x, &lcm));
+      systems::lcm::LcmPublisherSystem::Make<lcmt_acrobot_x>(channel_x, lcm));
   auto state_sender = builder.AddSystem<AcrobotStateSender>();
   builder.Connect(state_sender->get_output_port(0),
                   state_pub->get_input_port());
@@ -92,12 +89,9 @@ int DoMain() {
   x0->set_theta1dot(0.0);
   x0->set_theta2dot(0.0);
 
-  lcm.StartReceiveThread();
-
   simulator.set_target_realtime_rate(FLAGS_realtime_factor);
   simulator.Initialize();
-  // Simulate for a very long time.
-  simulator.StepTo(FLAGS_simulation_sec);
+  simulator.AdvanceTo(FLAGS_simulation_sec);
 
   return 0;
 }
@@ -106,4 +100,7 @@ int DoMain() {
 }  // namespace examples
 }  // namespace drake
 
-int main() { return drake::examples::acrobot::DoMain(); }
+int main(int argc, char* argv[]) {
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  return drake::examples::acrobot::DoMain();
+}

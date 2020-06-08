@@ -31,7 +31,7 @@ class TestResourceTool(unittest.TestCase):
             returncode, expected_returncode,
             "Expected returncode %r from %r but got %r with output %r" % (
                 expected_returncode, args, returncode, output))
-        return output
+        return output.decode('utf8')
 
     def test_help(self):
         output = self._check_call([
@@ -75,7 +75,8 @@ class TestResourceTool(unittest.TestCase):
             "--print_resource_path",
             "drake/no_such_file",
             ], expected_returncode=1)
-        self.assertTrue("could not find resource" in output)
+        self.assertIn("Sought 'drake/no_such_file' in runfiles", output)
+        self.assertIn("file does not exist", output)
 
     def test_help_example_is_correct(self):
         # Look at the usage message, and snarf its Pendulum example paths.
@@ -84,8 +85,8 @@ class TestResourceTool(unittest.TestCase):
             ], expected_returncode=1)
         output = output.replace("\n", " ")
         m = re.search(
-            (r"-print_resource_path.*`(drake.*)`.*" +
-             r"absolute path.*?`/home/user/tmp/(drake/.*?)`"),
+            (r"-print_resource_path.*`(drake.*)`.*"
+             + r"absolute path.*?`/home/user/tmp/(drake/.*?)`"),
             output)
         self.assertTrue(m is not None, "Could not match in " + repr(output))
 

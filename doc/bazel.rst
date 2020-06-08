@@ -4,12 +4,11 @@
 Bazel build system
 ******************
 
-The Bazel build system is officially supported for a subset of Drake on
-Ubuntu Xenial and macOS.
-For more information, see:
+Drake's primary build system is Bazel.  For more information about Bazel, see
+https://bazel.build/.
 
- * https://bazel.build/
- * https://github.com/RobotLocomotion/drake/issues/3129
+Drake also offers a CMake build system wrapper that invokes Bazel under the
+hood.
 
 Bazel Installation
 ==================
@@ -37,19 +36,20 @@ target label (and optional configuration options if desired).  We give some
 typical examples below; for more reading about target patterns, see:
 https://docs.bazel.build/versions/master/user-manual.html#target-patterns.
 
-On Ubuntu Xenial, the default compiler is the first ``gcc`` compiler in the
-``PATH``, usually GCC 5.4. On macOS, the default compiler is Apple Clang. To
-use Clang 4.0 on Ubuntu Xenial, set the ``CC`` and ``CXX`` environment
-variables before running **bazel build**, **bazel test**, or any other
-**bazel** commands.
+On Ubuntu, the default compiler is the first ``gcc`` compiler in the
+``PATH``, usually GCC 7.5 on Bionic. On macOS, the default compiler is the Apple
+LLVM compiler. To use Clang 6.0 on Ubuntu, set the ``CC`` and ``CXX``
+environment variables before running **bazel build**, **bazel test**, or any
+other **bazel** commands.
 
 Cheat sheet for operating on the entire project::
 
   cd /path/to/drake
   bazel build //...                               # Build the entire project.
   bazel test //...                                # Build and test the entire project.
-  CC=clang-4.0 CXX=clang++-4.0 bazel build //...  # Build using Clang 4.0 on Xenial.
-  CC=clang-4.0 CXX=clang++-4.0 bazel test //...   # Build and test using Clang 4.0 on Xenial.
+
+  CC=clang CXX=clang++ bazel build //...          # Build using Clang 6.0 on Bionic.
+  CC=clang CXX=clang++ bazel test //...           # Build and test using Clang 6.0 on Bionic.
 
 - The "``//``" means "starting from the root of the project".
 - The "``...``" means "everything including the subdirectories' ``BUILD`` files".
@@ -105,6 +105,24 @@ Cheat sheet for operating on specific portions of the project::
   prerequisite libraries are also compiled and linked in ``dbg`` mode.
 - For the definitions of the "``--config``" options see ``drake/tools/bazel.rc``.
 
+Running with Flags
+------------------
+
+In general, to figure out what binary-specific arguments are available, add
+"``-- --help``" to your ``bazel run`` command. If the binary can only run via
+``bazel test``, look at `--test_arg <https://docs.bazel.build/versions/master/user-manual.html#flag--test_arg>`_.
+
+If a C++ unittest uses ``gtest`` (e.g. using ``drake_cc_googletest``),
+you can specify gtest-specific flags. As an example::
+
+  bazel run multibody/plant:multibody_plant_test -- --gtest_filter='*SimpleModelCreation*'
+
+If a Python unittest is run via ``drake_py_unittest_main.py`` (e.g. using
+``drake_py_unittest``), you can specify flags such as ``--trace`` or
+``--deprecation_action``. As an example::
+
+  bazel run bindings/pydrake:py/symbolic_test -- --trace=user --deprecation_action=error
+
 Debugging on macOS
 ------------------
 
@@ -142,16 +160,16 @@ Proprietary Solvers
 
 The Drake Bazel build currently supports the following proprietary solvers:
 
- * Gurobi 8.0.0
- * MOSEK 8.1
- * SNOPT 7.6
+ * Gurobi 9.0.2
+ * MOSEK 9.0
+ * SNOPT 7.4
 
 .. When upgrading SNOPT to a newer revision, re-enable TestPrintFile in
    solvers/test/snopt_solver_test.cc.
 
 .. _gurobi:
 
-Gurobi 8.0.0
+Gurobi 9.0.2
 ------------
 
 Install on Ubuntu
@@ -159,16 +177,16 @@ Install on Ubuntu
 1. Register for an account on https://www.gurobi.com.
 2. Set up your Gurobi license file in accordance with Gurobi documentation.
 3. ``export GRB_LICENSE_FILE=/path/to/gurobi.lic``.
-4. Download ``gurobi8.0.0_linux64.tar.gz``
-5. Unzip it.  We suggest that you use ``/opt/gurobi800`` to simplify working with Drake installations.
-6. ``export GUROBI_PATH=/opt/gurobi800/linux64``
+4. Download ``gurobi9.0.2_linux64.tar.gz``
+5. Unzip it.  We suggest that you use ``/opt/gurobi902`` to simplify working with Drake installations.
+6. If you unzipped into a location other than ``/opt/gurobi902``, then call ``export GUROBI_HOME=GUROBI_UNZIP_PATH/linux64`` to set the path you used, where in ``GUROBI_HOME`` folder you can find ``bin`` folder. 
 
 Install on macOS
 ~~~~~~~~~~~~~~~~
 1. Register for an account on http://www.gurobi.com.
 2. Set up your Gurobi license file in accordance with Gurobi documentation.
 3. ``export GRB_LICENSE_FILE=/path/to/gurobi.lic``
-4. Download and install ``gurobi8.0.0_mac64.pkg``.
+4. Download and install ``gurobi9.0.2_mac64.pkg``.
 
 
 To confirm that your setup was successful, run the tests that require Gurobi:
@@ -180,10 +198,10 @@ these tests.  If you will be developing with Gurobi regularly, you may wish
 to specify a more convenient ``--test_tag_filters`` in a local ``.bazelrc``.
 See https://docs.bazel.build/versions/master/user-manual.html#bazelrc.
 
-MOSEK 8.1
----------
+MOSEK
+-----
 
-The Drake Bazel build system downloads MOSEK 8.1.0.51 automatically.  No manual
+The Drake Bazel build system downloads MOSEK 9.0.96 automatically.  No manual
 installation is required.  Set the location of your license file as follows:
 
 ``export MOSEKLM_LICENSE_FILE=/path/to/mosek.lic``
@@ -208,8 +226,8 @@ Using your own source archive
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. Download the SNOPT sources from the distributor in ``.tar.gz`` format (e.g.,
-   named ``snopt7.6.tar.gz``).
-2. ``export SNOPT_PATH=/home/username/Downloads/snopt7.6.tar.gz``
+   named ``snopt7.4.tar.gz``).
+2. ``export SNOPT_PATH=/home/username/Downloads/snopt7.4.tar.gz``
 
 Using the RobotLocomotion git repository
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -230,6 +248,10 @@ these tests.  If you will be developing with SNOPT regularly, you may wish
 to specify a more convenient ``--test_tag_filters`` in a local ``.bazelrc``.
 See https://docs.bazel.build/versions/master/user-manual.html#bazelrc.
 
+SNOPT support has some known problems on certain programs (see drake issue
+`#10422 <https://github.com/RobotLocomotion/drake/issues/10422>`_ for a
+summary).
+
 Optional Tools
 ==============
 
@@ -243,6 +265,9 @@ kcov
 
 ``kcov`` can analyze coverage for any binary that contains DWARF format
 debuggging symbols, and produce nicely formatted browse-able coverage reports.
+
+To use kcov, you must first run Drake's ``install_prereqs`` setup script using
+the ``--with-kcov`` option.
 
 To analyze test coverage, run the tests under ``kcov``::
 

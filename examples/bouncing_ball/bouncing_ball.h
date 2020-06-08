@@ -8,32 +8,26 @@
 #include "drake/systems/framework/witness_function.h"
 
 namespace drake {
+namespace examples {
 namespace bouncing_ball {
 
 /// Dynamical representation of the idealized hybrid dynamics
 /// of a ball dropping from a height and bouncing on a surface.
-///
-/// Instantiated templates for the following scalar types @p T are provided:
-/// - double
-/// - drake::AutoDiffXd
-/// - symbolic::Expression
-///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// They are already available to link against in the containing library.
 ///
 /// Inputs: no inputs.
 /// States: vertical position (state index 0) and velocity (state index 1) in
 /// units of m and m/s, respectively.
 /// Outputs: vertical position (state index 0) and velocity (state index 1) in
 /// units of m and m/s, respectively.
+///
+/// @tparam_default_scalar
 template <typename T>
 class BouncingBall final : public systems::LeafSystem<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(BouncingBall);
 
   BouncingBall() : systems::LeafSystem<T>(
-      systems::SystemTypeTag<bouncing_ball::BouncingBall>{}) {
+      systems::SystemTypeTag<BouncingBall>{}) {
     // Two state variables: q and v.
     this->DeclareContinuousState(1, 1, 0);
 
@@ -42,7 +36,7 @@ class BouncingBall final : public systems::LeafSystem<T> {
                                   &BouncingBall::CopyStateOut);
 
     // Declare the witness function.
-    signed_distance_witness_ = this->DeclareWitnessFunction(
+    signed_distance_witness_ = this->MakeWitnessFunction(
         "Signed distance",
         systems::WitnessFunctionDirection::kPositiveThenNonPositive,
         &BouncingBall::CalcSignedDistance,
@@ -98,9 +92,9 @@ class BouncingBall final : public systems::LeafSystem<T> {
   void SetDefaultState(const systems::Context<T>&,
                        systems::State<T>* state) const override {
     DRAKE_DEMAND(state != nullptr);
-    Vector2<T> x0;
-    x0 << 10.0, 0.0;  // initial state values.
-    state->get_mutable_continuous_state().SetFromVector(x0);
+    Vector2<T> xc0;
+    xc0 << 10.0, 0.0;  // initial state values.
+    state->get_mutable_continuous_state().SetFromVector(xc0);
   }
 
   // Updates the velocity discontinuously to reverse direction. This method
@@ -117,7 +111,7 @@ class BouncingBall final : public systems::LeafSystem<T> {
         context.get_continuous_state().get_vector();
 
     // Copy the present state to the new one.
-    next_state->CopyFrom(context.get_state());
+    next_state->SetFrom(context.get_state());
 
     // Verify that velocity is non-positive.
     DRAKE_DEMAND(cstate.GetAtIndex(1) <= 0.0);
@@ -150,4 +144,5 @@ class BouncingBall final : public systems::LeafSystem<T> {
 };
 
 }  // namespace bouncing_ball
+}  // namespace examples
 }  // namespace drake

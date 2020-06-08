@@ -12,8 +12,8 @@
 #include <Eigen/Dense>
 #include <Eigen/LU>
 
+#include "drake/attic_warning.h"
 #include "drake/common/constants.h"
-#include "drake/common/drake_deprecated.h"
 #include "drake/common/eigen_stl_types.h"
 #include "drake/common/eigen_types.h"
 #include "drake/math/roll_pitch_yaw.h"
@@ -127,6 +127,15 @@ class RigidBodyTree {
   }
 
   /**
+   * When @p val is true, diagnostics in compile() will be printed with
+   * drake::log()->info(). When false, drake::log()->debug() will be used
+   * instead.
+   */
+  void print_joint_welding_diagnostics(bool wants_to_print) {
+    print_weld_diasnostics_ = wants_to_print;
+  }
+
+  /**
    * Adds a new model instance to this `RigidBodyTree`. The model instance is
    * identified by a unique model instance ID, which is the return value of
    * this method.
@@ -144,10 +153,6 @@ class RigidBodyTree {
    * Returns the number of model instances in the tree, not including the world.
    */
   int get_num_model_instances() const { return num_model_instances_; }
-
-  DRAKE_DEPRECATED("Please use get_num_model_instances().")
-  int get_number_of_model_instances() const;
-
 
   /**
    * Adds a frame.
@@ -223,14 +228,6 @@ class RigidBodyTree {
    * @return The name of the velocity value at index @p velocity_num.
    */
   std::string get_velocity_name(int velocity_num) const;
-
-// TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use get_position_name.")
-  std::string getPositionName(int position_num) const;
-
-// TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use get_velocity_name.")
-  std::string getVelocityName(int velocity_num) const;
 
   std::string getStateName(int state_num) const;
 
@@ -371,7 +368,7 @@ class RigidBodyTree {
   /// Computes the pose `X_WB` of @p body's frame B in the world frame W.
   /// @param cache Reference to the KinematicsCache.
   /// @param body Reference to the RigidBody.
-  /// @retval `X_WB`
+  /// @retval X_WB
   drake::Isometry3<T> CalcBodyPoseInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBody<T>& body) const {
     return CalcFramePoseInWorldFrame(
@@ -384,7 +381,7 @@ class RigidBodyTree {
   /// RigidBodyTree.
   /// @param cache Reference to the KinematicsCache.
   /// @param frame_F Reference to the RigidBodyFrame.
-  /// @retval `X_WF`
+  /// @retval X_WF
   drake::Isometry3<T> CalcFramePoseInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBodyFrame<T>& frame_F) const {
     return CalcFramePoseInWorldFrame(cache, frame_F.get_rigid_body(),
@@ -396,7 +393,7 @@ class RigidBodyTree {
   /// @param cache Reference to the KinematicsCache.
   /// @param body Reference to the RigidBody.
   /// @param X_BF The pose of frame F in body frame B.
-  /// @retval `X_WF`
+  /// @retval X_WF
   drake::Isometry3<T> CalcFramePoseInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBody<T>& body,
       const drake::Isometry3<T>& X_BF) const;
@@ -405,7 +402,7 @@ class RigidBodyTree {
   /// expressed in the world frame W.
   /// @param cache Reference to the KinematicsCache.
   /// @param body Reference to the RigidBody.
-  /// @retval `V_WB`
+  /// @retval V_WB
   drake::Vector6<T> CalcBodySpatialVelocityInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBody<T>& body) const;
 
@@ -415,7 +412,7 @@ class RigidBodyTree {
   /// @p frame_F attaches to has to be owned by this RigidBodyTree.
   /// @param cache Reference to the KinematicsCache.
   /// @param frame_F Reference to the RigidBodyFrame.
-  /// @retval `V_WF`
+  /// @retval V_WF
   drake::Vector6<T> CalcFrameSpatialVelocityInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBodyFrame<T>& frame_F) const {
     return CalcFrameSpatialVelocityInWorldFrame(
@@ -428,7 +425,7 @@ class RigidBodyTree {
   /// @param cache Reference to the KinematicsCache.
   /// @param body Reference to the RigidBody.
   /// @param X_BF The pose of frame F in body frame B.
-  /// @retval `V_WF`
+  /// @retval V_WF
   drake::Vector6<T> CalcFrameSpatialVelocityInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBody<T>& body,
       const drake::Isometry3<T>& X_BF) const;
@@ -443,7 +440,7 @@ class RigidBodyTree {
   /// @param in_terms_of_qdot `true` for `J_WF` computed with respect to the
   /// time derivative of the generalized position such that
   /// `V_WF = J_WF * qdot`. `false` for `J_WF` computed with respect to `v`.
-  /// @retval `J_WF`
+  /// @retval J_WF
   drake::Matrix6X<T> CalcFrameSpatialVelocityJacobianInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBody<T>& body,
       const drake::Isometry3<T>& X_BF,
@@ -476,7 +473,7 @@ class RigidBodyTree {
   /// @param in_terms_of_qdot `true` for `J_WF` computed with respect to the
   /// time derivative of the generalized position such that
   /// `V_WF = J_WF * qdot`. `false` for `J_WF` computed with respect to `v`.
-  /// @retval `J_WF`
+  /// @retval J_WF
   drake::Matrix6X<T> CalcFrameSpatialVelocityJacobianInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBodyFrame<T>& frame_F,
       bool in_terms_of_qdot = false) const {
@@ -515,7 +512,7 @@ class RigidBodyTree {
   /// @param in_terms_of_qdot `true` for `J_WB` computed with respect to the
   /// time derivative of the generalized position such that
   /// `V_WB = J_WB * qdot`. `false` for `J_WB` computed with respect to `v`.
-  /// @retval `J_WB`
+  /// @retval J_WB
   drake::Matrix6X<T> CalcBodySpatialVelocityJacobianInWorldFrame(
       const KinematicsCache<T>& cache, const RigidBody<T>& body,
       bool in_terms_of_qdot = false) const {
@@ -748,10 +745,6 @@ class RigidBodyTree {
   /// Identical to the above overload, expect that this function return the
   /// ancestor bodies instead of using an output argument.
   std::vector<int> FindAncestorBodies(int body_index) const;
-
-  DRAKE_DEPRECATED("Please use void RigidBodyTree::FindAncestorBodies().")
-  // TODO(#2274) Fix NOLINTNEXTLINE(runtime/references).
-  void findAncestorBodies(std::vector<int>& ancestor_bodies, int body) const;
 
   /// Find the kinematic path between two bodies or frames. This function will
   /// not allocate memory if `path`, `start_body_ancestors` and
@@ -1018,7 +1011,8 @@ class RigidBodyTree {
       RigidBody<T>& body, const std::string& group_name);
 
   /// Retrieve a `const` pointer to an element of the collision model.
-  /// Note: The use of Find (instead of get) and the use of CamelCase both
+  ///
+  /// @note The use of Find (instead of get) and the use of CamelCase both
   /// imply a potential runtime cost are carried over from the collision model
   /// accessor method.
   const drake::multibody::collision::Element* FindCollisionElement(
@@ -1033,16 +1027,15 @@ class RigidBodyTree {
       for (const auto& group : body_ptr->get_group_to_collision_ids_map()) {
         const std::string& group_name = group.first;
         if (test(group_name)) {
-          auto& ids = body_ptr->get_mutable_collision_element_ids();
-          for (const auto& id : group.second) {
-            ids.erase(std::find(ids.begin(), ids.end(), id));
+          names_of_groups_to_delete.push_back(group_name);
+          for (auto id : group.second) {
             collision_model_->RemoveElement(id);
           }
-          names_of_groups_to_delete.push_back(group_name);
         }
       }
       for (const auto& group_name : names_of_groups_to_delete) {
-        body_ptr->get_mutable_group_to_collision_ids_map().erase(group_name);
+        drake::internal::RigidBodyAttorney::
+            RemoveCollisionGroupAndElements(body_ptr.get(), group_name);
       }
     }
   }
@@ -1255,7 +1248,7 @@ class RigidBodyTree {
 
    @throws std::runtime_error based on the criteria of DiscardZeroGradient()
    only if @p throws_if_missing_gradient is true.
-   **/
+   */
   template <typename U>
   std::vector<drake::multibody::collision::PointPair<U>>
   ComputeMaximumDepthCollisionPoints(const KinematicsCache<U>& cache,
@@ -1311,15 +1304,6 @@ class RigidBodyTree {
   std::vector<const RigidBody<T>*>
   FindModelInstanceBodies(int model_instance_id) const;
 
-/**
- * This is a deprecated version of `FindBody(...)`. Please use `FindBody(...)`
- * instead.
- */
-  DRAKE_DEPRECATED("Please use RigidBodyTree::FindBody().")
-  RigidBody<T>* findLink(const std::string& link_name,
-                      const std::string& model_name = "",
-                      int model_id = -1) const;
-
   /**
    * Obtains a vector of indexes of the bodies that are directly attached to the
    * world via any type of joint.  This method has a time complexity of `O(N)`
@@ -1361,13 +1345,6 @@ class RigidBodyTree {
   std::vector<int> FindChildrenOfBody(int parent_body_index,
                                       int model_instance_id = -1) const;
 
-/**
- * This is a deprecated version of `FindBodyIndex(...)`. Please use
- * `FindBodyIndex(...)` instead.
- */
-  DRAKE_DEPRECATED("Please use RigidBodyTree::FindBodyIndex().")
-  int findLinkId(const std::string& link_name, int model_id = -1) const;
-
   /**
    * Obtains a pointer to the rigid body whose parent joint is named
    * @p joint_name and is part of a model instance with ID @p model_instance_id.
@@ -1390,10 +1367,6 @@ class RigidBodyTree {
    */
   RigidBody<T>* FindChildBodyOfJoint(const std::string& joint_name,
                                      int model_instance_id = -1) const;
-
-  DRAKE_DEPRECATED("Please use FindChildBodyOfJoint().")
-  RigidBody<T>* findJoint(
-          const std::string& joint_name, int model_id = -1) const;
 
   /**
    * Returns the index within the vector of rigid bodies of the rigid body whose
@@ -1418,9 +1391,6 @@ class RigidBodyTree {
    */
   int FindIndexOfChildBodyOfJoint(const std::string& joint_name,
                                   int model_instance_id = -1) const;
-
-  DRAKE_DEPRECATED("Please use FindIndexOfChildBodyOfJoint().")
-  int findJointId(const std::string& joint_name, int model_id = -1) const;
 
   /**
    * Finds a frame of the specified \p frame_name belonging to a model with the
@@ -1468,9 +1438,6 @@ class RigidBodyTree {
    * Returns the number of frames in this tree.
    */
   int get_num_frames() const;
-
-  DRAKE_DEPRECATED("Please use get_num_bodies().")
-  int get_number_of_bodies() const;
 
   std::string getBodyOrFrameName(int body_or_frame_id) const;
   // @param body_or_frame_id the index of the body or the id of the frame.
@@ -1623,16 +1590,10 @@ class RigidBodyTree {
    */
   int get_num_positions() const { return num_positions_; }
 
-  DRAKE_DEPRECATED("Please use get_num_positions().")
-  int number_of_positions() const;
-
   /**
    * Returns the number of velocity states outputted by this %RigidBodyTree.
    */
   int get_num_velocities() const { return num_velocities_; }
-
-  DRAKE_DEPRECATED("Please use get_num_velocities().")
-  int number_of_velocities() const;
 
   /**
    * Returns the number of actuators in this %RigidBodyTree.
@@ -1657,21 +1618,9 @@ class RigidBodyTree {
   std::vector<std::shared_ptr<RigidBodyFrame<T>>> frames_;
 
  public:
-  DRAKE_DEPRECATED(
-      "Direct access to `bodies` has been deprecated, "
-      "mutable access has been removed. Use `get_bodies` and `add_rigid_body` "
-      "instead")
-  const std::vector<std::unique_ptr<RigidBody<T>>>& bodies{bodies_};
-
   /// List of bodies.
   // TODO(amcastro-tri): start using accessors body(int).
   auto& get_bodies() const { return bodies_; }
-
-  DRAKE_DEPRECATED(
-      "Direct access to `frames` has been deprecated, "
-      "mutable access has been removed. Use `get_frames` and `addFrame` "
-      "instead")
-  const std::vector<std::shared_ptr<RigidBodyFrame<T>>>& frames{frames_};
 
   /// List of frames.
   auto& get_frames() const { return frames_; }
@@ -1693,6 +1642,10 @@ class RigidBodyTree {
   Eigen::MatrixXd B;  // the B matrix maps inputs into joint-space forces
 
  private:
+  // drake::log()->info() is used for prints if true, and
+  // drake::log()->debug() is used otherwise.
+  bool print_weld_diasnostics_{false};
+
   // The number of generalized position states in this rigid body tree.
   int num_positions_{};
 

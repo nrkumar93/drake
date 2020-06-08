@@ -6,22 +6,30 @@
 #include <unordered_set>
 #include <utility>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_assert.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/drake_deprecated.h"
+#include "drake/common/drake_throw.h"
 #include "drake/systems/framework/basic_vector.h"
+#include "drake/systems/framework/framework_common.h"
+#include "drake/systems/framework/scalar_conversion_traits.h"
 #include "drake/systems/framework/subvector.h"
 #include "drake/systems/framework/vector_base.h"
 
 namespace drake {
 namespace systems {
 
+// TODO(sherm1) The ordering of the composite xc is useless and prevents us
+//              from describing every xc as a sequence [q v z]. Consider
+//              reimplementing so that xc=[q₁q₂ v₁v₂ z₁z₂].
 /// %ContinuousState is a view of, and optionally a container for, all the
 /// continuous state variables `xc` of a Drake System. Continuous state
 /// variables are those whose values are defined by differential equations,
 /// so we expect there to be a well-defined time derivative `xcdot` ≜ `d/dt xc`.
 ///
 /// The contents of `xc` are conceptually partitioned into three groups:
+///
 /// - `q` is generalized position
 /// - `v` is generalized velocity
 /// - `z` is other continuous state
@@ -68,10 +76,7 @@ namespace systems {
 /// not guarantee contiguous storage.
 /// @see DiagramContinuousState for more information.
 ///
-/// @tparam T A mathematical type compatible with Eigen's Scalar.
-// TODO(sherm1) The ordering of the composite xc is useless and prevents us
-//              from describing every xc as a sequence [q v z]. Consider
-//              reimplementing so that xc=[q₁q₂ v₁v₂ z₁z₂].
+/// @tparam_default_scalar
 template <typename T>
 class ContinuousState {
  public:
@@ -136,7 +141,9 @@ class ContinuousState {
   /// underlying each leaf ContinuousState is preserved. See the class comments
   /// above for more information.
   std::unique_ptr<ContinuousState<T>> Clone() const {
-    return std::unique_ptr<ContinuousState<T>>(DoClone());
+    auto result = DoClone();
+    result->set_system_id(this->get_system_id());
+    return result;
   }
 
   /// Returns the size of the entire continuous state vector, which is
@@ -204,17 +211,16 @@ class ContinuousState {
     return *misc_continuous_state_.get();
   }
 
-  /// Copies the values from another ContinuousState of the same scalar type
-  /// into this State.
-  void CopyFrom(const ContinuousState<T>& other) {
-    SetFromGeneric(other);
-  }
-
-  /// Initializes this ContinuousState (regardless of scalar type) from a
-  /// State<double>. All scalar types in Drake must support initialization from
-  /// doubles.
-  void SetFrom(const ContinuousState<double>& other) {
-    SetFromGeneric(other);
+  /// Copies the values from `other` into `this`, converting the scalar type as
+  /// necessary.
+  template <typename U>
+  void SetFrom(const ContinuousState<U>& other) {
+    DRAKE_THROW_UNLESS(size() == other.size());
+    DRAKE_THROW_UNLESS(num_q() == other.num_q());
+    DRAKE_THROW_UNLESS(num_v() == other.num_v());
+    DRAKE_THROW_UNLESS(num_z() == other.num_z());
+    SetFromVector(other.CopyToVector().unaryExpr(
+        scalar_conversion::ValueConverter<T, U>{}));
   }
 
   /// Sets the entire continuous state vector from an Eigen expression.
@@ -225,6 +231,12 @@ class ContinuousState {
 
   /// Returns a copy of the entire continuous state vector into an Eigen vector.
   VectorX<T> CopyToVector() const { return this->get_vector().CopyToVector(); }
+
+  /** (Internal) Gets the id of the subsystem that created this state. */
+  internal::SystemId get_system_id() const { return system_id_; }
+
+  /** (Internal) Records the id of the subsystem that created this state. */
+  void set_system_id(internal::SystemId id) { system_id_ = id; }
 
  protected:
   /// Constructs a continuous state that exposes second-order structure, with
@@ -253,6 +265,8 @@ class ContinuousState {
   /// full state is a BasicVector (that is, this is a leaf continuous state).
   /// The BasicVector is cloned to preserve its concrete type and contents,
   /// then the q, v, z Subvectors are created referencing it.
+  /// The implementation should not set_system_id on the result, the caller
+  /// will set an id on the state after this method returns.
   virtual std::unique_ptr<ContinuousState> DoClone() const {
     auto state = dynamic_cast<const BasicVector<T>*>(state_.get());
     DRAKE_DEMAND(state != nullptr);
@@ -261,15 +275,6 @@ class ContinuousState {
   }
 
  private:
-  template <typename U>
-  void SetFromGeneric(const ContinuousState<U>& other) {
-    DRAKE_DEMAND(size() == other.size());
-    DRAKE_DEMAND(num_q() == other.num_q());
-    DRAKE_DEMAND(num_v() == other.num_v());
-    DRAKE_DEMAND(num_z() == other.num_z());
-    SetFromVector(other.CopyToVector().template cast<T>());
-  }
-
   // Demand that the representation invariants hold.
   void DemandInvariants() const {
     // Nothing is nullptr.
@@ -335,7 +340,13 @@ class ContinuousState {
   // multibody system motion.  Conventionally denoted `z`.
   // This is a subset of state_ and does not own the underlying data.
   std::unique_ptr<VectorBase<T>> misc_continuous_state_;
+
+  // Unique id of the subsystem that created this state.
+  internal::SystemId system_id_;
 };
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::ContinuousState)

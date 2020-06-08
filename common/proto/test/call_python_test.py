@@ -27,7 +27,8 @@ def scoped_file(filepath, is_fifo=False):
 
 assert "TEST_TMPDIR" in os.environ, "Must run under `bazel test`"
 
-# Set backend so that the test does not open windows.
+# TODO(eric.cousineau): See if it's possible to make test usefully pass for
+# "Template" backend.
 os.environ["MPLBACKEND"] = "ps"
 
 SIGPIPE_STATUS = 141
@@ -97,6 +98,14 @@ class TestCallPython(unittest.TestCase):
                 client.send_signal(signal.SIGINT)
             client_status = client.wait()
             self.assertEqual(client_status, int(with_error))
+
+    def test_help(self):
+        text = subprocess.check_output(
+            [client_bin, "--help"], stderr=subprocess.STDOUT).decode("utf8")
+        # Print output, since `assertIn` does not provide user-friendly
+        # multiline error messages.
+        print(text)
+        self.assertTrue("Here's an example" in text)
 
     def test_basic(self):
         for with_error in [False, True]:

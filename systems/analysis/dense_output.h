@@ -3,6 +3,7 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
 
@@ -40,7 +41,7 @@ namespace systems {
 /// - [Hairer, 1993] E. Hairer, S. Nørsett and G. Wanner. Solving Ordinary
 ///                  Differential Equations I (Nonstiff Problems), p.188,
 ///                  Springer, 1993.
-/// @tparam T A valid Eigen scalar type.
+/// @tparam_default_scalar
 template <typename T>
 class DenseOutput {
  public:
@@ -87,7 +88,7 @@ class DenseOutput {
   /// Returns the output size (i.e. the number of elements in an
   /// output value).
   /// @pre Output is not empty i.e. is_empty() equals false.
-  /// @throw std::logic_error if any of the preconditions is not met.
+  /// @throws std::logic_error if any of the preconditions is not met.
   int size() const {
     ThrowIfOutputIsEmpty(__func__);
     return this->do_size();
@@ -179,3 +180,6 @@ class DenseOutput {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class drake::systems::DenseOutput)

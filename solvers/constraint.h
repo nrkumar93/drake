@@ -25,6 +25,11 @@
 namespace drake {
 namespace solvers {
 
+// TODO(eric.cousineau): Consider enabling the constraint class directly to
+// specify new slack variables.
+// TODO(eric.cousineau): Consider parameterized constraints:  e.g. the
+// acceleration constraints in the rigid body dynamics are constraints
+// on vdot and f, but are "parameterized" by q and v.
 /**
  * A constraint is a function + lower and upper bounds.
  *
@@ -35,11 +40,6 @@ namespace solvers {
  * It should support evaluating the constraint, and adding it to an optimization
  * problem.
  */
-// TODO(eric.cousineau): Consider enabling the constraint class directly to
-// specify new slack variables.
-// TODO(eric.cousineau): Consider parameterized constraints:  e.g. the
-// acceleration constraints in the rigid body dynamics are constraints
-// on vdot and f, but are "parameterized" by q and v.
 class Constraint : public EvaluatorBase {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(Constraint)
@@ -110,6 +110,7 @@ class Constraint : public EvaluatorBase {
   /** Number of rows in the output constraint. */
   int num_constraints() const { return num_outputs(); }
 
+
  protected:
   /** Updates the lower bound.
    * @note if the users want to expose this method in a sub-class, do
@@ -158,21 +159,17 @@ class Constraint : public EvaluatorBase {
                                 const double tol) const {
     AutoDiffVecXd y(num_constraints());
     DoEval(x, &y);
-    return (y.array() >= lower_bound_.cast<AutoDiffXd>().array() - tol).all() &&
-           (y.array() <= upper_bound_.cast<AutoDiffXd>().array() + tol).all();
+    auto get_value = [](const AutoDiffXd& v) { return v.value(); };
+    return
+        (y.array().unaryExpr(get_value) >= lower_bound_.array() - tol).all() &&
+        (y.array().unaryExpr(get_value) <= upper_bound_.array() + tol).all();
   }
 
   virtual symbolic::Formula DoCheckSatisfied(
       const Eigen::Ref<const VectorX<symbolic::Variable>>& x) const;
 
  private:
-  void check(int num_constraints) {
-    static_cast<void>(num_constraints);
-    DRAKE_ASSERT(lower_bound_.size() == num_constraints &&
-                 "Size of lower bound must match number of constraints.");
-    DRAKE_ASSERT(upper_bound_.size() == num_constraints &&
-                 "Size of upper bound must match number of constraints.");
-  }
+  void check(int num_constraints) const;
 
   Eigen::VectorXd lower_bound_;
   Eigen::VectorXd upper_bound_;
@@ -257,6 +254,9 @@ class QuadraticConstraint : public Constraint {
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
 
+  std::ostream& DoDisplay(std::ostream&,
+                          const VectorX<symbolic::Variable>&) const override;
+
   Eigen::MatrixXd Q_;
   Eigen::VectorXd b_;
 };
@@ -273,37 +273,47 @@ class QuadraticConstraint : public Constraint {
  where A ∈ ℝ ⁿˣᵐ, b ∈ ℝ ⁿ are given matrices.
  Ideally this constraint should be handled by a second-order cone solver.
  In case the user wants to enforce this constraint through general nonlinear
- optimization, with smooth gradient, we alternatively impose the following
- constraint, with smooth gradient everywhere
- @f[
- a_0^Tx+b_0\ge 0\\
- (a_0^Tx+b_0)^2-(a_1^Tx+b_1)^2-...-(a_{n-1}^Tx+b_{n-1})^2 \ge 0
- @f]
- where @f$ a_i^T@f$ is the i'th row of matrix @f$ A@f$. @f$ b_i @f$ is the i'th
- entry of vector @f$ b @f$.
-
- For more information and visualization, please refer to
+ optimization, we provide three different formulations on the Lorentz cone
+ constraint
+ 1. g(z) = z₀ - sqrt(z₁² + ... + zₙ₋₁²) ≥ 0
+    This formulation is not differentiable at z₁=...=zₙ₋₁=0
+ 2. g(z) = z₀ - sqrt(z₁² + ... + zₙ₋₁²) ≥ 0
+    but the gradient of g(z) is approximated as
+    ∂g(z)/∂z = [1, -z₁/sqrt(z₁² + ... zₙ₋₁² + ε), ...,
+ -zₙ₋₁/sqrt(z₁²+...+zₙ₋₁²+ε)] where ε is a small positive number.
+ 3. z₀²-(z₁²+...+zₙ₋₁²) ≥ 0
+    z₀ ≥ 0
+    This constraint is differentiable everywhere, but z₀²-(z₁²+...+zₙ₋₁²) ≥ 0 is
+ non-convex. The default is to use the first formulation. For more information
+ and visualization, please refer to
  https://inst.eecs.berkeley.edu/~ee127a/book/login/l_socp_soc.html
  */
 class LorentzConeConstraint : public Constraint {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(LorentzConeConstraint)
 
+  /**
+   * We provide three possible Eval functions to represent the Lorentz cone
+   * constraint z₀ ≥ sqrt(z₁² + ... + zₙ₋₁²). For more explanation on the three
+   * formulations, refer to LorentzConeConstraint documentation.
+   */
+  enum class EvalType {
+    kConvex,  ///< The constraint is g(z) = z₀ - sqrt(z₁² + ... + zₙ₋₁²) ≥ 0
+    kConvexSmooth,  ///< Same as kConvex1, but with approximated gradient.
+    kNonconvex  ///< Nonconvex constraint z₀²-(z₁²+...+zₙ₋₁²) ≥ 0 and z₀ ≥ 0
+  };
+
   LorentzConeConstraint(const Eigen::Ref<const Eigen::MatrixXd>& A,
-                        const Eigen::Ref<const Eigen::VectorXd>& b)
-      : Constraint(
-            2, A.cols(), Eigen::Vector2d::Constant(0.0),
-            Eigen::Vector2d::Constant(std::numeric_limits<double>::infinity())),
-        A_(A),
-        b_(b) {
-    DRAKE_DEMAND(A_.rows() >= 2);
-    DRAKE_ASSERT(A_.rows() == b_.rows());
-  }
+                        const Eigen::Ref<const Eigen::VectorXd>& b,
+                        EvalType eval_type = EvalType::kConvex);
 
   ~LorentzConeConstraint() override {}
 
   /** Getter for A. */
-  const Eigen::MatrixXd& A() const { return A_; }
+  const Eigen::SparseMatrix<double>& A() const { return A_; }
+
+  /** Getter for dense version of A. */
+  const Eigen::MatrixXd& A_dense() const { return A_dense_; }
 
   /** Getter for b. */
   const Eigen::VectorXd& b() const { return b_; }
@@ -322,8 +332,12 @@ class LorentzConeConstraint : public Constraint {
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
 
-  const Eigen::MatrixXd A_;
+  const Eigen::SparseMatrix<double> A_;
+  // We need to store a dense matrix of A_, so that we can compute the gradient
+  // using AutoDiffXd, and return the gradient as a dense matrix.
+  const Eigen::MatrixXd A_dense_;
   const Eigen::VectorXd b_;
+  const EvalType eval_type_;
 };
 
 /**
@@ -353,14 +367,18 @@ class RotatedLorentzConeConstraint : public Constraint {
       : Constraint(
             3, A.cols(), Eigen::Vector3d::Constant(0.0),
             Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity())),
-        A_(A),
+        A_(A.sparseView()),
+        A_dense_(A),
         b_(b) {
     DRAKE_DEMAND(A_.rows() >= 3);
     DRAKE_ASSERT(A_.rows() == b_.rows());
   }
 
   /** Getter for A. */
-  const Eigen::MatrixXd& A() const { return A_; }
+  const Eigen::SparseMatrix<double>& A() const { return A_; }
+
+  /** Getter for dense version of A. */
+  const Eigen::MatrixXd& A_dense() const { return A_dense_; }
 
   /** Getter for b. */
   const Eigen::VectorXd& b() const { return b_; }
@@ -381,7 +399,10 @@ class RotatedLorentzConeConstraint : public Constraint {
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
 
-  const Eigen::MatrixXd A_;
+  const Eigen::SparseMatrix<double> A_;
+  // We need to store a dense matrix of A_, so that we can compute the gradient
+  // using AutoDiffXd, and return the gradient as a dense matrix.
+  const Eigen::MatrixXd A_dense_;
   const Eigen::VectorXd b_;
 };
 
@@ -435,10 +456,10 @@ class EvaluatorConstraint : public Constraint {
 };
 
 /**
+ * A constraint on the values of multivariate polynomials.
+ *
  *  lb[i] <= P[i](x, y...) <= ub[i], where each P[i] is a multivariate
  *  polynomial in x, y...
- *
- * A constraint on the values of multivariate polynomials.
  *
  * The Polynomial class uses a different variable naming scheme; thus the
  * caller must provide a list of Polynomial::VarType variables that correspond
@@ -477,7 +498,7 @@ class PolynomialConstraint : public EvaluatorConstraint<PolynomialEvaluator> {
 // IntegerConstraint, ...
 
 /**
- * Implements a constraint of the form @f lb <= Ax <= ub @f
+ * Implements a constraint of the form @f$ lb <= Ax <= ub @f$
  */
 class LinearConstraint : public Constraint {
  public:
@@ -488,7 +509,7 @@ class LinearConstraint : public Constraint {
                    const Eigen::MatrixBase<DerivedLB>& lb,
                    const Eigen::MatrixBase<DerivedUB>& ub)
       : Constraint(a.rows(), a.cols(), lb, ub), A_(a) {
-    DRAKE_ASSERT(a.rows() == lb.rows());
+    DRAKE_DEMAND(a.rows() == lb.rows());
   }
 
   ~LinearConstraint() override {}
@@ -545,6 +566,9 @@ class LinearConstraint : public Constraint {
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
 
+  std::ostream& DoDisplay(std::ostream&,
+                          const VectorX<symbolic::Variable>&) const override;
+
   Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> A_;
 
  private:
@@ -554,7 +578,7 @@ class LinearConstraint : public Constraint {
 };
 
 /**
- * Implements a constraint of the form @f Ax = b @f
+ * Implements a constraint of the form @f$ Ax = b @f$
  */
 class LinearEqualityConstraint : public LinearConstraint {
  public:
@@ -590,17 +614,20 @@ class LinearEqualityConstraint : public LinearConstraint {
    * instead.
    */
   template <typename DerivedA, typename DerivedL, typename DerivedU>
-  void UpdateCoefficients(const Eigen::MatrixBase<DerivedA>& new_A,
-                          const Eigen::MatrixBase<DerivedL>& new_lb,
-                          const Eigen::MatrixBase<DerivedU>& new_ub) {
+  void UpdateCoefficients(const Eigen::MatrixBase<DerivedA>&,
+                          const Eigen::MatrixBase<DerivedL>&,
+                          const Eigen::MatrixBase<DerivedU>&) {
     static_assert(
         !std::is_same<DerivedA, DerivedA>::value,
         "This method should not be called form `LinearEqualityConstraint`");
   }
+
+  std::ostream& DoDisplay(std::ostream&,
+                          const VectorX<symbolic::Variable>&) const override;
 };
 
 /**
- * Implements a constraint of the form @f lb <= x <= ub @f
+ * Implements a constraint of the form @f$ lb <= x <= ub @f$
  *
  * Note: the base Constraint class (as implemented at the moment) could
  * play this role.  But this class enforces that it is ONLY a bounding
@@ -633,6 +660,9 @@ class BoundingBoxConstraint : public LinearConstraint {
 
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
+
+  std::ostream& DoDisplay(std::ostream&,
+                          const VectorX<symbolic::Variable>&) const override;
 };
 
 /**
@@ -738,10 +768,10 @@ class PositiveSemidefiniteConstraint : public Constraint {
    * /////////////////////////////////////////////////////////////
    *
    * // Now solve the program.
-   * prog.Solve();
+   * auto result = Solve(prog);
    *
    * // Retrieve the solution of matrix S.
-   * auto S_value = GetSolution(S);
+   * auto S_value = GetSolution(S, result);
    *
    * // Compute the eigen values of the solution, to see if they are
    * // all non-negative.
@@ -901,6 +931,65 @@ class ExpressionConstraint : public Constraint {
 
   // Only for caching, does not carrying hidden state.
   mutable symbolic::Environment environment_;
+};
+
+/**
+ * An exponential cone constraint is a special type of convex cone constraint.
+ * We constrain A * x + b to be in the exponential cone, where A has 3 rows, and
+ * b is in ℝ³, x is the decision variable.
+ * A vector z in ℝ³ is in the exponential cone, if
+ * {z₀, z₁, z₂ | z₀ ≥ z₁ * exp(z₂ / z₁), z₁ > 0}.
+ * Equivalently, this constraint can be refomulated with logarithm function
+ * {z₀, z₁, z₂ | z₂ ≤ z₁ * log(z₀ / z₁), z₀ > 0, z₁ > 0}
+ *
+ * The Eval function implemented in this class is
+ * z₀ - z₁ * exp(z₂ / z₁) >= 0,
+ * z₁ > 0
+ * where z = A * x + b.
+ * It is not recommended to solve an exponential cone constraint through
+ * generic nonlinear optimization. It is possible that the nonlinear solver
+ * can accidentally set z₁ = 0, where the constraint is not well defined.
+ * Instead, the user should consider to solve the program through conic solvers
+ * that can exploit exponential cone, such as Mosek and SCS.
+ */
+class ExponentialConeConstraint : public Constraint {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ExponentialConeConstraint)
+
+  /**
+   * Constructor for exponential cone.
+   * Constrains A * x + b to be in the exponential cone.
+   * @pre A has 3 rows.
+   */
+  ExponentialConeConstraint(
+      const Eigen::Ref<const Eigen::SparseMatrix<double>>& A,
+      const Eigen::Ref<const Eigen::Vector3d>& b);
+
+  ~ExponentialConeConstraint() override{};
+
+  /** Getter for matrix A. */
+  const Eigen::SparseMatrix<double>& A() const { return A_; }
+
+  /** Getter for vector b. */
+  const Eigen::Vector3d& b() const { return b_; }
+
+ protected:
+  template <typename DerivedX, typename ScalarY>
+  void DoEvalGeneric(const Eigen::MatrixBase<DerivedX>& x,
+                     VectorX<ScalarY>* y) const;
+
+  void DoEval(const Eigen::Ref<const Eigen::VectorXd>& x,
+              Eigen::VectorXd* y) const override;
+
+  void DoEval(const Eigen::Ref<const AutoDiffVecXd>& x,
+              AutoDiffVecXd* y) const override;
+
+  void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
+              VectorX<symbolic::Expression>* y) const override;
+
+ private:
+  Eigen::SparseMatrix<double> A_;
+  Eigen::Vector3d b_;
 };
 
 }  // namespace solvers

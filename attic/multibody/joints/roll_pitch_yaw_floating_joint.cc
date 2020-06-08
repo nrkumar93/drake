@@ -50,15 +50,9 @@ VectorXd RollPitchYawFloatingJoint::randomConfiguration(
   return q;
 }
 
-// TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-std::string RollPitchYawFloatingJoint::getPositionName(int index)
-    const {
-  return get_position_name(index);
-}
-
 std::unique_ptr<DrakeJoint> RollPitchYawFloatingJoint::DoClone() const {
   auto joint = std::make_unique<RollPitchYawFloatingJoint>(
       get_name(),
       get_transform_to_parent_body());
-  return std::move(joint);
+  return joint;
 }

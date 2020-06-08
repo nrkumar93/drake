@@ -64,29 +64,6 @@ TEST_F(RigidBodyTreeCloneTest, CloneAtlas) {
   EXPECT_TRUE(CompareToClone(*tree_));
 }
 
-// Tests RigidBodyTree::Clone() using a Prius with LIDAR sensors.
-TEST_F(RigidBodyTreeCloneTest, ClonePrius) {
-  const std::string filename = FindResourceOrThrow(
-      "drake/automotive/models/prius/prius_with_lidar.sdf");
-  AddModelInstancesFromSdfFileToWorld(filename, multibody::joints::kQuaternion,
-      tree_.get());
-  EXPECT_TRUE(CompareToClone(*tree_));
-}
-
-// Tests RigidBodyTree::Clone() using Valkyrie.
-TEST_F(RigidBodyTreeCloneTest, CloneValkyrie) {
-  const std::string filename = FindResourceOrThrow(
-      "drake/examples/valkyrie/urdf/urdf/"
-      "valkyrie_A_sim_drake_one_neck_dof_wide_ankle_rom.urdf");
-  // While it may seem odd to use a fixed floating joint with Valkyrie, it is
-  // used in this case just to confirm that RigidBodyTree::Clone() works with
-  // this type of joint. Previous unit tests already cover the quaternion
-  // floating joint type.
-  AddModelInstanceFromUrdfFileToWorld(filename, multibody::joints::kFixed,
-      tree_.get());
-  EXPECT_TRUE(CompareToClone(*tree_));
-}
-
 class TestRbtCloneDiagram : public Diagram<double> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(TestRbtCloneDiagram);
@@ -185,11 +162,9 @@ TEST_F(RigidBodyTreeCloneTest, PendulumDynamicsTest) {
   // sufficient to test the original RigidBodyTree against its clone.
   const double integrator_step_size = swing_period / 100;
   original_simulator.reset_integrator<ExplicitEulerIntegrator<double>>(
-      original_diagram, integrator_step_size,
-      &original_simulator.get_mutable_context());
+      integrator_step_size);
   cloned_simulator.reset_integrator<ExplicitEulerIntegrator<double>>(
-      cloned_diagram, integrator_step_size,
-      &cloned_simulator.get_mutable_context());
+      integrator_step_size);
 
   original_simulator.Initialize();
   cloned_simulator.Initialize();
@@ -197,8 +172,8 @@ TEST_F(RigidBodyTreeCloneTest, PendulumDynamicsTest) {
   const SignalLogger<double>& original_logger = original_diagram.get_logger();
   const SignalLogger<double>& cloned_logger = cloned_diagram.get_logger();
 
-  original_simulator.StepTo(swing_period);
-  cloned_simulator.StepTo(swing_period);
+  original_simulator.AdvanceTo(swing_period);
+  cloned_simulator.AdvanceTo(swing_period);
   ASSERT_TRUE(CompareMatrices(original_logger.data(), cloned_logger.data()));
 }
 

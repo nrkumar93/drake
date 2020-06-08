@@ -4,6 +4,9 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <IpIpoptApplication.hpp>
@@ -37,6 +40,97 @@ int GetConstraintBounds(const Constraint& c, Number* lb, Number* ub) {
   }
 
   return c.num_constraints();
+}
+
+template <typename C>
+void SetConstraintDualVariableIndex(
+    const Binding<C>& binding, int constraint_index,
+    std::unordered_map<Binding<Constraint>, int>* constraint_dual_start_index) {
+  const Binding<Constraint> binding_cast =
+      internal::BindingDynamicCast<Constraint>(binding);
+  constraint_dual_start_index->emplace(binding_cast, constraint_index);
+}
+
+void SetBoundingBoxConstraintDualSolution(
+    const MathematicalProgram& prog, const Number* const z_L,
+    const Number* const z_U,
+    const std::unordered_map<Binding<BoundingBoxConstraint>,
+                             std::pair<std::vector<int>, std::vector<int>>>&
+        bb_con_dual_variable_indices,
+    MathematicalProgramResult* result) {
+  for (const auto& binding : prog.bounding_box_constraints()) {
+    std::vector<int> lower_dual_indices, upper_dual_indices;
+    std::tie(lower_dual_indices, upper_dual_indices) =
+        bb_con_dual_variable_indices.at(binding);
+    Eigen::VectorXd dual_solution =
+        Eigen::VectorXd::Zero(binding.GetNumElements());
+    for (int i = 0; i < static_cast<int>(binding.GetNumElements()); ++i) {
+      if (lower_dual_indices[i] != -1) {
+        // Ipopt always returns a non-negative z_L. The definition of shadow
+        // price means the dual variable for the lower bound is also
+        // non-negative.
+        dual_solution(i) = z_L[lower_dual_indices[i]];
+      }
+      // Ipopt always returns a non-negative z_U. But the definition of shadow
+      // price means that the dual variable for the upper bound is negative, so
+      // we need to negate z_U to get the dual solution.
+      if (upper_dual_indices[i] != -1 &&
+          z_U[upper_dual_indices[i]] >= dual_solution(i)) {
+        // At most one side of the bounds can be active, so theoretically at
+        // most one of z_U[upper_dual_indices[i]] or z_L[lower_dual_indices[i]]
+        // can be non-zero. In practice, due to small numerical errors, both
+        // z_U[upper_dual_indices[i]] and z_L[lower_dual_indices[i]] can be
+        // non-zero, with one of them being very small number. We choose the
+        // side with larger dual variable value as the active side (by comparing
+        // z_U[upper_dual_indices[i] >= dual_solution(i)).
+        dual_solution(i) = -z_U[upper_dual_indices[i]];
+      }
+    }
+    result->set_dual_solution(binding, dual_solution);
+  }
+}
+
+template <typename C>
+void SetConstraintDualSolution(
+    const Binding<C>& binding, const Eigen::VectorXd& lambda,
+    const std::unordered_map<Binding<Constraint>, int>&
+        constraint_dual_start_index,
+    MathematicalProgramResult* result) {
+  const Binding<Constraint> binding_cast =
+      internal::BindingDynamicCast<Constraint>(binding);
+  // Ipopt defines multiplier as the negative of the shadow price, hence we have
+  // to negate lambda.
+  result->set_dual_solution(
+      binding_cast,
+      -lambda.segment(constraint_dual_start_index.at(binding_cast),
+                      binding.evaluator()->num_constraints()));
+}
+
+void SetAllConstraintDualSolution(
+    const MathematicalProgram& prog, const Eigen::VectorXd& lambda,
+    const std::unordered_map<Binding<Constraint>, int>&
+        constraint_dual_start_index,
+    MathematicalProgramResult* result) {
+  for (const auto& binding : prog.generic_constraints()) {
+    SetConstraintDualSolution(binding, lambda, constraint_dual_start_index,
+                              result);
+  }
+  for (const auto& binding : prog.lorentz_cone_constraints()) {
+    SetConstraintDualSolution(binding, lambda, constraint_dual_start_index,
+                              result);
+  }
+  for (const auto& binding : prog.rotated_lorentz_cone_constraints()) {
+    SetConstraintDualSolution(binding, lambda, constraint_dual_start_index,
+                              result);
+  }
+  for (const auto& binding : prog.linear_constraints()) {
+    SetConstraintDualSolution(binding, lambda, constraint_dual_start_index,
+                              result);
+  }
+  for (const auto& binding : prog.linear_equality_constraints()) {
+    SetConstraintDualSolution(binding, lambda, constraint_dual_start_index,
+                              result);
+  }
 }
 
 /// @param[out] num_grad number of gradients
@@ -121,9 +215,16 @@ size_t EvaluateConstraint(const MathematicalProgram& prog,
   // gradient array.
   size_t grad_idx = 0;
 
-  for (int i = 0; i < c.num_constraints(); i++) {
-    for (int j = 0; j < variables.rows(); j++) {
-      grad[grad_idx++] = ty(i).derivatives()(j);
+  DRAKE_ASSERT(ty.rows() == c.num_constraints());
+  for (int i = 0; i < ty.rows(); i++) {
+    if (ty(i).derivatives().size() > 0) {
+      for (int j = 0; j < variables.rows(); j++) {
+        grad[grad_idx++] = ty(i).derivatives()(j);
+      }
+    } else {
+      for (int j = 0; j < variables.rows(); j++) {
+        grad[grad_idx++] = 0;
+      }
     }
   }
 
@@ -147,13 +248,31 @@ struct ResultCache {
     return !std::memcmp(x.data(), x_in, x.size() * sizeof(Number));
   }
 
+  // Sugar to copy an IPOPT bare array into `x`.
+  void SetX(const Index n, const Number* x_arg) {
+    DRAKE_ASSERT(static_cast<Index>(x.size()) == n);
+    if (n == 0) { return; }
+    DRAKE_ASSERT(x_arg != nullptr);
+    std::memcpy(x.data(), x_arg, n * sizeof(Number));
+  }
+
+  // Sugar to copy one of our member fields into an IPOPT bare array.
+  static void Extract(
+      const std::vector<Number>& cache_data,
+      const Index dest_size, Number* dest) {
+    DRAKE_ASSERT(static_cast<Index>(cache_data.size()) == dest_size);
+    if (dest_size == 0) { return; }
+    DRAKE_ASSERT(dest != nullptr);
+    std::memcpy(dest, cache_data.data(), dest_size * sizeof(Number));
+  }
+
   std::vector<Number> x;
   std::vector<Number> result;
   std::vector<Number> grad;
 };
 
 // The C++ interface for IPOPT is described here:
-// http://www.coin-or.org/Ipopt/documentation/node23.html
+// https://coin-or.github.io/Ipopt/INTERFACES.html#INTERFACE_CPP
 //
 // IPOPT provides a pure(-ish) virtual base class which you have to
 // implement a concrete version of as the solver interface.
@@ -161,8 +280,10 @@ struct ResultCache {
 // the duration of the Solve() call.
 class IpoptSolver_NLP : public Ipopt::TNLP {
  public:
-  explicit IpoptSolver_NLP(MathematicalProgram* problem)
-      : problem_(problem), result_(SolutionResult::kUnknownError) {}
+  explicit IpoptSolver_NLP(const MathematicalProgram& problem,
+                           const Eigen::VectorXd& x_init,
+                           MathematicalProgramResult* result)
+      : problem_(&problem), x_init_{x_init}, result_(result) {}
 
   virtual ~IpoptSolver_NLP() {}
 
@@ -231,25 +352,55 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
         x_u[idx] = std::min(upper_bound(k), x_u[idx]);
       }
     }
+    // Set the indices of the dual variables corresponding to each bounding box
+    // constraint. Ipopt stores the dual variables in z_L and z_U.
+    for (const auto& binding : problem_->bounding_box_constraints()) {
+      std::vector<int> lower_dual_indices(
+          binding.evaluator()->num_constraints(), -1);
+      std::vector<int> upper_dual_indices(
+          binding.evaluator()->num_constraints(), -1);
+      for (int k = 0; k < static_cast<int>(binding.GetNumElements()); ++k) {
+        const int idx =
+            problem_->FindDecisionVariableIndex(binding.variables()(k));
+        if (x_l[idx] == binding.evaluator()->lower_bound()(k)) {
+          lower_dual_indices[k] = idx;
+        }
+        if (x_u[idx] == binding.evaluator()->upper_bound()(k)) {
+          upper_dual_indices[k] = idx;
+        }
+      }
+      bb_con_dual_variable_indices_.emplace(
+          binding, std::make_pair(lower_dual_indices, upper_dual_indices));
+    }
 
     size_t constraint_idx = 0;  // offset into g_l and g_u output arrays
     for (const auto& c : problem_->generic_constraints()) {
+      SetConstraintDualVariableIndex(c, constraint_idx,
+                                     &constraint_dual_start_index_);
       constraint_idx += GetConstraintBounds(
           *(c.evaluator()), g_l + constraint_idx, g_u + constraint_idx);
     }
     for (const auto& c : problem_->lorentz_cone_constraints()) {
+      SetConstraintDualVariableIndex(c, constraint_idx,
+                                     &constraint_dual_start_index_);
       constraint_idx += GetConstraintBounds(
           *(c.evaluator()), g_l + constraint_idx, g_u + constraint_idx);
     }
     for (const auto& c : problem_->rotated_lorentz_cone_constraints()) {
+      SetConstraintDualVariableIndex(c, constraint_idx,
+                                     &constraint_dual_start_index_);
       constraint_idx += GetConstraintBounds(
           *(c.evaluator()), g_l + constraint_idx, g_u + constraint_idx);
     }
     for (const auto& c : problem_->linear_constraints()) {
+      SetConstraintDualVariableIndex(c, constraint_idx,
+                                     &constraint_dual_start_index_);
       constraint_idx += GetConstraintBounds(
           *(c.evaluator()), g_l + constraint_idx, g_u + constraint_idx);
     }
     for (const auto& c : problem_->linear_equality_constraints()) {
+      SetConstraintDualVariableIndex(c, constraint_idx,
+                                     &constraint_dual_start_index_);
       constraint_idx += GetConstraintBounds(
           *(c.evaluator()), g_l + constraint_idx, g_u + constraint_idx);
     }
@@ -262,11 +413,10 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
     unused(z_L, z_U, m, lambda);
 
     if (init_x) {
-      const Eigen::VectorXd& initial_guess = problem_->initial_guess();
-      DRAKE_ASSERT(initial_guess.size() == n);
+      DRAKE_ASSERT(x_init_.size() == n);
       for (Index i = 0; i < n; i++) {
-        if (!std::isnan(initial_guess[i])) {
-          x[i] = initial_guess[i];
+        if (!std::isnan(x_init_[i])) {
+          x[i] = x_init_[i];
         } else {
           x[i] = 0.0;
         }
@@ -298,8 +448,7 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
       EvaluateCosts(n, x);
     }
 
-    DRAKE_ASSERT(static_cast<Index>(cost_cache_->grad.size()) == n);
-    std::memcpy(grad_f, cost_cache_->grad.data(), n * sizeof(Number));
+    ResultCache::Extract(cost_cache_->grad, n, grad_f);
     return true;
   }
 
@@ -309,8 +458,7 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
       EvaluateConstraints(n, x);
     }
 
-    DRAKE_ASSERT(static_cast<Index>(constraint_cache_->result.size()) == m);
-    std::memcpy(g, constraint_cache_->result.data(), m * sizeof(Number));
+    ResultCache::Extract(constraint_cache_->result, m, g);
     return true;
   }
 
@@ -372,10 +520,7 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
       EvaluateConstraints(n, x);
     }
 
-    DRAKE_ASSERT(static_cast<Index>(constraint_cache_->grad.size()) ==
-                 nele_jac);
-    std::memcpy(values, constraint_cache_->grad.data(),
-                nele_jac * sizeof(Number));
+    ResultCache::Extract(constraint_cache_->grad, nele_jac, values);
     return true;
   }
 
@@ -384,26 +529,44 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
                                  const Number* g, const Number* lambda,
                                  Number obj_value, const IpoptData* ip_data,
                                  IpoptCalculatedQuantities* ip_cq) {
-    unused(z_L, z_U, m, g, lambda, ip_data, ip_cq);
+    unused(ip_data, ip_cq);
 
-    SolverResult solver_result(IpoptSolver::id());
+    IpoptSolverDetails& solver_details =
+        result_->SetSolverDetailsType<IpoptSolverDetails>();
+    solver_details.status = status;
+    solver_details.z_L = Eigen::Map<const Eigen::VectorXd>(z_L, n);
+    solver_details.z_U = Eigen::Map<const Eigen::VectorXd>(z_U, n);
+    solver_details.g = Eigen::Map<const Eigen::VectorXd>(g, m);
+    solver_details.lambda = Eigen::Map<const Eigen::VectorXd>(lambda, m);
 
+    SetBoundingBoxConstraintDualSolution(
+        *problem_, z_L, z_U, bb_con_dual_variable_indices_, result_);
+    SetAllConstraintDualSolution(*problem_, solver_details.lambda,
+                                 constraint_dual_start_index_, result_);
+
+    result_->set_solution_result(SolutionResult::kUnknownError);
     switch (status) {
       case Ipopt::SUCCESS: {
-        result_ = SolutionResult::kSolutionFound;
+        result_->set_solution_result(SolutionResult::kSolutionFound);
+        break;
+      }
+      case Ipopt::STOP_AT_ACCEPTABLE_POINT: {
+        // This case happens because the user requested more lenient solution
+        // acceptability criteria so it is counted as solved.
+        result_->set_solution_result(SolutionResult::kSolutionFound);
         break;
       }
       case Ipopt::LOCAL_INFEASIBILITY: {
-        result_ = SolutionResult::kInfeasibleConstraints;
+        result_->set_solution_result(SolutionResult::kInfeasibleConstraints);
         break;
       }
       case Ipopt::DIVERGING_ITERATES: {
-        result_ = SolutionResult::kUnbounded;
-        obj_value = MathematicalProgram::kUnboundedCost;
+        result_->set_solution_result(SolutionResult::kUnbounded);
+        result_->set_optimal_cost(MathematicalProgram::kUnboundedCost);
         break;
       }
       case Ipopt::MAXITER_EXCEEDED: {
-        result_ = SolutionResult::kIterationLimit;
+        result_->set_solution_result(SolutionResult::kIterationLimit);
         drake::log()->warn(
             "IPOPT terminated after exceeding the maximum iteration limit.  "
             "Hint: Remember that IPOPT is an interior-point method "
@@ -411,7 +574,7 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
         break;
       }
       default: {
-        result_ = SolutionResult::kUnknownError;
+        result_->set_solution_result(SolutionResult::kUnknownError);
         break;
       }
     }
@@ -420,12 +583,11 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
     for (Index i = 0; i < n; i++) {
       solution(i) = x[i];
     }
-    solver_result.set_decision_variable_values(solution.cast<double>());
-    solver_result.set_optimal_cost(obj_value);
-    problem_->SetSolverResult(solver_result);
+    result_->set_x_val(solution.cast<double>());
+    if (result_->get_solution_result() != SolutionResult::kUnbounded) {
+      result_->set_optimal_cost(obj_value);
+    }
   }
-
-  SolutionResult result() const { return result_; }
 
  private:
   void EvaluateCosts(Index n, const Number* x) {
@@ -436,7 +598,7 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
     AutoDiffVecXd ty(1);
     Eigen::VectorXd this_x;
 
-    memcpy(cost_cache_->x.data(), x, n * sizeof(Number));
+    cost_cache_->SetX(n, x);
     cost_cache_->result[0] = 0;
     cost_cache_->grad.assign(n, 0);
 
@@ -452,18 +614,22 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
 
       cost_cache_->result[0] += ty(0).value();
 
-      for (int j = 0; j < num_v_variables; ++j) {
-        const size_t vj_index =
-            problem_->FindDecisionVariableIndex(binding.variables()(j));
-        cost_cache_->grad[vj_index] += ty(0).derivatives()(j);
+      if (ty(0).derivatives().size() > 0) {
+        for (int j = 0; j < num_v_variables; ++j) {
+          const size_t vj_index =
+              problem_->FindDecisionVariableIndex(binding.variables()(j));
+          cost_cache_->grad[vj_index] += ty(0).derivatives()(j);
+        }
       }
+      // We do not need to add code for ty(0).derivatives().size() == 0, since
+      // cost_cache_->grad would be unchanged if the derivative has zero size.
     }
   }
 
   void EvaluateConstraints(Index n, const Number* x) {
     const Eigen::VectorXd xvec = MakeEigenVector(n, x);
 
-    memcpy(constraint_cache_->x.data(), x, n * sizeof(Number));
+    constraint_cache_->SetX(n, x);
     Number* result = constraint_cache_->result.data();
     Number* grad = constraint_cache_->grad.data();
 
@@ -494,55 +660,170 @@ class IpoptSolver_NLP : public Ipopt::TNLP {
     }
   }
 
-  MathematicalProgram* const problem_;
+  const MathematicalProgram* const problem_;
   std::unique_ptr<ResultCache> cost_cache_;
   std::unique_ptr<ResultCache> constraint_cache_;
-  SolutionResult result_;
+  Eigen::VectorXd x_init_;
+  MathematicalProgramResult* const result_;
+  // bb_con_dual_variable_indices_[constraint] maps the bounding box constraint
+  // to the indices of its dual variables (one for lower bound and one for upper
+  // bound). If this constraint doesn't have a dual variable (because the bound
+  // is looser than some other bounding box constraint, hence this constraint
+  // can never be active), then the index is set to -1.
+  std::unordered_map<Binding<BoundingBoxConstraint>,
+                     std::pair<std::vector<int>, std::vector<int>>>
+      bb_con_dual_variable_indices_;
+  // constraint_dual_start_index_[constraint] stores the starting index of the
+  // corresponding dual variables.
+  std::unordered_map<Binding<Constraint>, int> constraint_dual_start_index_;
 };
+
+template <typename T>
+bool HasOptionWithKey(const SolverOptions& solver_options,
+                      const std::string& key) {
+  return solver_options.GetOptions<T>(IpoptSolver::id()).count(key) > 0;
+}
+
+/**
+ * If the key has been set in ipopt_options, then this function is an no-op.
+ * Otherwise set this key with default_val.
+ */
+template <typename T>
+void SetIpoptOptionsHelper(const std::string& key, const T& default_val,
+                           SolverOptions* ipopt_options) {
+  if (!HasOptionWithKey<T>(*ipopt_options, key)) {
+    ipopt_options->SetOption(IpoptSolver::id(), key, default_val);
+  }
+}
+
+void SetIpoptOptions(const MathematicalProgram& prog,
+                     const std::optional<SolverOptions>& user_solver_options,
+                     Ipopt::IpoptApplication* app) {
+  SolverOptions merged_solver_options = user_solver_options.has_value()
+                                            ? user_solver_options.value()
+                                            : SolverOptions();
+  merged_solver_options.Merge(prog.solver_options());
+
+  // The default tolerance.
+  const double tol = 1.05e-10;  // Note: SNOPT is only 1e-6, but in #3712 we
+  // diagnosed that the CompareMatrices tolerance needed to be the sqrt of the
+  // constr_viol_tol
+  SetIpoptOptionsHelper<double>("tol", tol, &merged_solver_options);
+  SetIpoptOptionsHelper<double>("constr_viol_tol", tol, &merged_solver_options);
+  SetIpoptOptionsHelper<double>("acceptable_tol", tol, &merged_solver_options);
+  SetIpoptOptionsHelper<double>("acceptable_constr_viol_tol", tol,
+                                &merged_solver_options);
+  SetIpoptOptionsHelper<std::string>("hessian_approximation", "limited-memory",
+                                     &merged_solver_options);
+  // Note: 0<= print_level <= 12, with higher numbers more verbose.  4 is very
+  // useful for debugging.
+  SetIpoptOptionsHelper<int>("print_level", 2, &merged_solver_options);
+
+  const auto& ipopt_options_double =
+      merged_solver_options.GetOptionsDouble(IpoptSolver::id());
+  const auto& ipopt_options_str =
+      merged_solver_options.GetOptionsStr(IpoptSolver::id());
+  const auto& ipopt_options_int =
+      merged_solver_options.GetOptionsInt(IpoptSolver::id());
+  for (const auto& it : ipopt_options_double) {
+    app->Options()->SetNumericValue(it.first, it.second);
+  }
+
+  for (const auto& it : ipopt_options_int) {
+    app->Options()->SetIntegerValue(it.first, it.second);
+  }
+
+  app->Options()->SetStringValue("sb", "yes");  // Turn off the banner.
+  for (const auto& it : ipopt_options_str) {
+    app->Options()->SetStringValue(it.first, it.second);
+  }
+}
 
 }  // namespace
 
-bool IpoptSolver::available() const { return true; }
+const char* IpoptSolverDetails::ConvertStatusToString() const {
+  switch (status) {
+    case Ipopt::SolverReturn::SUCCESS: {
+      return "Success";
+    }
+    case Ipopt::SolverReturn::MAXITER_EXCEEDED: {
+      return "Max iteration exceeded";
+    }
+    case Ipopt::SolverReturn::CPUTIME_EXCEEDED: {
+      return "CPU time exceeded";
+    }
+    case Ipopt::SolverReturn::STOP_AT_TINY_STEP: {
+      return "Stop at tiny step";
+    }
+    case Ipopt::SolverReturn::STOP_AT_ACCEPTABLE_POINT: {
+      return "Stop at acceptable point";
+    }
+    case Ipopt::SolverReturn::LOCAL_INFEASIBILITY: {
+      return "Local infeasibility";
+    }
+    case Ipopt::SolverReturn::USER_REQUESTED_STOP: {
+      return "User requested stop";
+    }
+    case Ipopt::SolverReturn::FEASIBLE_POINT_FOUND: {
+      return "Feasible point found";
+    }
+    case Ipopt::SolverReturn::DIVERGING_ITERATES: {
+      return "Divergent iterates";
+    }
+    case Ipopt::SolverReturn::RESTORATION_FAILURE: {
+      return "Restoration failure";
+    }
+    case Ipopt::SolverReturn::ERROR_IN_STEP_COMPUTATION: {
+      return "Error in step computation";
+    }
+    case Ipopt::SolverReturn::INVALID_NUMBER_DETECTED: {
+      return "Invalid number detected";
+    }
+    case Ipopt::SolverReturn::TOO_FEW_DEGREES_OF_FREEDOM: {
+      return "Too few degrees of freedom";
+    }
+    case Ipopt::SolverReturn::INVALID_OPTION: {
+      return "Invalid option";
+    }
+    case Ipopt::SolverReturn::OUT_OF_MEMORY: {
+      return "Out of memory";
+    }
+    case Ipopt::SolverReturn::INTERNAL_ERROR: {
+      return "Internal error";
+    }
+    case Ipopt::SolverReturn::UNASSIGNED: {
+      return "Unassigned";
+    }
+  }
+  return "Unknown enumerated SolverReturn value.";
+}
 
-SolutionResult IpoptSolver::Solve(MathematicalProgram& prog) const {
-  DRAKE_ASSERT(prog.linear_complementarity_constraints().empty());
+bool IpoptSolver::is_available() { return true; }
+
+void IpoptSolver::DoSolve(
+    const MathematicalProgram& prog,
+    const Eigen::VectorXd& initial_guess,
+    const SolverOptions& merged_options,
+    MathematicalProgramResult* result) const {
+  if (!prog.GetVariableScaling().empty()) {
+    static const logging::Warn log_once(
+      "IpoptSolver doesn't support the feature of variable scaling.");
+  }
 
   Ipopt::SmartPtr<Ipopt::IpoptApplication> app = IpoptApplicationFactory();
   app->RethrowNonIpoptException(true);
 
-  const double tol = 1.05e-10;  // Note: SNOPT is only 1e-6, but in #3712 we
-  // diagnosed that the CompareMatrices tolerance needed to be the sqrt of the
-  // constr_viol_tol
-  app->Options()->SetNumericValue("tol", tol);
-  app->Options()->SetNumericValue("constr_viol_tol", tol);
-  app->Options()->SetNumericValue("acceptable_tol", tol);
-  app->Options()->SetNumericValue("acceptable_constr_viol_tol", tol);
-  app->Options()->SetStringValue("hessian_approximation", "limited-memory");
-  // Note: 0<= print_level <= 12, with higher numbers more verbose.  4 is very
-  // useful for debugging.
-  app->Options()->SetIntegerValue("print_level", 2);
-
-  for (const auto& it : prog.GetSolverOptionsDouble(id())) {
-    app->Options()->SetNumericValue(it.first, it.second);
-  }
-
-  for (const auto& it : prog.GetSolverOptionsInt(id())) {
-    app->Options()->SetIntegerValue(it.first, it.second);
-  }
-
-  for (const auto& it : prog.GetSolverOptionsStr(id())) {
-    app->Options()->SetStringValue(it.first, it.second);
-  }
+  SetIpoptOptions(prog, merged_options, &(*app));
 
   Ipopt::ApplicationReturnStatus status = app->Initialize();
   if (status != Ipopt::Solve_Succeeded) {
-    return SolutionResult::kInvalidInput;
+    result->set_solution_result(SolutionResult::kInvalidInput);
+    return;
   }
 
-  Ipopt::SmartPtr<IpoptSolver_NLP> nlp = new IpoptSolver_NLP(&prog);
+  Ipopt::SmartPtr<IpoptSolver_NLP> nlp =
+      new IpoptSolver_NLP(prog, initial_guess, result);
   status = app->OptimizeTNLP(nlp);
-
-  return nlp->result();
 }
 
 }  // namespace solvers

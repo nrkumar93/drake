@@ -78,7 +78,7 @@ class BadClone : public Base {
  public:
   BadClone() {}
   BadClone(const BadClone& c) = delete;
-  BadClone* Clone() const { return new BadClone(); }
+  [[nodiscard]] BadClone* Clone() const { return new BadClone(); }
 };
 
 GTEST_TEST(IsCloneableTest, BadCloneReturnFail) {
@@ -116,7 +116,7 @@ class BadCloneCopy {
  public:
   BadCloneCopy() {}
   BadCloneCopy(const BadCloneCopy& f) = default;
-  BadCloneCopy* Clone() const { return new BadCloneCopy(); }
+  [[nodiscard]] BadCloneCopy* Clone() const { return new BadCloneCopy(); }
 };
 
 GTEST_TEST(IsCloneableTest, CopyableWithBadCloneFail) {

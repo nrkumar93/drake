@@ -150,7 +150,7 @@ struct CloneOnly : Base {
   }
  protected:
   CloneOnly(const CloneOnly& other) : Base(other.value) {}
-  virtual CloneOnly* DoClone() const {
+  [[nodiscard]] virtual CloneOnly* DoClone() const {
     return new CloneOnly(value, Origin::CLONE);
   }
 };
@@ -180,7 +180,7 @@ struct CloneOnlyChildWithClone : CloneOnly {
     return unique_ptr<CloneOnlyChildWithClone>(DoClone());
   }
  protected:
-  CloneOnlyChildWithClone* DoClone() const override {
+  [[nodiscard]] CloneOnlyChildWithClone* DoClone() const override {
     return new CloneOnlyChildWithClone(value, Origin::CLONE);
   }
 };
@@ -196,7 +196,7 @@ struct CloneOnlyChildWithCopyVClone : CloneOnly {
       : CloneOnly(v, org) {}
   CloneOnlyChildWithCopyVClone(const CloneOnlyChildWithCopyVClone&) = default;
  protected:
-  CloneOnlyChildWithCopyVClone* DoClone() const override {
+  [[nodiscard]] CloneOnlyChildWithCopyVClone* DoClone() const override {
     return new CloneOnlyChildWithCopyVClone(value, Origin::CLONE);
   }
 };

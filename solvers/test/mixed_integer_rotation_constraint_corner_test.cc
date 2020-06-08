@@ -10,6 +10,7 @@
 #include "drake/solvers/integer_optimization_util.h"
 #include "drake/solvers/mosek_solver.h"
 #include "drake/solvers/rotation_constraint.h"
+#include "drake/solvers/solve.h"
 
 using drake::symbolic::Expression;
 namespace drake {
@@ -162,9 +163,9 @@ TEST_P(TestBoxSphereCorner, TestOrthogonal) {
   prog_.AddLinearCost(R_.col(free_axis0).dot(box_pt) +
                       R_.col(free_axis1).dot(box_pt));
 
-  SolutionResult sol_result = prog_.Solve();
-  EXPECT_EQ(sol_result, SolutionResult::kSolutionFound);
-  const auto R_val = prog_.GetSolution(R_);
+  const auto result = Solve(prog_);
+  EXPECT_TRUE(result.is_success());
+  const auto R_val = result.GetSolution(R_);
   std::vector<Eigen::Matrix3d> Bpos_val(3);
   std::vector<Eigen::Matrix3d> Bneg_val(3);
   EXPECT_NEAR(R_val.col(free_axis0).dot(box_pt), 0, 1E-4);
@@ -176,7 +177,7 @@ TEST_P(TestBoxSphereCorner, TestOrthogonal) {
 
 // It takes too long time to run the test under debug mode.
 #ifdef DRAKE_ASSERT_IS_ARMED
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     RotationTest, TestBoxSphereCorner,
     ::testing::Combine(
         ::testing::ValuesIn<std::vector<int>>({0}),      // Orthant
@@ -185,7 +186,7 @@ INSTANTIATE_TEST_CASE_P(
         ::testing::ValuesIn<std::vector<RotationMatrixIntervalBinning>>(
             {RotationMatrixIntervalBinning::kPosNegLinear})));
 #else
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     RotationTest, TestBoxSphereCorner,
     ::testing::Combine(
         ::testing::ValuesIn<std::vector<int>>({0, 1, 2, 3, 4, 5, 6,

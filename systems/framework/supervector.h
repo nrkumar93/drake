@@ -8,6 +8,7 @@
 
 #include <Eigen/Dense>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/systems/framework/vector_base.h"
 
@@ -18,7 +19,7 @@ namespace systems {
 /// VectorBase by concatenating multiple VectorBases, which it
 /// does not own.
 ///
-/// @tparam T A mathematical type compatible with Eigen's Scalar.
+/// @tparam_default_scalar
 template <typename T>
 class Supervector : public VectorBase<T> {
  public:
@@ -40,14 +41,15 @@ class Supervector : public VectorBase<T> {
     return lookup_table_.empty() ? 0 : lookup_table_.back();
   }
 
-  const T& GetAtIndex(int index) const override {
+ protected:
+  const T& DoGetAtIndex(int index) const override {
     const auto target = GetSubvectorAndOffset(index);
-    return target.first->GetAtIndex(target.second);
+    return (*target.first)[target.second];
   }
 
-  T& GetAtIndex(int index) override {
+  T& DoGetAtIndex(int index) override {
     const auto target = GetSubvectorAndOffset(index);
-    return target.first->GetAtIndex(target.second);
+    return (*target.first)[target.second];
   }
 
  private:
@@ -97,3 +99,6 @@ class Supervector : public VectorBase<T> {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::Supervector)

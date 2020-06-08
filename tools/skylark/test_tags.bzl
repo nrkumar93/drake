@@ -1,10 +1,10 @@
 # -*- mode: python -*-
 
 # These macros are intended to be used when declaring tests that either may-use
-# or must-use either Gurobi or MOSEK commercial solvers. These labels both
-# account for any license-related needs and provide a marker so that
-# //tools/bazel.rc can selectively enable tests based on the developer's chosen
-# configuration.
+# or must-use dependencies that have constraints (commercial licenses, or
+# peculiar behavior). For commercial dependnecies, these labels both account
+# for any license-related needs and provide a marker so that //tools/bazel.rc
+# can selectively enable tests based on the developer's chosen configuration.
 
 def gurobi_test_tags(gurobi_required = True):
     """Returns the test tags necessary for properly running Gurobi tests.
@@ -43,3 +43,21 @@ def mosek_test_tags(mosek_required = True):
         return nominal_tags + ["mosek"]
     else:
         return nominal_tags
+
+def vtk_test_tags():
+    """Returns test tags necessary for properly running VTK rendering tests
+    locally.
+    """
+    return [
+        # Defects related to platform-specific rendering-related libraries
+        # when run under DRD or Helgrind.
+        "no_drd",
+        "no_helgrind",
+        # Disable under LeakSanitizer and Valgrind Memcheck due to
+        # driver-related leaks. For more information, see #7520.
+        "no_lsan",
+        "no_memcheck",
+        # Mitigates driver-related issues when running under `bazel test`. For
+        # more information, see #7004.
+        "no-sandbox",
+    ]

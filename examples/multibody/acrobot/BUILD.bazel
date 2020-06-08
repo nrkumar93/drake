@@ -2,7 +2,7 @@
 # This file contains rules for Bazel; see drake/doc/bazel.rst.
 
 load(
-    "//tools:drake.bzl",
+    "@drake//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
@@ -18,7 +18,7 @@ drake_cc_binary(
         "--target_realtime_rate=0.0",
     ],
     deps = [
-        "//common:text_logging_gflags",
+        "//common:add_text_logging_gflags",
         "//geometry:geometry_visualization",
         "//multibody/benchmarks/acrobot:make_acrobot_plant",
         "//systems/analysis:implicit_euler_integrator",
@@ -41,11 +41,11 @@ drake_cc_binary(
         "--target_realtime_rate=0.0",
     ],
     deps = [
+        "//common:add_text_logging_gflags",
         "//common:find_resource",
-        "//common:text_logging_gflags",
         "//geometry:geometry_visualization",
         "//multibody/benchmarks/acrobot:make_acrobot_plant",
-        "//multibody/multibody_tree/parsing:multibody_plant_sdf_parser",
+        "//multibody/parsing",
         "//systems/analysis:simulator",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/framework:diagram",

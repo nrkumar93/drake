@@ -3,15 +3,11 @@
 
 #include <gflags/gflags.h>
 
-#include "drake/common/find_resource.h"
-#include "drake/common/proto/call_matlab.h"
+#include "drake/common/proto/call_python.h"
+#include "drake/examples/acrobot/acrobot_geometry.h"
 #include "drake/examples/acrobot/acrobot_plant.h"
 #include "drake/examples/acrobot/gen/acrobot_state.h"
-#include "drake/lcm/drake_lcm.h"
-#include "drake/multibody/joints/floating_base_types.h"
-#include "drake/multibody/parsers/urdf_parser.h"
-#include "drake/multibody/rigid_body_plant/drake_visualizer.h"
-#include "drake/multibody/rigid_body_tree.h"
+#include "drake/geometry/geometry_visualization.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/estimators/kalman_filter.h"
 #include "drake/systems/framework/diagram.h"
@@ -30,13 +26,13 @@ namespace {
 // fixed point and a state estimator in the loop. Run drake-visualizer to
 // see the animated result.
 
+DEFINE_double(simulation_sec, 5.0,
+              "Number of seconds to simulate.");
 DEFINE_double(realtime_factor, 1.0,
               "Playback speed.  See documentation for "
               "Simulator::set_target_realtime_rate() for details.");
 
-int do_main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-
+int do_main() {
   // Make the robot.
   systems::DiagramBuilder<double> builder;
   auto acrobot_w_encoder = builder.AddSystem<AcrobotWEncoder<double>>(true);
@@ -46,15 +42,10 @@ int do_main(int argc, char* argv[]) {
   auto acrobot = acrobot_w_encoder->acrobot_plant();
 
   // Attach a DrakeVisualizer so we can animate the robot.
-  lcm::DrakeLcm lcm;
-  auto tree = std::make_unique<RigidBodyTree<double>>();
-  parsers::urdf::AddModelInstanceFromUrdfFileToWorld(
-      FindResourceOrThrow("drake/examples/acrobot/Acrobot.urdf"),
-      multibody::joints::kFixed, tree.get());
-  auto publisher = builder.AddSystem<systems::DrakeVisualizer>(*tree, &lcm);
-  publisher->set_name("publisher");
-  builder.Connect(acrobot_w_encoder->get_output_port(1),
-                  publisher->get_input_port(0));
+  auto scene_graph = builder.AddSystem<geometry::SceneGraph>();
+  AcrobotGeometry::AddToBuilder(
+      &builder, acrobot_w_encoder->get_output_port(1), scene_graph);
+  ConnectDrakeVisualizer(&builder, *scene_graph);
 
   // Make a Kalman filter observer.
   auto observer_acrobot = std::make_unique<AcrobotWEncoder<double>>();
@@ -66,7 +57,8 @@ int do_main(int argc, char* argv[]) {
     x0.set_theta2(0.0);
     x0.set_theta1dot(0.0);
     x0.set_theta2dot(0.0);
-    observer_context->FixInputPort(0, Vector1d::Constant(0.0));
+    observer_acrobot->GetInputPort("elbow_torque")
+        .FixValue(observer_context.get(), 0.0);
   }
   // Make a linearization here for the exercise below.  Need to do it before I
   // std::move the pointers.
@@ -133,27 +125,33 @@ int do_main(int argc, char* argv[]) {
 
   // Simulate.
   simulator.set_target_realtime_rate(FLAGS_realtime_factor);
-  simulator.get_mutable_integrator()->set_maximum_step_size(0.01);
-  simulator.get_mutable_integrator()->set_fixed_step_mode(true);
+  simulator.get_mutable_integrator().set_maximum_step_size(0.01);
+  simulator.get_mutable_integrator().set_fixed_step_mode(true);
   simulator.Initialize();
-  simulator.StepTo(5);
+  simulator.AdvanceTo(FLAGS_simulation_sec);
 
-  // Plot the results (launch call_matlab_client to see the plots).
-  using common::CallMatlab;
-  CallMatlab("figure", 1);
-  CallMatlab("plot", x_logger->sample_times(),
-             (x_logger->data().row(0).array() - M_PI).matrix(),
-             x_logger->sample_times(), x_logger->data().row(1));
-  CallMatlab("legend", "theta1 - PI", "theta2");
-  CallMatlab("axis", "tight");
+  // Plot the results (launch call_python_client to see the plots).
+  using common::CallPython;
+  using common::ToPythonTuple;
+  CallPython("figure", 1);
+  CallPython("clf");
+  CallPython("plot", x_logger->sample_times(),
+             (x_logger->data().row(0).array() - M_PI)
+                 .matrix().transpose());
+  CallPython("plot", x_logger->sample_times(),
+             x_logger->data().row(1).transpose());
+  CallPython("legend", ToPythonTuple("theta1 - PI", "theta2"));
+  CallPython("axis", "tight");
 
-  CallMatlab("figure", 2);
-  CallMatlab("plot", x_logger->sample_times(),
+  CallPython("figure", 2);
+  CallPython("clf");
+  CallPython("plot", x_logger->sample_times(),
              (x_logger->data().array() - xhat_logger->data().array())
                  .matrix().transpose());
-  CallMatlab("ylabel", "error");
-  CallMatlab("legend", "theta1", "theta2", "theta1dot", "theta2dot");
-  CallMatlab("axis", "tight");
+  CallPython("ylabel", "error");
+  CallPython("legend", ToPythonTuple("theta1", "theta2", "theta1dot",
+                                     "theta2dot"));
+  CallPython("axis", "tight");
 
   return 0;
 }
@@ -164,5 +162,6 @@ int do_main(int argc, char* argv[]) {
 }  // namespace drake
 
 int main(int argc, char* argv[]) {
-  return drake::examples::acrobot::do_main(argc, argv);
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  return drake::examples::acrobot::do_main();
 }

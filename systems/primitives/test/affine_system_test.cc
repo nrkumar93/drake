@@ -1,6 +1,8 @@
 #include "drake/systems/primitives/affine_system.h"
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/common/test_utilities/expect_throws_message.h"
+#include "drake/math/autodiff.h"
 #include "drake/systems/framework/test_utilities/scalar_conversion.h"
 #include "drake/systems/primitives/test/affine_linear_test.h"
 
@@ -19,10 +21,11 @@ class AffineSystemTest : public AffineLinearSystemTest {
   void Initialize() override {
     // Construct the system I/O objects.
     dut_ = make_unique<AffineSystem<double>>(A_, B_, f0_, C_, D_, y0_);
+    dut_->configure_default_state(x0_);
+    dut_->configure_random_state(Sigma_x0_);
     dut_->set_name("test_affine_system");
     context_ = dut_->CreateDefaultContext();
     input_vector_ = make_unique<BasicVector<double>>(2 /* size */);
-    system_output_ = dut_->AllocateOutput();
     state_ = &context_->get_mutable_continuous_state();
     derivatives_ = dut_->AllocateTimeDerivatives();
     updates_ = dut_->AllocateDiscreteVariables();
@@ -31,11 +34,13 @@ class AffineSystemTest : public AffineLinearSystemTest {
  protected:
   // The Device Under Test is an AffineSystem<double>.
   unique_ptr<AffineSystem<double>> dut_;
+  const Eigen::Vector2d x0_{1.2, 3.4};
+  const Eigen::Matrix2d Sigma_x0_{Eigen::Vector2d(.567, .89).asDiagonal()};
 };
 
 // Tests that the affine system is correctly setup.
 TEST_F(AffineSystemTest, Construction) {
-  EXPECT_EQ(1, context_->get_num_input_ports());
+  EXPECT_EQ(1, context_->num_input_ports());
   EXPECT_EQ("test_affine_system", dut_->get_name());
   EXPECT_EQ(dut_->A(), A_);
   EXPECT_EQ(dut_->B(), B_);
@@ -43,8 +48,8 @@ TEST_F(AffineSystemTest, Construction) {
   EXPECT_EQ(dut_->D(), D_);
   EXPECT_EQ(dut_->f0(), f0_);
   EXPECT_EQ(dut_->y0(), y0_);
-  EXPECT_EQ(dut_->get_num_output_ports(), 1);
-  EXPECT_EQ(dut_->get_num_input_ports(), 1);
+  EXPECT_EQ(dut_->num_output_ports(), 1);
+  EXPECT_EQ(dut_->num_input_ports(), 1);
 
   // Test TimeVaryingAffineSystem accessor methods.
   const double t = 3.5;
@@ -91,14 +96,41 @@ TEST_F(AffineSystemTest, Output) {
   Eigen::Vector2d x(0.8, -22.1);
   state_->SetFromVector(x);
 
-  dut_->CalcOutput(*context_, system_output_.get());
-
   Eigen::VectorXd expected_output(2);
-
   expected_output = C_ * x + D_ * u + y0_;
 
   EXPECT_TRUE(CompareMatrices(
-      expected_output, system_output_->get_vector_data(0)->get_value(), 1e-10));
+      expected_output, dut_->get_output_port().Eval(*context_), 1e-10));
+}
+
+TEST_F(AffineSystemTest, DefaultAndRandomState) {
+  EXPECT_TRUE(CompareMatrices(dut_->get_default_state(), x0_, 0.0));
+  EXPECT_TRUE(CompareMatrices(
+      context_->get_continuous_state_vector().CopyToVector(), x0_, 0.0));
+  EXPECT_TRUE(CompareMatrices(dut_->get_random_state_covariance(),
+      Sigma_x0_, 1e-16));
+
+  RandomGenerator generator;
+  const int kNumSamples = 100000;
+  Eigen::Matrix2Xd samples(2, kNumSamples);
+  for (int i = 0; i < kNumSamples; i++) {
+    dut_->SetRandomContext(context_.get(), &generator);
+    samples.col(i) =
+        context_->get_continuous_state_vector().CopyToVector() - x0_;
+  }
+  const Eigen::Matrix2d sample_cov =
+      (samples * samples.transpose()) / (kNumSamples - 1);
+  // We expect the sample covariance to be within sqrt(n/N) via Bai, Yin in
+  // https://case.edu/artsci/math/mwmeckes/perspectivesInHighDimensions/litvak.pdf
+  // NOTE(russt): I expected to need a fudge factor, but did not.
+  EXPECT_LE((sample_cov - Sigma_x0_).norm(), std::sqrt(2. / kNumSamples));
+
+  // Confirm that I can reset the random state to zero covariance
+  // (deterministic).
+  dut_->configure_random_state(Eigen::Matrix2d::Zero());
+  dut_->SetRandomContext(context_.get(), &generator);
+  EXPECT_TRUE(CompareMatrices(
+      context_->get_continuous_state_vector().CopyToVector(), x0_, 0.0));
 }
 
 // Tests converting to different scalar types.
@@ -110,6 +142,10 @@ TEST_F(AffineSystemTest, ConvertScalarType) {
     EXPECT_EQ(converted.C(), C_);
     EXPECT_EQ(converted.D(), D_);
     EXPECT_EQ(converted.y0(), y0_);
+    EXPECT_TRUE(CompareMatrices(
+        math::autoDiffToValueMatrix(converted.get_default_state()), x0_, 0.0));
+    EXPECT_TRUE(CompareMatrices(
+        converted.get_random_state_covariance(), Sigma_x0_, 1e-16));
   }));
   EXPECT_TRUE(is_symbolic_convertible(*dut_, [&](const auto& converted) {
     EXPECT_EQ(converted.A(), A_);
@@ -118,6 +154,10 @@ TEST_F(AffineSystemTest, ConvertScalarType) {
     EXPECT_EQ(converted.C(), C_);
     EXPECT_EQ(converted.D(), D_);
     EXPECT_EQ(converted.y0(), y0_);
+    EXPECT_TRUE(CompareMatrices(
+        symbolic::Evaluate(converted.get_default_state()), x0_, 0.0));
+    EXPECT_TRUE(CompareMatrices(
+        converted.get_random_state_covariance(), Sigma_x0_, 1e-16));
   }));
 }
 
@@ -183,12 +223,15 @@ GTEST_TEST(DiscreteAffineSystemTest, DiscreteTime) {
   AffineSystem<double> system(A, B, f0, C, D, y0, 1.0);
   auto context = system.CreateDefaultContext();
   EXPECT_TRUE(context->has_only_discrete_state());
+  EXPECT_TRUE(
+      CompareMatrices(context->get_discrete_state_vector().CopyToVector(),
+                      Eigen::Vector3d::Zero(), 1e-16));
 
   Eigen::Vector3d x0(26, 27, 28);
 
   context->get_mutable_discrete_state(0).SetFromVector(x0);
   double u0 = 29;
-  context->FixInputPort(0, Vector1d::Constant(u0));
+  system.get_input_port().FixValue(context.get(), u0);
 
   auto update = system.AllocateDiscreteVariables();
   system.CalcDiscreteVariableUpdates(*context, update.get());
@@ -206,10 +249,25 @@ GTEST_TEST(DiscreteAffineSystemTest, DiscreteTime) {
   EXPECT_TRUE(CompareMatrices(system.y0(t), y0));
 
   // Compare the calculated output against the expected output.
-  auto system_output = system.AllocateOutput();
-  system.CalcOutput(*context, system_output.get());
-  EXPECT_TRUE(CompareMatrices(system_output->get_vector_data(0)->get_value(),
+  EXPECT_TRUE(CompareMatrices(system.get_output_port().Eval(*context),
                               C * x0 + D * u0 + y0));
+
+  // Check the initial conditions.  The covariance math is tested in the
+  // continuous time case; I only need to confirm here that all code paths
+  // are setting the discrete state vector appropriately.
+  RandomGenerator generator;
+  system.SetRandomContext(context.get(), &generator);
+  EXPECT_TRUE(
+      CompareMatrices(context->get_discrete_state_vector().CopyToVector(),
+                      Eigen::Vector3d::Zero(), 1e-16));
+  x0 << .123, .456, .789;
+  system.configure_default_state(x0);
+  system.SetDefaultContext(context.get());
+  EXPECT_TRUE(CompareMatrices(
+      context->get_discrete_state_vector().CopyToVector(), x0, 1e-16));
+  system.SetRandomContext(context.get(), &generator);
+  EXPECT_TRUE(CompareMatrices(
+      context->get_discrete_state_vector().CopyToVector(), x0, 1e-16));
 }
 
 // [ẋ₁, ẋ₂]ᵀ = rotmat(t)*[x₁, x₂]ᵀ + u*[1, 1]ᵀ,
@@ -254,19 +312,17 @@ GTEST_TEST(SimpleTimeVaryingAffineSystemTest, EvalTest) {
   Eigen::Vector2d x(1, 2);
 
   auto context = sys.CreateDefaultContext();
-  context->set_time(t);
+  context->SetTime(t);
   context->get_mutable_continuous_state_vector().SetFromVector(x);
-  context->FixInputPort(0, BasicVector<double>::Make(42.0));
+  sys.get_input_port().FixValue(context.get(), 42.0);
 
   auto derivs = sys.AllocateTimeDerivatives();
   sys.CalcTimeDerivatives(*context, derivs.get());
   EXPECT_TRUE(CompareMatrices(sys.A(t) * x + 42.0 * sys.B(t),
                               derivs->CopyToVector()));
 
-  auto output = sys.AllocateOutput();
-  sys.CalcOutput(*context, output.get());
   EXPECT_TRUE(CompareMatrices(x + sys.y0(t) + 42.0 * sys.D(t),
-                              output->get_vector_data(0)->CopyToVector()));
+                              sys.get_output_port().Eval(*context)));
 }
 
 GTEST_TEST(SimpleTimeVaryingAffineSystemTest, DiscreteEvalTest) {
@@ -275,19 +331,17 @@ GTEST_TEST(SimpleTimeVaryingAffineSystemTest, DiscreteEvalTest) {
   Eigen::Vector2d x(1, 2);
 
   auto context = sys.CreateDefaultContext();
-  context->set_time(t);
+  context->SetTime(t);
   context->get_mutable_discrete_state().get_mutable_vector().SetFromVector(x);
-  context->FixInputPort(0, BasicVector<double>::Make(42.0));
+  sys.get_input_port().FixValue(context.get(), 42.0);
 
   auto updates = sys.AllocateDiscreteVariables();
   sys.CalcDiscreteVariableUpdates(*context, updates.get());
   EXPECT_TRUE(CompareMatrices(sys.A(t) * x + 42.0 * sys.B(t),
                               updates->get_vector().CopyToVector()));
 
-  auto output = sys.AllocateOutput();
-  sys.CalcOutput(*context, output.get());
   EXPECT_TRUE(CompareMatrices(x + sys.y0(t) + 42.0 * sys.D(t),
-                              output->get_vector_data(0)->CopyToVector()));
+                              sys.get_output_port().Eval(*context)));
 }
 
 // Checks that a time-varying affine system will fail if the matrices do not
@@ -304,16 +358,17 @@ class IllegalTimeVaryingAffineSystem : public SimpleTimeVaryingAffineSystem {
   }
 };
 
-GTEST_TEST(IllegalTimeVaryingAffineSystemTest, EvalDeathTest) {
+GTEST_TEST(IllegalTimeVaryingAffineSystemTest, BadSizeTest) {
   IllegalTimeVaryingAffineSystem sys;
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
   const double t = 2.5;
 
   auto context = sys.CreateDefaultContext();
-  context->set_time(t);
+  context->SetTime(t);
 
   auto derivatives = sys.AllocateTimeDerivatives();
-  ASSERT_DEATH(sys.CalcTimeDerivatives(*context, derivatives.get()), "rows");
+  DRAKE_EXPECT_THROWS_MESSAGE(
+      sys.CalcTimeDerivatives(*context, derivatives.get()),
+      std::exception, ".*rows.*");
 }
 
 class AffineSystemSymbolicTest : public ::testing::Test {

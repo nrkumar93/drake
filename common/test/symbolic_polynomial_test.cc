@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/symbolic.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
 
 namespace drake {
@@ -116,13 +117,15 @@ TEST_F(SymbolicPolynomialTest, ConstructFromMapType3) {
   // We cannot construct a polynomial from the `map` because variable a is used
   // as a decision variable (x ↦ -2a) and an indeterminate (a² ↦ 4b) at the same
   // time.
-  EXPECT_THROW(Polynomial{map}, runtime_error);
+  if (kDrakeAssertIsArmed) {
+    EXPECT_THROW(Polynomial{map}, runtime_error);
+  }
 }
 
 TEST_F(SymbolicPolynomialTest, ConstructFromMonomial) {
   for (int i = 0; i < monomials_.size(); ++i) {
     const Polynomial p{monomials_[i]};
-    for (const std::pair<Monomial, Expression>& map :
+    for (const std::pair<const Monomial, Expression>& map :
          p.monomial_to_coefficient_map()) {
       EXPECT_EQ(map.first, monomials_[i]);
       EXPECT_EQ(map.second, 1);
@@ -470,11 +473,103 @@ TEST_F(SymbolicPolynomialTest, MultiplicationPolynomialPolynomial2) {
   EXPECT_EQ(product_map_expected, (p1 * p2).monomial_to_coefficient_map());
 }
 
+TEST_F(SymbolicPolynomialTest, BinaryOperationBetweenPolynomialAndVariable) {
+  // p = 2a²x² + 3ax + 7.
+  const Polynomial p{2 * pow(a_, 2) * pow(x_, 2) + 3 * a_ * x_ + 7, {var_x_}};
+  const Monomial m_x_cube{var_x_, 3};
+  const Monomial m_x_sq{var_x_, 2};
+  const Monomial m_x{var_x_, 1};
+  const Monomial m_one;
+
+  // Checks addition.
+  {
+    const Polynomial result1{p + var_a_};
+    const Polynomial result2{var_a_ + p};
+    // result1 = 2a²x² + 3ax + (7 + a).
+    EXPECT_TRUE(result1.EqualTo(result2));
+    EXPECT_EQ(result1.monomial_to_coefficient_map().size(), 3);
+    EXPECT_EQ(result1.indeterminates(), p.indeterminates());
+    EXPECT_PRED2(ExprEqual, result1.monomial_to_coefficient_map().at(m_one),
+                 7 + a_);
+
+    const Polynomial result3{p + var_x_};
+    const Polynomial result4{var_x_ + p};
+    // result3 = 2a²x² + (3a + 1)x + 7.
+    EXPECT_TRUE(result3.EqualTo(result4));
+    EXPECT_EQ(result3.monomial_to_coefficient_map().size(), 3);
+    EXPECT_EQ(result3.indeterminates(), p.indeterminates());
+    EXPECT_PRED2(ExprEqual, result3.monomial_to_coefficient_map().at(m_x),
+                 3 * a_ + 1);
+  }
+
+  // Checks subtraction.
+  {
+    const Polynomial result1{p - var_a_};
+    // result1 = 2a²x² + 3ax + (7 - a).
+    EXPECT_EQ(result1.indeterminates(), p.indeterminates());
+    EXPECT_EQ(result1.monomial_to_coefficient_map().size(), 3);
+    EXPECT_PRED2(ExprEqual, result1.monomial_to_coefficient_map().at(m_one),
+                 7 - a_);
+
+    const Polynomial result2{var_a_ - p};
+    EXPECT_TRUE((-result2).EqualTo(result1));
+
+    const Polynomial result3{p - var_x_};
+    // result3 = 2a²x² + (3a - 1)x + 7.
+    EXPECT_EQ(result3.indeterminates(), p.indeterminates());
+    EXPECT_EQ(result3.monomial_to_coefficient_map().size(), 3);
+    EXPECT_PRED2(ExprEqual, result3.monomial_to_coefficient_map().at(m_x),
+                 3 * a_ - 1);
+
+    const Polynomial result4{var_x_ - p};
+    EXPECT_TRUE((-result4).EqualTo(result3));
+  }
+
+  // Checks multiplication.
+  {
+    const Polynomial result1{p * var_a_};
+    // result1 = 2a³x² + 3a²x + 7a.
+    EXPECT_EQ(result1.indeterminates(), p.indeterminates());
+    EXPECT_EQ(result1.monomial_to_coefficient_map().size(), 3);
+    EXPECT_PRED2(ExprEqual, result1.monomial_to_coefficient_map().at(m_x_sq),
+                 2 * pow(a_, 3));
+    EXPECT_PRED2(ExprEqual, result1.monomial_to_coefficient_map().at(m_x),
+                 3 * pow(a_, 2));
+    EXPECT_PRED2(ExprEqual, result1.monomial_to_coefficient_map().at(m_one),
+                 7 * a_);
+
+    const Polynomial result2{var_a_ * p};
+    EXPECT_TRUE(result2.EqualTo(result1));
+
+    const Polynomial result3{p * var_x_};
+    // result3 = 2a²x³ + 3ax² + 7x.
+    EXPECT_EQ(result3.indeterminates(), p.indeterminates());
+    EXPECT_EQ(result3.monomial_to_coefficient_map().size(), 3);
+    EXPECT_PRED2(ExprEqual, result3.monomial_to_coefficient_map().at(m_x_cube),
+                 2 * pow(a_, 2));
+    EXPECT_PRED2(ExprEqual, result3.monomial_to_coefficient_map().at(m_x_sq),
+                 3 * a_);
+    EXPECT_PRED2(ExprEqual, result3.monomial_to_coefficient_map().at(m_x), 7);
+
+    const Polynomial result4{var_x_ * p};
+    EXPECT_TRUE(result4.EqualTo(result3));
+  }
+}
+
 TEST_F(SymbolicPolynomialTest, Pow) {
   for (int n = 2; n <= 5; ++n) {
     for (const Expression& e : exprs_) {
       Polynomial p{pow(Polynomial{e}, n)};  // p = pow(e, n)
       EXPECT_PRED2(ExprEqual, p.ToExpression(), pow(e, n).Expand());
+    }
+  }
+}
+
+TEST_F(SymbolicPolynomialTest, DivideByConstant) {
+  for (double v = -5.5; v <= 5.5; v += 1.0) {
+    for (const Expression& e : exprs_) {
+      EXPECT_PRED2(ExprEqual, (Polynomial(e) / v).ToExpression(),
+                   Polynomial(e / v).ToExpression());
     }
   }
 }
@@ -651,7 +746,7 @@ TEST_F(SymbolicPolynomialTest, ConstructNonPolynomialCoefficients) {
 TEST_F(SymbolicPolynomialTest, NegativeTestConstruction1) {
   // sin(a) * x is a polynomial.
   const Expression e1{sin(a_) * x_};
-  EXPECT_NO_THROW(Polynomial(e1, indeterminates_));
+  DRAKE_EXPECT_NO_THROW(Polynomial(e1, indeterminates_));
 
   // sin(x) * x is a not polynomial.
   const Expression e2{sin(x_) * x_};
@@ -685,7 +780,7 @@ TEST_F(SymbolicPolynomialTest, NegativeTestConstruction5) {
 TEST_F(SymbolicPolynomialTest, NegativeTestConstruction6) {
   // 1 / a is polynomial.
   const Expression e1{1 / a_};
-  EXPECT_NO_THROW(Polynomial(e1, indeterminates_));
+  DRAKE_EXPECT_NO_THROW(Polynomial(e1, indeterminates_));
 
   // However, 1 / x is not a polynomial.
   const Expression e2{1 / x_};
@@ -787,6 +882,30 @@ TEST_F(SymbolicPolynomialTest, Hash) {
   EXPECT_NE(h(p1), h(p2));
 }
 
+TEST_F(SymbolicPolynomialTest, CoefficientsAlmostEqual) {
+  Polynomial p1{x_ * x_};
+  // Two polynomials with the same number of terms.
+  EXPECT_TRUE(p1.CoefficientsAlmostEqual(Polynomial{x_ * x_}, 1e-6));
+  EXPECT_TRUE(
+      p1.CoefficientsAlmostEqual(Polynomial{(1 + 1e-7) * x_ * x_}, 1e-6));
+  EXPECT_FALSE(p1.CoefficientsAlmostEqual(Polynomial{2 * x_ * x_}, 1e-6));
+  // Another polynomial with an additional small constant term.
+  EXPECT_TRUE(p1.CoefficientsAlmostEqual(Polynomial{x_ * x_ + 1e-7}, 1e-6));
+  EXPECT_FALSE(p1.CoefficientsAlmostEqual(Polynomial{x_ * x_ + 2e-6}, 1e-6));
+  // Another polynomial with small difference on coefficients.
+  EXPECT_TRUE(p1.CoefficientsAlmostEqual(
+      Polynomial{(1. - 1e-7) * x_ * x_ + 1e-7}, 1e-6));
+  EXPECT_FALSE(p1.CoefficientsAlmostEqual(
+      Polynomial{(1. + 2e-6) * x_ * x_ + 1e-7}, 1e-6));
+
+  // Another polynomial with decision variables in the coefficient.
+  const symbolic::Polynomial p2(a_ * x_ * x_, {indeterminates_});
+  EXPECT_TRUE(p2.CoefficientsAlmostEqual(
+      Polynomial{(a_ + 1e-7) * x_ * x_, {indeterminates_}}, 1e-6));
+  EXPECT_FALSE(p2.CoefficientsAlmostEqual(
+      Polynomial{(a_ + 1e-7) * x_ * x_, {indeterminates_}}, 1e-8));
+}
+
 TEST_F(SymbolicPolynomialTest, RemoveTermsWithSmallCoefficients) {
   // Single term.
   Polynomial p1{1e-5 * x_ * x_};
@@ -815,6 +934,142 @@ TEST_F(SymbolicPolynomialTest, RemoveTermsWithSmallCoefficients) {
                Polynomial(p3_map).RemoveTermsWithSmallCoefficients(1E-3),
                Polynomial(p3_expected_map));
 }
+
+TEST_F(SymbolicPolynomialTest, EqualTo) {
+  const Polynomial p1{var_x_};
+  EXPECT_PRED2(PolyEqual, p1, Polynomial(var_x_));
+  EXPECT_PRED2(PolyEqual, Polynomial(var_a_ * var_x_, var_xy_),
+               Polynomial(var_x_ * var_a_, var_xy_));
+  EXPECT_PRED2(test::PolyNotEqual, Polynomial(var_a_ * var_x_, var_xy_),
+               Polynomial(var_b_ * var_x_, var_xy_));
+}
+
+TEST_F(SymbolicPolynomialTest, EqualToAfterExpansion) {
+  const Polynomial p1(2 * var_a_ * var_x_ * var_x_ + var_y_, var_xy_);
+  const Polynomial p2(var_x_ * var_x_ + 2 * var_y_, var_xy_);
+  const Polynomial p3(2 * var_a_ * var_x_ + var_b_ * var_x_ * var_y_, var_xy_);
+  // p2 * p3 * p1 and p1 * p2 * p3 are not structurally equal.
+  EXPECT_PRED2(test::PolyNotEqual, p2 * p3 * p1, p1 * p2 * p3);
+  // But they are equal after expansion.
+  EXPECT_PRED2(test::PolyEqualAfterExpansion, p2 * p3 * p1, p1 * p2 * p3);
+
+  // p1 * p2 is not equal to p2 * p3 after expansion.
+  EXPECT_PRED2(test::PolyNotEqualAfterExpansion, p1 * p2, p2 * p3);
+}
+
+// Checks if internal::CompareMonomial implements the lexicographical order.
+TEST_F(SymbolicPolynomialTest, InternalCompareMonomial) {
+  // clang-format off
+  const Monomial m1{{{var_x_, 1},                         }};
+  const Monomial m2{{{var_x_, 1},              {var_z_, 2}}};
+  const Monomial m3{{{var_x_, 1}, {var_y_, 1}             }};
+  const Monomial m4{{{var_x_, 1}, {var_y_, 1}, {var_z_, 1}}};
+  const Monomial m5{{{var_x_, 1}, {var_y_, 1}, {var_z_, 2}}};
+  const Monomial m6{{{var_x_, 1}, {var_y_, 2}, {var_z_, 2}}};
+  const Monomial m7{{{var_x_, 1}, {var_y_, 3}, {var_z_, 1}}};
+  const Monomial m8{{{var_x_, 2},                         }};
+  const Monomial m9{{{var_x_, 2},              {var_z_, 1}}};
+  // clang-format on
+
+  EXPECT_TRUE(internal::CompareMonomial()(m1, m2));
+  EXPECT_TRUE(internal::CompareMonomial()(m2, m3));
+  EXPECT_TRUE(internal::CompareMonomial()(m3, m4));
+  EXPECT_TRUE(internal::CompareMonomial()(m4, m5));
+  EXPECT_TRUE(internal::CompareMonomial()(m5, m6));
+  EXPECT_TRUE(internal::CompareMonomial()(m6, m7));
+  EXPECT_TRUE(internal::CompareMonomial()(m7, m8));
+  EXPECT_TRUE(internal::CompareMonomial()(m8, m9));
+
+  EXPECT_FALSE(internal::CompareMonomial()(m2, m1));
+  EXPECT_FALSE(internal::CompareMonomial()(m3, m2));
+  EXPECT_FALSE(internal::CompareMonomial()(m4, m3));
+  EXPECT_FALSE(internal::CompareMonomial()(m5, m4));
+  EXPECT_FALSE(internal::CompareMonomial()(m6, m5));
+  EXPECT_FALSE(internal::CompareMonomial()(m7, m6));
+  EXPECT_FALSE(internal::CompareMonomial()(m8, m7));
+  EXPECT_FALSE(internal::CompareMonomial()(m9, m8));
+}
+
+TEST_F(SymbolicPolynomialTest, DeterministicTraversal) {
+  // Using the following monomials, we construct two polynomials; one by summing
+  // up from top to bottom and another by summing up from bottom to top. The two
+  // polynomials should be the same mathematically. We check that the traversal
+  // operations over the two polynomials give the same sequences as well. See
+  // https://github.com/RobotLocomotion/drake/issues/11023#issuecomment-499948333
+  // for details.
+
+  const Monomial m1{{{var_x_, 1}}};
+  const Monomial m2{{{var_x_, 1}, {var_y_, 1}}};
+  const Monomial m3{{{var_x_, 1}, {var_y_, 1}, {var_z_, 1}}};
+  const Monomial m4{{{var_x_, 1}, {var_y_, 1}, {var_z_, 2}}};
+
+  const Polynomial p1{m1 + (m2 + (m3 + m4))};
+  const Polynomial p2{m4 + (m3 + (m2 + m1))};
+
+  const Polynomial::MapType& map1{p1.monomial_to_coefficient_map()};
+  const Polynomial::MapType& map2{p2.monomial_to_coefficient_map()};
+
+  EXPECT_EQ(map1.size(), map2.size());
+
+  auto it1 = map1.begin();
+  auto it2 = map2.begin();
+
+  for (; it1 != map1.end(); ++it1, ++it2) {
+    const Monomial& m_1{it1->first};
+    const Monomial& m_2{it2->first};
+    const Expression& e_1{it1->second};
+    const Expression& e_2{it2->second};
+    EXPECT_TRUE(m_1 == m_2);
+    EXPECT_TRUE(e_1.EqualTo(e_2));
+  }
+}
+
+TEST_F(SymbolicPolynomialTest, SetIndeterminates) {
+  // ax² + bx + c
+  const Expression e{a_ * x_ * x_ + b_ * x_ + c_};
+
+  {
+    // {x} -> {x, a}
+    Polynomial p{e, {var_x_}};
+    const Variables new_indeterminates{var_x_, var_a_};
+    p.SetIndeterminates(new_indeterminates);
+    EXPECT_PRED2(PolyEqual, p, Polynomial(e, new_indeterminates));
+  }
+
+  {
+    // {x} -> {x, y}, note that y ∉ variables(e).
+    Polynomial p{e, {var_x_}};
+    const Variables new_indeterminates{var_x_, var_y_};
+    p.SetIndeterminates(new_indeterminates);
+    EXPECT_PRED2(PolyEqual, p, Polynomial(e, new_indeterminates));
+  }
+
+  {
+    // {x, a} -> {x}
+    Polynomial p{e, {var_x_, var_a_}};
+    const Variables new_indeterminates{var_x_};
+    p.SetIndeterminates(new_indeterminates);
+    EXPECT_PRED2(PolyEqual, p, Polynomial(e, new_indeterminates));
+  }
+
+  {
+    // {x, a} -> {a}
+    Polynomial p{e, {var_x_, var_a_}};
+    const Variables new_indeterminates{var_a_};
+    p.SetIndeterminates(new_indeterminates);
+    EXPECT_PRED2(PolyEqual, p, Polynomial(e, new_indeterminates));
+  }
+
+  {
+    // {x, a, b, c} -> {x}
+    Polynomial p{e, {var_x_, var_a_, var_b_, var_c_}};
+    const Variables new_indeterminates{var_x_};
+    p.SetIndeterminates(new_indeterminates);
+    EXPECT_PRED2(PolyEqual, p, Polynomial(e, new_indeterminates));
+  }
+}
+
 }  // namespace
+
 }  // namespace symbolic
 }  // namespace drake

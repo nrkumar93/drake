@@ -10,6 +10,7 @@
 #include "drake/common/trajectories/piecewise_polynomial.h"
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/osqp_solver.h"
+#include "drake/solvers/solve.h"
 
 namespace drake {
 namespace systems {
@@ -35,20 +36,35 @@ class MyDirectTrajOpt : public MultipleShooting {
       : MultipleShooting(num_inputs, num_states, num_time_samples, min_timestep,
                          max_timestep) {}
 
-  PiecewisePolynomial<double> ReconstructInputTrajectory() const override {
+  MyDirectTrajOpt(const solvers::VectorXDecisionVariable& input,
+                  const solvers::VectorXDecisionVariable& state,
+                  const int num_time_samples, const double fixed_timestep)
+      : MultipleShooting(input, state, num_time_samples, fixed_timestep) {}
+
+  MyDirectTrajOpt(const solvers::VectorXDecisionVariable& input,
+                  const solvers::VectorXDecisionVariable& state,
+                  const symbolic::Variable& time, const int num_time_samples,
+                  const double min_timestep, const double max_timestep)
+      : MultipleShooting(input, state, time, num_time_samples, min_timestep,
+                         max_timestep) {}
+
+  PiecewisePolynomial<double> ReconstructInputTrajectory(
+      const solvers::MathematicalProgramResult&) const override {
     return PiecewisePolynomial<double>();
   };
 
-  PiecewisePolynomial<double> ReconstructStateTrajectory() const override {
+  PiecewisePolynomial<double> ReconstructStateTrajectory(
+      const solvers::MathematicalProgramResult&) const override {
     return PiecewisePolynomial<double>();
   };
 
   // Expose for unit testing.
-  using MultipleShooting::h_vars;
-  using MultipleShooting::x_vars;
-  using MultipleShooting::u_vars;
-  using MultipleShooting::timesteps_are_decision_variables;
   using MultipleShooting::fixed_timestep;
+  using MultipleShooting::GetSequentialVariable;
+  using MultipleShooting::h_vars;
+  using MultipleShooting::timesteps_are_decision_variables;
+  using MultipleShooting::u_vars;
+  using MultipleShooting::x_vars;
 
  private:
   void DoAddRunningCost(const symbolic::Expression& g) override {}
@@ -64,7 +80,8 @@ GTEST_TEST(MultipleShootingTest, FixedTimestepTest) {
   EXPECT_FALSE(prog.timesteps_are_decision_variables());
 
   EXPECT_EQ(prog.num_vars(), 6);
-  const Eigen::VectorXd times = prog.GetSampleTimes();
+  solvers::MathematicalProgramResult result;
+  const Eigen::VectorXd times = prog.GetSampleTimes(result);
   EXPECT_EQ(times.size(), 2);
   EXPECT_EQ(times[0], 0.0);
   EXPECT_EQ(times[1], 0.1);
@@ -74,6 +91,70 @@ GTEST_TEST(MultipleShootingTest, FixedTimestepTest) {
   EXPECT_THROW(prog.AddTimeIntervalBounds(0, .1), std::runtime_error);
   EXPECT_THROW(prog.AddEqualTimeIntervalsConstraints(), std::runtime_error);
   EXPECT_THROW(prog.AddDurationBounds(0, 1), std::runtime_error);
+}
+
+GTEST_TEST(MultipleShootingTest, FixedTimestepTestWithPlaceholderVariables) {
+  const VectorX<symbolic::Variable> input{
+      symbolic::MakeVectorContinuousVariable(3, "my_input")};
+  const VectorX<symbolic::Variable> state{
+      symbolic::MakeVectorContinuousVariable(4, "my_state")};
+  const int kNumSampleTimes{2};
+  const double kFixedTimeStep{0.1};
+  MyDirectTrajOpt prog(input, state, kNumSampleTimes, kFixedTimeStep);
+
+  EXPECT_FALSE(prog.timesteps_are_decision_variables());
+
+  EXPECT_EQ(prog.num_vars(), (input.size() + state.size()) * kNumSampleTimes);
+  solvers::MathematicalProgramResult result;
+  const Eigen::VectorXd times = prog.GetSampleTimes(result);
+  EXPECT_EQ(times.size(), 2);
+  EXPECT_EQ(times[0], 0.0);
+  EXPECT_EQ(times[1], 0.1);
+
+  const solvers::VectorXDecisionVariable& u = prog.input();
+  EXPECT_EQ(u, input);
+
+  const solvers::VectorXDecisionVariable& x = prog.state();
+  EXPECT_EQ(x, state);
+
+  // All methods involving timestep variables should throw.
+  EXPECT_THROW(prog.timestep(0), std::runtime_error);
+  EXPECT_THROW(prog.AddTimeIntervalBounds(0, .1), std::runtime_error);
+  EXPECT_THROW(prog.AddEqualTimeIntervalsConstraints(), std::runtime_error);
+  EXPECT_THROW(prog.AddDurationBounds(0, 1), std::runtime_error);
+}
+
+GTEST_TEST(MultipleShootingTest, VariableTimestepTestWithPlaceholderVariables) {
+  const VectorX<symbolic::Variable> input{
+      symbolic::MakeVectorContinuousVariable(3, "my_input")};
+  const VectorX<symbolic::Variable> state{
+      symbolic::MakeVectorContinuousVariable(4, "my_state")};
+  const symbolic::Variable time{"my_time"};
+  const int kNumSampleTimes{2};
+  const double kMinTimeStep{0.1};
+  const double kMaxTimeStep{0.1};
+  MyDirectTrajOpt prog(input, state, time, kNumSampleTimes, kMinTimeStep,
+                       kMaxTimeStep);
+
+  const solvers::VectorXDecisionVariable& u = prog.input();
+  EXPECT_EQ(u, input);
+
+  const solvers::VectorXDecisionVariable& x = prog.state();
+  EXPECT_EQ(x, state);
+
+  EXPECT_EQ(time, prog.time()[0]);
+
+  EXPECT_TRUE(prog.timesteps_are_decision_variables());
+  EXPECT_THROW(prog.fixed_timestep(), std::runtime_error);
+
+  EXPECT_EQ(prog.num_vars(), (input.size() + state.size()) * kNumSampleTimes +
+                                 1 /* time variable */);
+  const solvers::MathematicalProgramResult result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
+  const Eigen::VectorXd times = prog.GetSampleTimes(result);
+  EXPECT_EQ(times.size(), 2);
+  EXPECT_NEAR(times[0], 0.0, kSolverTolerance);
+  EXPECT_NEAR(times[1], 0.1, kSolverTolerance);
 }
 
 GTEST_TEST(MultipleShootingTest, VariableTimestepTest) {
@@ -89,8 +170,9 @@ GTEST_TEST(MultipleShootingTest, VariableTimestepTest) {
   EXPECT_THROW(prog.fixed_timestep(), std::runtime_error);
 
   EXPECT_EQ(prog.num_vars(), 7);
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
-  const Eigen::VectorXd times = prog.GetSampleTimes();
+  const solvers::MathematicalProgramResult result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
+  const Eigen::VectorXd times = prog.GetSampleTimes(result);
   EXPECT_EQ(times.size(), 2);
   EXPECT_NEAR(times[0], 0.0, kSolverTolerance);
   EXPECT_NEAR(times[1], 0.1, kSolverTolerance);
@@ -125,8 +207,12 @@ GTEST_TEST(MultipleShootingTest, PlaceholderVariableTest) {
                                         Eigen::Vector2d::Zero(), x),
                std::runtime_error);
 
-  EXPECT_THROW(prog.GetSolution(t(0)), std::runtime_error);
-  EXPECT_THROW(prog.GetSolution(u), std::runtime_error);
+  solvers::MathematicalProgramResult result;
+  // Arbitrarily set the decision variable values to 0.
+  result.set_decision_variable_index(prog.decision_variable_index());
+  result.set_x_val(Eigen::VectorXd::Zero(prog.num_vars()));
+  EXPECT_THROW(result.GetSolution(t(0)), std::exception);
+  EXPECT_THROW(result.GetSolution(u), std::exception);
 }
 
 GTEST_TEST(MultipleShootingTest, PlaceholderVariableNames) {
@@ -136,10 +222,10 @@ GTEST_TEST(MultipleShootingTest, PlaceholderVariableNames) {
   const double kFixedTimeStep{0.1};
   MyDirectTrajOpt prog(kNumInputs, kNumStates, kNumSampleTimes, kFixedTimeStep);
 
-  EXPECT_EQ(prog.time().coeff(0).get_name(), "t");
-  EXPECT_EQ(prog.state().coeff(0).get_name(), "x0");
-  EXPECT_EQ(prog.state().coeff(1).get_name(), "x1");
-  EXPECT_EQ(prog.input().coeff(0).get_name(), "u0");
+  EXPECT_EQ(prog.time().coeff(0).get_name(), "t(0)");
+  EXPECT_EQ(prog.state().coeff(0).get_name(), "x(0)");
+  EXPECT_EQ(prog.state().coeff(1).get_name(), "x(1)");
+  EXPECT_EQ(prog.input().coeff(0).get_name(), "u(0)");
 }
 
 GTEST_TEST(MultipleShootingTest, TimeIntervalBoundsTest) {
@@ -152,8 +238,9 @@ GTEST_TEST(MultipleShootingTest, TimeIntervalBoundsTest) {
                        kMaxTimeStep);
 
   prog.AddTimeIntervalBounds(.5, .5);
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
-  EXPECT_TRUE(CompareMatrices(prog.GetSolution(prog.h_vars()),
+  const solvers::MathematicalProgramResult result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
+  EXPECT_TRUE(CompareMatrices(result.GetSolution(prog.h_vars()),
                               Eigen::Vector2d(0.5, 0.5), 1e-6));
 }
 
@@ -171,9 +258,11 @@ GTEST_TEST(MultipleShootingTest, EqualTimeIntervalsTest) {
   prog.SetInitialGuess(prog.timestep(0), Vector1d(.1));
   prog.SetInitialGuess(prog.timestep(1), Vector1d(.2));
 
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
-  EXPECT_NEAR(prog.GetSolution(prog.timestep(0).coeff(0)),
-              prog.GetSolution(prog.timestep(1).coeff(0)), kSolverTolerance);
+  const solvers::MathematicalProgramResult result =
+      Solve(prog, prog.initial_guess());
+  ASSERT_TRUE(result.is_success());
+  EXPECT_NEAR(result.GetSolution(prog.timestep(0).coeff(0)),
+              result.GetSolution(prog.timestep(1).coeff(0)), kSolverTolerance);
 }
 
 GTEST_TEST(MultipleShootingTest, DurationConstraintTest) {
@@ -194,8 +283,10 @@ GTEST_TEST(MultipleShootingTest, DurationConstraintTest) {
   prog.AddConstraintToAllKnotPoints(prog.state() <= Vector1d(1));
   prog.AddConstraintToAllKnotPoints(prog.state() >= Vector1d(0));
 
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
-  EXPECT_NEAR(prog.GetSolution(prog.h_vars()).sum(), .5, 1e-6);
+  const solvers::MathematicalProgramResult result =
+      Solve(prog, prog.initial_guess());
+  ASSERT_TRUE(result.is_success());
+  EXPECT_NEAR(result.GetSolution(prog.h_vars()).sum(), .5, 1e-6);
 }
 
 GTEST_TEST(MultipleShootingTest, ConstraintAllKnotsTest) {
@@ -210,28 +301,30 @@ GTEST_TEST(MultipleShootingTest, ConstraintAllKnotsTest) {
   const Eigen::Vector2d state_value(4.0, 5.0);
   prog.AddConstraintToAllKnotPoints(prog.state() == state_value);
 
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
+  solvers::MathematicalProgramResult result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
   for (int i = 0; i < kNumSampleTimes; i++) {
     // osqp can fail in polishing step, such that the accuracy cannot reach
     // 1E-6.
     const double tol =
-        prog.GetSolverId() == solvers::OsqpSolver::id() ? 4E-6 : 1E-6;
+        result.get_solver_id() == solvers::OsqpSolver::id() ? 4E-6 : 1E-6;
     EXPECT_TRUE(
-        CompareMatrices(prog.GetSolution(prog.state(i)), state_value, tol));
+        CompareMatrices(result.GetSolution(prog.state(i)), state_value, tol));
   }
 
   const solvers::VectorDecisionVariable<1>& t = prog.time();
   const solvers::VectorXDecisionVariable& u = prog.input();
   prog.AddConstraintToAllKnotPoints(u == t);
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
+  result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
   // u(0) = 0.
-  EXPECT_NEAR(prog.GetSolution(prog.input(0).coeff(0)), 0.0, 1e-6);
+  EXPECT_NEAR(result.GetSolution(prog.input(0).coeff(0)), 0.0, 1e-6);
   // u(1) = h(0).
-  EXPECT_NEAR(prog.GetSolution(prog.input(1).coeff(0)),
-              prog.GetSolution(prog.timestep(0).coeff(0)), 1e-6);
+  EXPECT_NEAR(result.GetSolution(prog.input(1).coeff(0)),
+              result.GetSolution(prog.timestep(0).coeff(0)), 1e-6);
   // u(2) = h(0)+h(1).
-  EXPECT_NEAR(prog.GetSolution(prog.input(2).coeff(0)),
-              prog.GetSolution(prog.h_vars()).sum(), 1e-6);
+  EXPECT_NEAR(result.GetSolution(prog.input(2).coeff(0)),
+              result.GetSolution(prog.h_vars()).sum(), 1e-6);
 }
 
 GTEST_TEST(MultipleShootingTest, FinalCostTest) {
@@ -246,9 +339,10 @@ GTEST_TEST(MultipleShootingTest, FinalCostTest) {
   const auto error = prog.state() - desired_state;
 
   prog.AddFinalCost(error.dot(error));
-  ASSERT_EQ(prog.Solve(), solvers::SolutionResult::kSolutionFound);
-  EXPECT_NEAR(prog.GetOptimalCost(), 0.0, kSolverTolerance);
-  EXPECT_TRUE(CompareMatrices(prog.GetSolution(prog.state(1)), desired_state,
+  const solvers::MathematicalProgramResult result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
+  EXPECT_NEAR(result.get_optimal_cost(), 0.0, kSolverTolerance);
+  EXPECT_TRUE(CompareMatrices(result.GetSolution(prog.state(1)), desired_state,
                               kSolverTolerance));
 }
 
@@ -257,6 +351,7 @@ GTEST_TEST(MultipleShootingTest, TrajectoryCallbackTest) {
   const int kNumStates{2};
   const int kNumSampleTimes{3};
   const double kFixedTimeStep{0.1};
+  const std::vector<std::string> extra_variables{"v", "w"};
 
   bool input_callback_was_called = false;
   auto my_input_callback = [&input_callback_was_called](
@@ -279,6 +374,25 @@ GTEST_TEST(MultipleShootingTest, TrajectoryCallbackTest) {
     EXPECT_TRUE(CompareMatrices(x, x_expected));
     state_callback_was_called = true;
   };
+  bool complete_callback_was_called = false;
+  auto my_complete_callback =
+      [&complete_callback_was_called](
+          const Eigen::Ref<const Eigen::VectorXd>& t,
+          const Eigen::Ref<const Eigen::MatrixXd>& x,
+          const Eigen::Ref<const Eigen::MatrixXd>& u,
+          const std::vector<Eigen::Ref<const Eigen::MatrixXd>>& v) {
+        EXPECT_TRUE(CompareMatrices(t, Eigen::Vector3d(0., .1, .2)));
+        Eigen::MatrixXd x_expected(2, 3);
+        // clang-format off
+        x_expected << 4., 6., 8.,
+                      5., 7., 9.;
+        // clang-format on
+        EXPECT_TRUE(CompareMatrices(x, x_expected));
+        EXPECT_TRUE(CompareMatrices(u, Eigen::RowVector3d(1., 2., 3.)));
+        EXPECT_TRUE(CompareMatrices(v[0], Eigen::RowVector3d(10., 11., 12.)));
+        EXPECT_TRUE(CompareMatrices(v[1], Eigen::RowVector3d(13., 14., 15.)));
+        complete_callback_was_called = true;
+      };
 
   // Test *without* timesteps as decision variables.
   MyDirectTrajOpt prog(kNumInputs, kNumStates, kNumSampleTimes, kFixedTimeStep);
@@ -297,6 +411,18 @@ GTEST_TEST(MultipleShootingTest, TrajectoryCallbackTest) {
   state_callback_was_called = false;
   prog.EvalBindingAtInitialGuess(b);
   EXPECT_TRUE(state_callback_was_called);
+
+  prog.NewSequentialVariable(1, extra_variables[0]);
+  prog.NewSequentialVariable(1, extra_variables[1]);
+  prog.SetInitialGuess(prog.GetSequentialVariable(extra_variables[0]),
+                       Eigen::Vector3d::LinSpaced(3, 10., 12.));
+  prog.SetInitialGuess(prog.GetSequentialVariable(extra_variables[1]),
+                       Eigen::Vector3d::LinSpaced(3, 13., 15.));
+  b = prog.AddCompleteTrajectoryCallback(my_complete_callback, extra_variables);
+  EXPECT_EQ(prog.visualization_callbacks().size(), 3);
+  complete_callback_was_called = false;
+  prog.EvalBindingAtInitialGuess(b);
+  EXPECT_TRUE(complete_callback_was_called);
 
   // Test with timesteps as decision variables.
   MyDirectTrajOpt prog2(kNumInputs, kNumStates, kNumSampleTimes, kFixedTimeStep,
@@ -317,6 +443,19 @@ GTEST_TEST(MultipleShootingTest, TrajectoryCallbackTest) {
   state_callback_was_called = false;
   prog2.EvalBindingAtInitialGuess(b);
   EXPECT_TRUE(state_callback_was_called);
+
+  prog2.NewSequentialVariable(1, extra_variables[0]);
+  prog2.NewSequentialVariable(1, extra_variables[1]);
+  prog2.SetInitialGuess(prog2.GetSequentialVariable(extra_variables[0]),
+                        Eigen::Vector3d::LinSpaced(3, 10., 12.));
+  prog2.SetInitialGuess(prog2.GetSequentialVariable(extra_variables[1]),
+                        Eigen::Vector3d::LinSpaced(3, 13., 15.));
+  b = prog2.AddCompleteTrajectoryCallback(my_complete_callback,
+                                          extra_variables);
+  EXPECT_EQ(prog2.visualization_callbacks().size(), 3);
+  complete_callback_was_called = false;
+  prog2.EvalBindingAtInitialGuess(b);
+  EXPECT_TRUE(complete_callback_was_called);
 }
 
 GTEST_TEST(MultipleShootingTest, InitialGuessTest) {
@@ -342,24 +481,23 @@ GTEST_TEST(MultipleShootingTest, InitialGuessTest) {
   prog.SetInitialTrajectory(PiecewisePolynomial<double>(), traj1);
   // Pretends that the solver has solved the optimization problem, and sets
   // the solution to prog.initial_guess().
-  solvers::SolverResult solver_result(solvers::SolverId("dummy"));
-  solver_result.set_decision_variable_values(prog.initial_guess());
-  prog.SetSolverResult(solver_result);
-  EXPECT_EQ(prog.GetSampleTimes(), Eigen::Vector3d(0.0, 0.5, 1.0));
+  solvers::MathematicalProgramResult result;
+  result.set_solver_id(solvers::SolverId("dummy"));
+  result.set_decision_variable_index(prog.decision_variable_index());
+  result.set_x_val(prog.initial_guess());
+  EXPECT_EQ(prog.GetSampleTimes(result), Eigen::Vector3d(0.0, 0.5, 1.0));
 
   prog.SetInitialTrajectory(traj2, PiecewisePolynomial<double>());
   // Pretends that the solver has solved the optimization problem, and sets
   // the solution to prog.initial_guess().
-  solver_result.set_decision_variable_values(prog.initial_guess());
-  prog.SetSolverResult(solver_result);
-  EXPECT_EQ(prog.GetSampleTimes(), Eigen::Vector3d(0.0, 1.5, 3.0));
+  result.set_x_val(prog.initial_guess());
+  EXPECT_EQ(prog.GetSampleTimes(result), Eigen::Vector3d(0.0, 1.5, 3.0));
 
   prog.SetInitialTrajectory(traj1, traj1);
   // Pretends that the solver has solved the optimization problem, and sets
   // the solution to prog.initial_guess().
-  solver_result.set_decision_variable_values(prog.initial_guess());
-  prog.SetSolverResult(solver_result);
-  EXPECT_EQ(prog.GetSampleTimes(), Eigen::Vector3d(0.0, 0.5, 1.0));
+  result.set_x_val(prog.initial_guess());
+  EXPECT_EQ(prog.GetSampleTimes(result), Eigen::Vector3d(0.0, 0.5, 1.0));
 
   // Throws if trajectories don't match.
   EXPECT_THROW(prog.SetInitialTrajectory(traj1, traj2), std::runtime_error);
@@ -385,14 +523,65 @@ GTEST_TEST(MultipleShootingTest, ResultSamplesTest) {
   }
   // Pretends that the solver has solved the optimization problem, and sets
   // the solution to prog.initial_guess().
-  solvers::SolverResult solver_result(solvers::SolverId("dummy"));
-  solver_result.set_decision_variable_values(prog.initial_guess());
-  prog.SetSolverResult(solver_result);
+  solvers::MathematicalProgramResult result;
+  result.set_solver_id(solvers::SolverId("dummy"));
+  result.set_decision_variable_index(prog.decision_variable_index());
+  result.set_x_val(prog.initial_guess());
 
-  EXPECT_TRUE(CompareMatrices(prog.GetSampleTimes(),
+  EXPECT_TRUE(CompareMatrices(prog.GetSampleTimes(result),
                               Eigen::Vector2d(0.0, kFixedTimeStep), 0.0));
-  EXPECT_TRUE(CompareMatrices(prog.GetInputSamples(), input_trajectory, 0.0));
-  EXPECT_TRUE(CompareMatrices(prog.GetStateSamples(), state_trajectory, 0.0));
+  EXPECT_TRUE(
+      CompareMatrices(prog.GetInputSamples(result), input_trajectory, 0.0));
+  EXPECT_TRUE(
+      CompareMatrices(prog.GetStateSamples(result), state_trajectory, 0.0));
+}
+
+GTEST_TEST(MultipleShootingTest, NewSequentialVariableTest) {
+  const int kNumInputs{1};
+  const int kNumStates{2};
+  const int kNumSampleTimes{3};
+  const double kMinTimeStep{0.01};
+  const double kMaxTimeStep{1};
+  MyDirectTrajOpt prog(kNumInputs, kNumStates, kNumSampleTimes, kMinTimeStep,
+                       kMaxTimeStep);
+  const Eigen::Vector2d state_value(4.0, 5.0);
+  prog.AddConstraintToAllKnotPoints(prog.state() == state_value);
+
+  solvers::VectorXDecisionVariable new_sequential_variable =
+      prog.NewSequentialVariable(kNumStates, "w");
+  prog.AddConstraintToAllKnotPoints(-2.0 * new_sequential_variable ==
+                                    prog.state());
+
+  solvers::MathematicalProgramResult result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
+  // osqp can fail in polishing step, such that the accuracy cannot reach
+  // 1E-6.
+  const double tol =
+      result.get_solver_id() == solvers::OsqpSolver::id() ? 4E-6 : 1E-6;
+  for (int i = 0; i < kNumSampleTimes; i++) {
+    // Verify that GetSequentialVariableAtIndex() works as expected.
+    EXPECT_TRUE(CompareMatrices(
+        -2.0 * result.GetSolution(prog.GetSequentialVariableAtIndex("w", i)),
+        state_value, tol));
+  }
+
+  EXPECT_TRUE(
+      CompareMatrices(-2.0 * prog.GetSequentialVariableSamples(result, "w"),
+                      prog.GetStateSamples(result), tol));
+
+  const solvers::VectorDecisionVariable<1>& t = prog.time();
+  const solvers::VectorXDecisionVariable& u = prog.input();
+  prog.AddConstraintToAllKnotPoints(u == t);
+  result = Solve(prog);
+  ASSERT_TRUE(result.is_success());
+  // u(0) = 0.
+  EXPECT_NEAR(result.GetSolution(prog.input(0).coeff(0)), 0.0, 1e-6);
+  // u(1) = h(0).
+  EXPECT_NEAR(result.GetSolution(prog.input(1).coeff(0)),
+              result.GetSolution(prog.timestep(0).coeff(0)), 1e-6);
+  // u(2) = h(0)+h(1).
+  EXPECT_NEAR(result.GetSolution(prog.input(2).coeff(0)),
+              result.GetSolution(prog.h_vars()).sum(), 1e-6);
 }
 
 }  // anonymous namespace

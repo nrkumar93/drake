@@ -1,33 +1,25 @@
 #include "drake/multibody/benchmarks/pendulum/make_pendulum_plant.h"
 
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
-#include "drake/multibody/multibody_tree/uniform_gravity_field_element.h"
+#include "drake/math/rigid_transform.h"
+#include "drake/multibody/tree/revolute_joint.h"
+#include "drake/multibody/tree/uniform_gravity_field_element.h"
 
 namespace drake {
 namespace multibody {
 namespace benchmarks {
 namespace pendulum {
 
-using Eigen::Isometry3d;
-using Eigen::Translation3d;
 using Eigen::Vector3d;
 
 using geometry::Cylinder;
 using geometry::FrameId;
 using geometry::SceneGraph;
 using geometry::Sphere;
-using drake::multibody::multibody_plant::MultibodyPlant;
-using drake::multibody::RevoluteJoint;
-using drake::multibody::RigidBody;
-using drake::multibody::RotationalInertia;
-using drake::multibody::SpatialInertia;
-using drake::multibody::UniformGravityFieldElement;
-using drake::multibody::UnitInertia;
 
-std::unique_ptr<drake::multibody::multibody_plant::MultibodyPlant<double>>
+std::unique_ptr<MultibodyPlant<double>>
 MakePendulumPlant(const PendulumParameters& params,
                   SceneGraph<double>* scene_graph) {
-  auto plant = std::make_unique<MultibodyPlant<double>>();
+  auto plant = std::make_unique<MultibodyPlant<double>>(0.0);
 
   // Position of the com of the pendulum's body (in this case a point mass) in
   // the body's frame. The body's frame's origin Bo is defined to be at the
@@ -50,26 +42,23 @@ MakePendulumPlant(const PendulumParameters& params,
   if (scene_graph != nullptr) {
     plant->RegisterAsSourceForSceneGraph(scene_graph);
     // Pose of the sphere used to visualize the point mass in the body frame B.
-    const Isometry3d X_BGs{
-        Translation3d(-params.l() * Vector3d::UnitZ())};
+    const math::RigidTransformd X_BGs(-params.l() * Vector3d::UnitZ());
     plant->RegisterVisualGeometry(point_mass, X_BGs,
                                   Sphere(params.point_mass_radius()),
-                                  params.body_name(), scene_graph);
+                                  params.body_name());
 
     // Pose of the cylinder used to visualize the massless rod in frame B.
-    const Isometry3d X_BGc{
-        Translation3d(-params.l() / 2.0 * Vector3d::UnitZ())};
-    plant->RegisterVisualGeometry(
-        point_mass, X_BGc, Cylinder(params.massless_rod_radius(), params.l()),
-        "arm", scene_graph);
+    const math::RigidTransformd X_BGc(-params.l() / 2.0 * Vector3d::UnitZ());
+    plant->RegisterVisualGeometry(point_mass, X_BGc,
+        Cylinder(params.massless_rod_radius(), params.l()), "arm");
   }
 
   const RevoluteJoint<double>& pin = plant->AddJoint<RevoluteJoint>(
       params.pin_joint_name(),
       /* Shoulder inboard frame IS the world frame W. */
-      plant->world_body(), {},
+      plant->world_body(), std::nullopt,
       /* Pin joint outboard frame IS the body frame B. */
-      point_mass, {},
+      point_mass, std::nullopt,
       Vector3d::UnitY(), /* Pendulum oscillates in the x-z plane. */
       params.damping());
 
@@ -77,10 +66,10 @@ MakePendulumPlant(const PendulumParameters& params,
   plant->AddJointActuator(params.actuator_name(), pin);
 
   // Gravity acting in the -z direction.
-  plant->AddForceElement<UniformGravityFieldElement>(
+  plant->mutable_gravity_field().set_gravity_vector(
       -params.g() * Vector3d::UnitZ());
 
-  plant->Finalize(scene_graph);
+  plant->Finalize();
 
   return plant;
 }

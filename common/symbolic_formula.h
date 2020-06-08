@@ -19,6 +19,7 @@
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
 #include "drake/common/hash.h"
+#include "drake/common/random.h"
 #include "drake/common/symbolic.h"
 
 namespace drake {
@@ -123,10 +124,9 @@ class Formula {
   /** Constructs from a `bool`.  This overload is also used by Eigen when
    * EIGEN_INITIALIZE_MATRICES_BY_ZERO is enabled.
    */
-  explicit Formula(bool value)
-      : Formula(value ? True() : False()) {}
+  explicit Formula(bool value) : Formula(value ? True() : False()) {}
 
-  explicit Formula(std::shared_ptr<FormulaCell> ptr);
+  explicit Formula(std::shared_ptr<const FormulaCell> ptr);
 
   /** Constructs a formula from @p var.
    * @pre @p var is of BOOLEAN type and not a dummy variable.
@@ -136,7 +136,7 @@ class Formula {
   FormulaKind get_kind() const;
   /** Gets free variables (unquantified variables). */
   Variables GetFreeVariables() const;
-  /** Checks structural equality*/
+  /** Checks structural equality. */
   bool EqualTo(const Formula& f) const;
   /** Checks lexicographical ordering between this and @p e.
    *
@@ -162,12 +162,25 @@ class Formula {
    * std::less<symbolic::Formula>. */
   bool Less(const Formula& f) const;
 
-  /** Evaluates under a given environment (by default, an empty environment).
+  /** Evaluates using a given environment (by default, an empty environment) and
+   * a random number generator. If there is a random variable in this formula
+   * which is unassigned in @p env, it uses @p random_generator to sample a
+   * value and use it to substitute all occurrences of the random variable in
+   * this formula.
    *
-   * @throws runtime_error if a variable `v` is needed for an evaluation but not
-   * provided by @p env.
+   * @throws std::runtime_error if a variable `v` is needed for an evaluation
+   *                            but not provided by @p env.
+   * @throws std::runtime_error if an unassigned random variable is detected
+   *                            while @p random_generator is `nullptr`.
    */
-  bool Evaluate(const Environment& env = Environment{}) const;
+  bool Evaluate(const Environment& env = Environment{},
+                RandomGenerator* random_generator = nullptr) const;
+
+  /** Evaluates using an empty environment and a random number generator.
+   *
+   * See the above overload for the exceptions that it might throw.
+   */
+  bool Evaluate(RandomGenerator* random_generator) const;
 
   /** Returns a copy of this formula replacing all occurrences of @p var
    * with @p e.
@@ -194,8 +207,7 @@ class Formula {
 
   /** Implements the @ref hash_append concept. */
   template <class HashAlgorithm>
-  friend void hash_append(
-      HashAlgorithm& hasher, const Formula& item) noexcept {
+  friend void hash_append(HashAlgorithm& hasher, const Formula& item) noexcept {
     DelegatingHasher delegating_hasher(
         [&hasher](const void* data, const size_t length) {
           return hasher(data, length);
@@ -226,30 +238,35 @@ class Formula {
   // Note that the following cast functions are only for low-level operations
   // and not exposed to the user of symbolic_formula.h. These functions are
   // declared in symbolic_formula_cell.h header.
-  friend std::shared_ptr<FormulaFalse> to_false(const Formula& f);
-  friend std::shared_ptr<FormulaTrue> to_true(const Formula& f);
-  friend std::shared_ptr<FormulaVar> to_variable(const Formula& f);
-  friend std::shared_ptr<RelationalFormulaCell> to_relational(const Formula& f);
-  friend std::shared_ptr<FormulaEq> to_equal_to(const Formula& f);
-  friend std::shared_ptr<FormulaNeq> to_not_equal_to(const Formula& f);
-  friend std::shared_ptr<FormulaGt> to_greater_than(const Formula& f);
-  friend std::shared_ptr<FormulaGeq> to_greater_than_or_equal_to(
+  friend std::shared_ptr<const FormulaFalse> to_false(const Formula& f);
+  friend std::shared_ptr<const FormulaTrue> to_true(const Formula& f);
+  friend std::shared_ptr<const FormulaVar> to_variable(const Formula& f);
+  friend std::shared_ptr<const RelationalFormulaCell> to_relational(
       const Formula& f);
-  friend std::shared_ptr<FormulaLt> to_less_than(const Formula& f);
-  friend std::shared_ptr<FormulaLeq> to_less_than_or_equal_to(const Formula& f);
-  friend std::shared_ptr<NaryFormulaCell> to_nary(const Formula& f);
-  friend std::shared_ptr<FormulaAnd> to_conjunction(const Formula& f);
-  friend std::shared_ptr<FormulaOr> to_disjunction(const Formula& f);
-  friend std::shared_ptr<FormulaNot> to_negation(const Formula& f);
-  friend std::shared_ptr<FormulaForall> to_forall(const Formula& f);
-  friend std::shared_ptr<FormulaIsnan> to_isnan(const Formula& f);
-  friend std::shared_ptr<FormulaPositiveSemidefinite> to_positive_semidefinite(
+  friend std::shared_ptr<const FormulaEq> to_equal_to(const Formula& f);
+  friend std::shared_ptr<const FormulaNeq> to_not_equal_to(const Formula& f);
+  friend std::shared_ptr<const FormulaGt> to_greater_than(const Formula& f);
+  friend std::shared_ptr<const FormulaGeq> to_greater_than_or_equal_to(
       const Formula& f);
+  friend std::shared_ptr<const FormulaLt> to_less_than(const Formula& f);
+  friend std::shared_ptr<const FormulaLeq> to_less_than_or_equal_to(
+      const Formula& f);
+  friend std::shared_ptr<const NaryFormulaCell> to_nary(const Formula& f);
+  friend std::shared_ptr<const FormulaAnd> to_conjunction(const Formula& f);
+  friend std::shared_ptr<const FormulaOr> to_disjunction(const Formula& f);
+  friend std::shared_ptr<const FormulaNot> to_negation(const Formula& f);
+  friend std::shared_ptr<const FormulaForall> to_forall(const Formula& f);
+  friend std::shared_ptr<const FormulaIsnan> to_isnan(const Formula& f);
+  friend std::shared_ptr<const FormulaPositiveSemidefinite>
+  to_positive_semidefinite(const Formula& f);
 
  private:
   void HashAppend(DelegatingHasher* hasher) const;
 
-  std::shared_ptr<FormulaCell> ptr_;
+  // Note: We use "const" FormulaCell type here because a FormulaCell object can
+  // be shared by multiple formulas, a formula should _not_ be able to change
+  // the cell that it points to.
+  std::shared_ptr<const FormulaCell> ptr_;
 };
 
 /** Returns a formula @p f, universally quantified by variables @p vars. */
@@ -320,8 +337,8 @@ Formula isfinite(const Expression& e);
  *
  * @throws std::runtime_error if @p m is not symmetric.
  *
- * @note This method checks if @p m is symmetric by calling `math::IsSymmetric`
- * function which can be costly. If you want to avoid it, please consider using
+ * @note This method checks if @p m is symmetric, which can be costly. If you
+ * want to avoid it, please consider using
  * `positive_semidefinite(m.triangularView<Eigen::Lower>())` or
  * `positive_semidefinite(m.triangularView<Eigen::Upper>())` instead of
  * `positive_semidefinite(m)`.
@@ -475,7 +492,7 @@ const Formula& get_quantified_formula(const Formula& f);
 const MatrixX<Expression>& get_matrix_in_positive_semidefinite(
     const Formula& f);
 
-namespace detail {
+namespace internal {
 /// Provides a return type of relational operations (=, ≠, ≤, <, ≥, >) between
 /// `Eigen::Array`s.
 ///
@@ -513,7 +530,7 @@ inline Formula logic_and(const Formula& f1, const Formula& f2) {
 inline Formula logic_or(const Formula& f1, const Formula& f2) {
   return f1 || f2;
 }
-}  // namespace detail
+}  // namespace internal
 
 /// Returns an Eigen array of symbolic formulas where each element includes
 /// element-wise symbolic-equality of two arrays @p m1 and @p m2.
@@ -531,7 +548,7 @@ inline Formula logic_or(const Formula& f1, const Formula& f2) {
 /// Note that this function does *not* provide operator overloading for the
 /// following case. It returns `Eigen::Array<bool>` and is provided by Eigen.
 ///
-///    - Eigen::Array<double> == Eigen::Array<double>
+/// - Eigen::Array<double> == Eigen::Array<double>
 ///
 template <typename DerivedA, typename DerivedB>
 typename std::enable_if<
@@ -542,7 +559,7 @@ typename std::enable_if<
         std::is_same<decltype(typename DerivedA::Scalar() ==
                               typename DerivedB::Scalar()),
                      Formula>::value,
-    typename detail::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
+    typename internal::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
 operator==(const DerivedA& a1, const DerivedB& a2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(a1.rows() == a2.rows() && a1.cols() == a2.cols());
@@ -615,7 +632,7 @@ typename std::enable_if<
         std::is_same<decltype(typename DerivedA::Scalar() <=
                               typename DerivedB::Scalar()),
                      Formula>::value,
-    typename detail::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
+    typename internal::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
 operator<=(const DerivedA& a1, const DerivedB& a2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(a1.rows() == a2.rows() && a1.cols() == a2.cols());
@@ -668,7 +685,7 @@ typename std::enable_if<
         std::is_same<decltype(typename DerivedA::Scalar() <
                               typename DerivedB::Scalar()),
                      Formula>::value,
-    typename detail::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
+    typename internal::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
 operator<(const DerivedA& a1, const DerivedB& a2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(a1.rows() == a2.rows() && a1.cols() == a2.cols());
@@ -719,7 +736,7 @@ typename std::enable_if<
         std::is_same<decltype(typename DerivedA::Scalar() >=
                               typename DerivedB::Scalar()),
                      Formula>::value,
-    typename detail::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
+    typename internal::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
 operator>=(const DerivedA& a1, const DerivedB& a2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(a1.rows() == a2.rows() && a1.cols() == a2.cols());
@@ -778,7 +795,7 @@ typename std::enable_if<
         std::is_same<decltype(typename DerivedA::Scalar() >
                               typename DerivedB::Scalar()),
                      Formula>::value,
-    typename detail::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
+    typename internal::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
 operator>(const DerivedA& a1, const DerivedB& a2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(a1.rows() == a2.rows() && a1.cols() == a2.cols());
@@ -836,7 +853,7 @@ typename std::enable_if<
         std::is_same<decltype(typename DerivedA::Scalar() !=
                               typename DerivedB::Scalar()),
                      Formula>::value,
-    typename detail::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
+    typename internal::RelationalOpTraits<DerivedA, DerivedB>::ReturnType>::type
 operator!=(const DerivedA& a1, const DerivedB& a2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(a1.rows() == a2.rows() && a1.cols() == a2.cols());
@@ -893,7 +910,7 @@ operator!=(const ScalarType& v, const Derived& a) {
 /// Note that this function does *not* provide operator overloading for the
 /// following case. It returns `bool` and is provided by Eigen.
 ///
-///    - Eigen::Matrix<double> == Eigen::Matrix<double>
+/// - Eigen::Matrix<double> == Eigen::Matrix<double>
 ///
 /// Note that this method returns a conjunctive formula which keeps its
 /// conjuncts as `std::set<Formula>` internally. This set is ordered by
@@ -932,7 +949,7 @@ typename std::enable_if<
 operator==(const DerivedA& m1, const DerivedB& m2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(m1.rows() == m2.rows() && m1.cols() == m2.cols());
-  return m1.binaryExpr(m2, std::equal_to<void>()).redux(detail::logic_and);
+  return m1.binaryExpr(m2, std::equal_to<void>()).redux(internal::logic_and);
 }
 
 /// Returns a symbolic formula representing the condition whether @p m1 and @p
@@ -951,7 +968,7 @@ operator==(const DerivedA& m1, const DerivedB& m2) {
 /// Note that this function does *not* provide operator overloading for the
 /// following case. It returns `bool` and is provided by Eigen.
 ///
-///    - Eigen::Matrix<double> != Eigen::Matrix<double>
+/// - Eigen::Matrix<double> != Eigen::Matrix<double>
 template <typename DerivedA, typename DerivedB>
 typename std::enable_if<
     std::is_same<typename Eigen::internal::traits<DerivedA>::XprKind,
@@ -965,7 +982,7 @@ typename std::enable_if<
 operator!=(const DerivedA& m1, const DerivedB& m2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(m1.rows() == m2.rows() && m1.cols() == m2.cols());
-  return m1.binaryExpr(m2, std::not_equal_to<void>()).redux(detail::logic_or);
+  return m1.binaryExpr(m2, std::not_equal_to<void>()).redux(internal::logic_or);
 }
 
 /// Returns a symbolic formula representing element-wise comparison between two
@@ -993,7 +1010,7 @@ typename std::enable_if<
 operator<(const DerivedA& m1, const DerivedB& m2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(m1.rows() == m2.rows() && m1.cols() == m2.cols());
-  return m1.binaryExpr(m2, std::less<void>()).redux(detail::logic_and);
+  return m1.binaryExpr(m2, std::less<void>()).redux(internal::logic_and);
 }
 
 /// Returns a symbolic formula representing element-wise comparison between two
@@ -1021,7 +1038,7 @@ typename std::enable_if<
 operator<=(const DerivedA& m1, const DerivedB& m2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(m1.rows() == m2.rows() && m1.cols() == m2.cols());
-  return m1.binaryExpr(m2, std::less_equal<void>()).redux(detail::logic_and);
+  return m1.binaryExpr(m2, std::less_equal<void>()).redux(internal::logic_and);
 }
 
 /// Returns a symbolic formula representing element-wise comparison between two
@@ -1049,7 +1066,7 @@ typename std::enable_if<
 operator>(const DerivedA& m1, const DerivedB& m2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(m1.rows() == m2.rows() && m1.cols() == m2.cols());
-  return m1.binaryExpr(m2, std::greater<void>()).redux(detail::logic_and);
+  return m1.binaryExpr(m2, std::greater<void>()).redux(internal::logic_and);
 }
 
 /// Returns a symbolic formula representing element-wise comparison between two
@@ -1077,7 +1094,8 @@ typename std::enable_if<
 operator>=(const DerivedA& m1, const DerivedB& m2) {
   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(DerivedA, DerivedB);
   DRAKE_DEMAND(m1.rows() == m2.rows() && m1.cols() == m2.cols());
-  return m1.binaryExpr(m2, std::greater_equal<void>()).redux(detail::logic_and);
+  return m1.binaryExpr(m2, std::greater_equal<void>()).redux(
+      internal::logic_and);
 }
 
 }  // namespace symbolic
@@ -1095,28 +1113,15 @@ struct ConditionTraits<symbolic::Formula> {
 };
 }  // namespace assert
 
-/// Specialization of ExtractBoolOrThrow for `Bool<symbolic::Expression>` which
-/// includes `symbolic::Formula`. It calls `Evaluate` with an empty environment
-/// and throws if there are free variables in the expression.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-template <>
-DRAKE_DEPRECATED("Bool<T> is deprecated.")
-inline bool ExtractBoolOrThrow(const Bool<symbolic::Expression>& b) {
-  return b.value().Evaluate();
-}
-#pragma GCC diagnostic pop
-
 }  // namespace drake
 
 namespace std {
 /* Provides std::hash<drake::symbolic::Formula>. */
 template <>
-struct hash<drake::symbolic::Formula>
-    : public drake::DefaultHash {};
+struct hash<drake::symbolic::Formula> : public drake::DefaultHash {};
 #if defined(__GLIBCXX__)
 // https://gcc.gnu.org/onlinedocs/libstdc++/manual/unordered_associative.html
-template<>
+template <>
 struct __is_fast_hash<hash<drake::symbolic::Formula>> : std::false_type {};
 #endif
 

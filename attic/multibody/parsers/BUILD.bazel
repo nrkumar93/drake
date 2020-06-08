@@ -41,9 +41,9 @@ drake_cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":find_files",
+        "//attic/multibody:rigid_body_tree",
         "//attic/multibody/rigid_body_plant:compliant_material",
-        "//multibody:rigid_body_tree",
-        "@tinydir",
+        "//multibody/parsing:detail_misc",
         "@tinyxml2",
     ],
 )
@@ -52,11 +52,9 @@ drake_cc_library(
     name = "find_files",
     hdrs = [
         "package_map.h",
-        "parser_path_utils.h",
     ],
     deps = [
-        "//multibody/multibody_tree/parsing:package_map",
-        "//multibody/multibody_tree/parsing:parser_path_utils",
+        "//multibody/parsing:package_map",
     ],
 )
 
@@ -71,20 +69,35 @@ drake_cc_googletest(
     data = [":test_models"],
     deps = [
         ":parsers",
+        "//common:filesystem",
         "//common:find_resource",
     ],
 )
 
 drake_cc_googletest(
     name = "urdf_parser_test",
-    srcs = ["test/urdf_parser_test/urdf_parser_test.cc"],
+    srcs = ["test/urdf_parser_test.cc"],
     data = [
         ":test_models",
         "//examples/atlas:models",
+        "//multibody/parsing:test_models",
+    ],
+    deps = [
+        ":parsers",
+        "//common:filesystem",
+        "//common:find_resource",
+    ],
+)
+
+drake_cc_googletest(
+    name = "rbt_sdf_parser_test",
+    data = [
+        ":test_models",
     ],
     deps = [
         ":parsers",
         "//common:find_resource",
+        "//common/test_utilities",
     ],
 )
 

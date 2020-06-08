@@ -1,8 +1,9 @@
 #pragma once
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
-#include "drake/systems/framework/vector_system.h"
+#include "drake/systems/framework/leaf_system.h"
 
 namespace drake {
 namespace systems {
@@ -18,19 +19,7 @@ namespace systems {
 /// an input port for the time source. Otherwise, the system is created with
 /// zero input ports.
 ///
-/// This class uses Drake's `-inl.h` pattern.  When seeing linker errors from
-/// this class, please refer to https://drake.mit.edu/cxx_inl.html.
-///
-/// Instantiated templates for the following scalar types @p T are provided:
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
-///
-/// They are already available to link against in the containing library.
-///
-/// To use other specific scalar types see sine-inl.h.
-///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
+/// @tparam_default_scalar
 /// @ingroup primitive_systems
 template <typename T>
 class Sine final : public LeafSystem<T> {
@@ -100,7 +89,7 @@ class Sine final : public LeafSystem<T> {
   /// Returns the phase vector constant.
   const Eigen::VectorXd& phase_vector() const;
 
- protected:
+ private:
   void CalcValueOutput(const Context<T>& context,
                        BasicVector<T>* output) const;
   void CalcFirstDerivativeOutput(const Context<T>& context,
@@ -126,3 +115,6 @@ class Sine final : public LeafSystem<T> {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::Sine)

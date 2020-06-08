@@ -6,12 +6,17 @@
 #include "drake/examples/acrobot/gen/acrobot_input.h"
 #include "drake/examples/acrobot/gen/acrobot_params.h"
 #include "drake/examples/acrobot/gen/acrobot_state.h"
+#include "drake/examples/acrobot/gen/spong_controller_params.h"
 #include "drake/math/wrap_to.h"
 #include "drake/systems/controllers/linear_quadratic_regulator.h"
 #include "drake/systems/framework/leaf_system.h"
 #include "drake/systems/primitives/linear_system.h"
 
-/// @file The Spong acrobot swing-up controller implemented as a LeafSystem.
+namespace drake {
+namespace examples {
+namespace acrobot {
+
+/// The Spong acrobot swing-up controller as described in:
 ///   Spong, Mark W. "Swing up control of the acrobot." Robotics and Automation,
 ///   1994. Proceedings., 1994 IEEE International Conference on. IEEE, 1994.
 ///
@@ -20,25 +25,20 @@
 /// functional set of gains to stabilize the robot about its upright fixed
 /// point using the parameters of the physical robot we have in lab.
 ///
-
-namespace drake {
-namespace examples {
-namespace acrobot {
-
-using std::cout;
-using std::endl;
-
+/// @system{ AcrobotSpongController,
+///   @input_port{acrobot_state},
+///   @output_port{elbow_torque} }
+///
+/// @ingroup acrobot_systems
 template <typename T>
 class AcrobotSpongController : public systems::LeafSystem<T> {
  public:
   AcrobotSpongController()
       : acrobot_{}, acrobot_context_(acrobot_.CreateDefaultContext()) {
-    this->DeclareVectorInputPort(AcrobotState<T>());
-    this->DeclareVectorOutputPort(AcrobotInput<T>(),
+    this->DeclareVectorInputPort("acrobot_state", AcrobotState<T>());
+    this->DeclareVectorOutputPort("elbow_torque", AcrobotInput<T>(),
                                   &AcrobotSpongController::CalcControlTorque);
-
-    // Setup context for linearization.
-    acrobot_context_->FixInputPort(0, Vector1d(0));
+    this->DeclareNumericParameter(SpongControllerParams<T>());
 
     // Set nominal state to the upright fixed point.
     AcrobotState<T>& state =
@@ -48,7 +48,15 @@ class AcrobotSpongController : public systems::LeafSystem<T> {
     state.set_theta1dot(0.0);
     state.set_theta2dot(0.0);
 
-    auto linear_system = Linearize(acrobot_, *acrobot_context_);
+    const AcrobotPlant<double> acrobot_double{};
+
+    // Setup context for linearization.
+    std::unique_ptr<drake::systems::Context<double>> acrobot_context_double =
+        acrobot_double.CreateDefaultContext();
+    acrobot_context_double->SetTimeStateAndParametersFrom(*acrobot_context_);
+    acrobot_double.GetInputPort("elbow_torque")
+        .FixValue(acrobot_context_double.get(), 0.0);
+    auto linear_system = Linearize(acrobot_double, *acrobot_context_double);
 
     Eigen::Matrix4d Q = Eigen::Matrix4d::Identity();
     Q(0, 0) = 10;
@@ -60,6 +68,18 @@ class AcrobotSpongController : public systems::LeafSystem<T> {
             linear_system->A(), linear_system->B(), Q, R);
     S_ = lqr_result.S;
     K_ = lqr_result.K;
+  }
+
+  const SpongControllerParams<T>& get_parameters(
+      const systems::Context<T>& context) const {
+    return this->template GetNumericParameter<SpongControllerParams>(context,
+                                                                     0);
+  }
+
+  SpongControllerParams<T>& get_mutable_parameters(
+      systems::Context<T>* context) {
+    return this->template GetMutableNumericParameter<SpongControllerParams>(
+        context, 0);
   }
 
   void CalcControlTorque(const systems::Context<T>& context,
@@ -78,7 +98,7 @@ class AcrobotSpongController : public systems::LeafSystem<T> {
 
     const T cost = (x - x0).dot(S_ * (x - x0));
     T u;
-    if (cost < 1e3) {
+    if (cost < get_parameters(context).balancing_threshold()) {
       /*
        * Balancing control law
        * When the robot is close enough to the upright fixed point, i.e.
@@ -98,12 +118,12 @@ class AcrobotSpongController : public systems::LeafSystem<T> {
        *
        * u_p is the partial feedback linearization controller which stabilizes
        * q₂.
-       * We want 
+       * We want
        *   q̈ = y = - k_p * q₂ - k_d * q̇₂
        * Given Acrobot's manipulator equation:
        *   q̈ =M⁻¹ * (Bu - bias),
        * where
-       *   M⁻¹ = [a1,a2; a2,a3], 
+       *   M⁻¹ = [a1,a2; a2,a3],
        *   B = [0;1],
        *   bias=[C0;C1]
        * we have:
@@ -118,9 +138,9 @@ class AcrobotSpongController : public systems::LeafSystem<T> {
       const Matrix2<T> M_inverse = M.inverse();
 
       // controller gains
-      const double k_e = 5;
-      const double k_p = 50;
-      const double k_d = 5;
+      const T& k_e = get_parameters(context).k_e();
+      const T& k_p = get_parameters(context).k_p();
+      const T& k_d = get_parameters(context).k_d();
 
       const T PE = acrobot_.EvalPotentialEnergy(*acrobot_context_);
       const T KE = acrobot_.EvalKineticEnergy(*acrobot_context_);

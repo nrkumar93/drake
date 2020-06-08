@@ -5,6 +5,8 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/test_utilities/expect_no_throw.h"
+
 namespace drake {
 namespace perception {
 
@@ -28,6 +30,12 @@ GTEST_TEST(PointCloudFlagsTest, Basic) {
     std::ostringstream os;
     os << (pcf::kXYZs | pcf::kDescriptorCurvature);
     EXPECT_EQ("(kXYZs | kDescriptorCurvature)", os.str());
+  }
+  // Ensure it works for multiple types.
+  {
+    std::ostringstream os;
+    os << (pcf::kXYZs | pcf::kRGBs | pcf::kDescriptorCurvature);
+    EXPECT_EQ("(kXYZs | kRGBs | kDescriptorCurvature)", os.str());
   }
 
   // Check basics.
@@ -54,8 +62,8 @@ GTEST_TEST(PointCloudFlagsTest, Basic) {
   EXPECT_THROW(pcf::Fields(100), std::runtime_error);
 
   // Check combinations with `None` (effectively zero) values.
-  EXPECT_NO_THROW(pcf::kDescriptorNone | pcf::kDescriptorCurvature);
-  EXPECT_NO_THROW(pcf::kNone | pcf::kDescriptorCurvature);
+  DRAKE_EXPECT_NO_THROW(pcf::kDescriptorNone | pcf::kDescriptorCurvature);
+  DRAKE_EXPECT_NO_THROW(pcf::kNone | pcf::kDescriptorCurvature);
 
   // Cannot have two descriptors.
   EXPECT_THROW(pcf::kDescriptorFPFH | pcf::kDescriptorCurvature,

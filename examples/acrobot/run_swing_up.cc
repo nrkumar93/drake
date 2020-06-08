@@ -2,15 +2,12 @@
 
 #include <gflags/gflags.h>
 
-#include "drake/common/find_resource.h"
+#include "drake/examples/acrobot/acrobot_geometry.h"
 #include "drake/examples/acrobot/acrobot_plant.h"
 #include "drake/examples/acrobot/gen/acrobot_state.h"
 #include "drake/examples/acrobot/spong_controller.h"
-#include "drake/lcm/drake_lcm.h"
+#include "drake/geometry/geometry_visualization.h"
 #include "drake/math/wrap_to.h"
-#include "drake/multibody/joints/floating_base_types.h"
-#include "drake/multibody/parsers/urdf_parser.h"
-#include "drake/multibody/rigid_body_plant/drake_visualizer.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/framework/diagram_builder.h"
 
@@ -23,23 +20,20 @@ namespace {
 // point, with a Spong swing-up controller designed to reach the unstable
 // fixed point.  Run drake-visualizer to see the animated result.
 
+DEFINE_double(simulation_sec, 10.0,
+              "Number of seconds to simulate.");
 DEFINE_double(realtime_factor, 1.0,
               "Playback speed.  See documentation for "
               "Simulator::set_target_realtime_rate() for details.");
 
-int do_main(int argc, char* argv[]) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-
-  lcm::DrakeLcm lcm;
-  auto tree = std::make_unique<RigidBodyTree<double>>();
-  parsers::urdf::AddModelInstanceFromUrdfFileToWorld(
-      FindResourceOrThrow("drake/examples/acrobot/Acrobot.urdf"),
-      multibody::joints::kFixed, tree.get());
-
+int do_main() {
   systems::DiagramBuilder<double> builder;
   auto acrobot = builder.AddSystem<AcrobotPlant>();
-  auto publisher = builder.AddSystem<systems::DrakeVisualizer>(*tree, &lcm);
-  builder.Connect(acrobot->get_output_port(0), publisher->get_input_port(0));
+  acrobot->set_name("acrobot");
+  auto scene_graph = builder.AddSystem<geometry::SceneGraph>();
+  AcrobotGeometry::AddToBuilder(
+      &builder, acrobot->get_output_port(0), scene_graph);
+  ConnectDrakeVisualizer(&builder, *scene_graph);
 
   auto controller = builder.AddSystem<AcrobotSpongController>();
   builder.Connect(acrobot->get_output_port(0), controller->get_input_port(0));
@@ -61,7 +55,7 @@ int do_main(int argc, char* argv[]) {
   state->set_theta2dot(0.02);
 
   simulator.set_target_realtime_rate(FLAGS_realtime_factor);
-  simulator.StepTo(10.);
+  simulator.AdvanceTo(FLAGS_simulation_sec);
 
   DRAKE_DEMAND(std::abs(math::wrap_to(state->theta1(), 0., 2. * M_PI) - M_PI) <
                1e-2);
@@ -78,5 +72,6 @@ int do_main(int argc, char* argv[]) {
 }  // namespace drake
 
 int main(int argc, char* argv[]) {
-  return drake::examples::acrobot::do_main(argc, argv);
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  return drake::examples::acrobot::do_main();
 }

@@ -4,6 +4,7 @@
 
 #include "drake/common/drake_copyable.h"
 #include "drake/geometry/scene_graph.h"
+#include "drake/math/rigid_transform.h"
 #include "drake/systems/framework/basic_vector.h"
 #include "drake/systems/framework/context.h"
 #include "drake/systems/framework/leaf_system.h"
@@ -17,77 +18,76 @@ namespace solar_system {
 // rotations become apparent as well (and not just revolutions).
 /** A model of an orrery -- a simple mechanical model of the solar system.
 
- The orrery contains one sun and four orbiting bodies: two planets (Earth and
- Mars) each with one moon. The orrery is articulated by placing the _frame_ for
- each body at its parent's origin, and then displacing the geometry from that
- origin to its orbital distance. Then each orbiting frame has a single degree of
- freedom: its angular position around its axis of rotation.
+ The orrery contains one sun and multiple orbiting bodies: two planets (Earth
+ and Mars) each with one moon and multiple satellites for Earth. The idea is
+ to represent each type of visual geometry in some form. The orrery is
+ articulated by placing the _frame_ for each body at its parent's origin, and
+ then displacing the geometry from that origin to its orbital distance. Then
+ each orbiting frame has a single degree of freedom: its angular position
+ around its axis of rotation.
 
  - The sun is stationary -- an anchored geometry.
- - Earth orbits on the xy-plane. Its moon (Luna) revolves around the earth on an
- different arbitrary plane (illustrating transform compositions).
+ - Earth orbits on the xy-plane. Its moon (Luna) revolves around the earth on
+   a different arbitrary plane (illustrating transform compositions).
+ - Three satellites (Convex, Box, and Capsule) revolve around Earth in the same
+   way as Luna but at different relative angular positions around their axis of
+   rotation.
  - Mars orbits the sun at a farther distance on a plane that is tilted off of
- the xy-plane. Its moon (Phobos) orbits around Mars on a plane parallel to
- Mars's orbital plane, but in the opposite direction.
+   the xy-plane. Its moon (Phobos) orbits around Mars on a plane parallel to
+   Mars's orbital plane, but in the opposite direction.
  - Mars has been given an arbitrary set of rings posed askew. The rings are
- declared as a child of mars's geometry.
+   declared as a child of mars's geometry.
 
  This system illustrates the following features:
 
  1. Registering anchored geometry.
  2. Registering frames as children of other frames.
  3. Allocating and calculating the FramePoseVector output for visualization.
+ 4. Exercise all supported SceneGraph geometries in an illustration context.
 
  Illustration of the orrery:
 
  Legend:
-     Body Symbol | Meaning
-    :-----------:|:--------------------
-        E - ◯    | Earth
-        L - ◑    | Luna (Earth's moon)
-        M - ◍    | Mars
-        P - ●    | Phobos (Mars's moon)
-
         Frames   | Meaning
     :-----------:|:--------------------
         S        | The sun's frame
-        E        | Earth's orbital frame
-        M        | Mars's orbital frame
-        L        | Luna's orbital frame
-        P        | Phobos's orbital frame
-        Gᵢ       | Frame of geometry; `i ∈ {e, m, l, p, r}` for Earth, Mars, Luna, Phobos, and rings of Mars, respectively.
+        E - ◯    | Earth's frame
+        M - ◍    | Mars's frame
+        L - ◑    | Luna's (Earth's moon) frame
+        P - ●    | Phobos's (Mars's moon) frame
+        Oᵢ       | Body's orbit in a circular path. `i ∈ {e, m, l, p}` for Earth, Mars, Luna, and Phobos, respectively.
 
      Pose Symbol | Meaning
     :-----------:|:--------------------
-       `X_SE`    | Earth's frame E relative to S
-       `X_EGₑ`   | Earth's geometry Gₑ relative to E (placed at the end of the arm)
-       `X_EL`    | Luna's frame L relative to E (X_EL = X_EGₑ)
-       `X_LGₗ`   | Luna's geometry Gₗ relative to L (placed out in orbit)
-       `X_SM`    | Mars's frame M relative to S
-       `X_MGₘ`   | Mars's geometry Gₘ relative to M (placed at the end of the arm)
-       `X_MP`    | Phobos's frame P relative to M (X_MP = X_MGₘ)
-       `X_PGₚ`   | Phobos's geometry Gₚ relative to P (placed out in orbit)
-       `X_GₘGᵣ`  | Mars's rings Gr relative to Mars's geometry Gm (not shown in diagram).
+       `X_SOₑ`   | Earth's orbit Oₑ relative to S
+       `X_OₑE`   | Earth's frame E relative to its orbit Oₑ
+       `X_OₑOₗ`  | Luna's orbit Oₗ relative to Earth's Oₑ
+       `X_OₗL`   | Luna's geometry L relative to its orbit Oₗ
+       `X_SOₘ`   | Mars's orbit Oₘ relative to S
+       `X_OₘM`   | Mars's frame M relative to its orbit Oₘ
+       `X_OₘOₚ`  | Phobos's orbit Oₚ relative to Mars's orbit Oₘ
+       `X_OₚP`   | Phobos's frame P relative to its orbit Oₚ
+       `X_MR`    | Mars's rings R relative to Mars's frame M (not shown in diagram).
 
-<br>
 ```
-   X_EGₑ  X_LGₗ                          X_MGₘ  X_PGₚ
-      ↓   ↓                                ↓   ↓
-      E   L         ▁▁▁                    M   p
-      ◯   ◑        ╱   ╲                   ◍   ●
-X_EL →├───┘       │  S  │           X_MP → ├───┘
-      │            ╲▁▁▁╱                   │
-      │              │                     │
-      └──────────────┤ ← X_SE              │
-                     └─────────────────────┘
-                     ↑
-                    X_SM
+    X_OₑE  X_OₗL                          X_OₘM  X_OₚP
+       ↓   ↓                                ↓   ↓
+       E   L         ▁▁▁                    M   P
+       ◯   ◑        ╱   ╲                   ◍   ●
+X_OₑOₗ→├───┘       │  S  │         X_OₘOₚ → ├───┘
+       │            ╲▁▁▁╱                   │
+       │              │                     │
+       └──────────────┤ ← X_SOₑ             │
+                      └─────────────────────┘
+                      ↑
+                     X_SOₘ
 ```
 
- @tparam T The vector element type, which must be a valid Eigen scalar.
+ The frame of orbit's origin lies at the circle's center and it's z-axis is
+ perpendicular to the plane of the circle.
 
- Instantiated templates for the following kinds of T's are provided:
- - double */
+ @tparam_double_only
+*/
 template <typename T>
 class SolarSystem : public systems::LeafSystem<T> {
  public:
@@ -111,12 +111,6 @@ class SolarSystem : public systems::LeafSystem<T> {
   // pulls from the models instead of simply zeroing things out.
   void SetDefaultState(const systems::Context<T>&,
                        systems::State<T>*) const override;
-
- protected:
-  // No inputs implies no feedthrough; this makes it explicit.
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return false;
-  }
 
  private:
   // Allocate all of the geometry.
@@ -149,13 +143,13 @@ class SolarSystem : public systems::LeafSystem<T> {
   int geometry_pose_port_{-1};
 
   // Solar system specification
-  const int kBodyCount = 4;
+  const int kBodyCount = 7;
   // The ids for each celestial body frame
   std::vector<geometry::FrameId> body_ids_;
   // The axes around each body revolves (expressed in its parent's frame)
   std::vector<Vector3<double>> axes_;
   // The translational offset of each body from its parent frame
-  std::vector<Isometry3<double>> body_offset_;
+  std::vector<math::RigidTransformd> body_offset_;
 };
 
 }  // namespace solar_system

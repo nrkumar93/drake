@@ -27,9 +27,11 @@ bool operator<(FormulaKind k1, FormulaKind k2) {
   return static_cast<int>(k1) < static_cast<int>(k2);
 }
 
-Formula::Formula(std::shared_ptr<FormulaCell> ptr) : ptr_{std::move(ptr)} {}
+Formula::Formula(std::shared_ptr<const FormulaCell> ptr)
+    : ptr_{std::move(ptr)} {}
 
-Formula::Formula(const Variable& var) : ptr_{make_shared<FormulaVar>(var)} {}
+Formula::Formula(const Variable& var)
+    : ptr_{make_shared<const FormulaVar>(var)} {}
 
 FormulaKind Formula::get_kind() const {
   DRAKE_ASSERT(ptr_ != nullptr);
@@ -74,9 +76,20 @@ bool Formula::Less(const Formula& f) const {
   return ptr_->Less(*(f.ptr_));
 }
 
-bool Formula::Evaluate(const Environment& env) const {
+bool Formula::Evaluate(const Environment& env,
+                       RandomGenerator* const random_generator) const {
   DRAKE_ASSERT(ptr_ != nullptr);
-  return ptr_->Evaluate(env);
+  if (random_generator == nullptr) {
+    return ptr_->Evaluate(env);
+  } else {
+    return ptr_->Evaluate(
+        PopulateRandomVariables(env, GetFreeVariables(), random_generator));
+  }
+}
+
+bool Formula::Evaluate(RandomGenerator* const random_generator) const {
+  DRAKE_ASSERT(ptr_ != nullptr);
+  return Evaluate(Environment{}, random_generator);
 }
 
 Formula Formula::Substitute(const Variable& var, const Expression& e) const {
@@ -99,16 +112,16 @@ string Formula::to_string() const {
 }
 
 Formula Formula::True() {
-  static Formula tt{make_shared<FormulaTrue>()};
+  static Formula tt{make_shared<const FormulaTrue>()};
   return tt;
 }
 Formula Formula::False() {
-  static Formula ff{make_shared<FormulaFalse>()};
+  static Formula ff{make_shared<const FormulaFalse>()};
   return ff;
 }
 
 Formula forall(const Variables& vars, const Formula& f) {
-  return Formula{make_shared<FormulaForall>(vars, f)};
+  return Formula{make_shared<const FormulaForall>(vars, f)};
 }
 
 Formula make_conjunction(const set<Formula>& formulas) {
@@ -142,7 +155,7 @@ Formula make_conjunction(const set<Formula>& formulas) {
     return *(operands.begin());
   }
   // TODO(soonho-tri): Returns False if both f and ¬f appear in operands.
-  return Formula{make_shared<FormulaAnd>(operands)};
+  return Formula{make_shared<const FormulaAnd>(operands)};
 }
 
 Formula operator&&(const Formula& f1, const Formula& f2) {
@@ -190,7 +203,7 @@ Formula make_disjunction(const set<Formula>& formulas) {
     return *(operands.begin());
   }
   // TODO(soonho-tri): Returns True if both f and ¬f appear in operands.
-  return Formula{make_shared<FormulaOr>(operands)};
+  return Formula{make_shared<const FormulaOr>(operands)};
 }
 
 Formula operator||(const Formula& f1, const Formula& f2) {
@@ -217,7 +230,7 @@ Formula operator!(const Formula& f) {
   if (is_negation(f)) {
     return get_operand(f);
   }
-  return Formula{make_shared<FormulaNot>(f)};
+  return Formula{make_shared<const FormulaNot>(f)};
 }
 
 Formula operator!(const Variable& v) { return !Formula(v); }
@@ -233,7 +246,7 @@ Formula operator==(const Expression& e1, const Expression& e2) {
   if (diff.get_kind() == ExpressionKind::Constant) {
     return diff.Evaluate() == 0.0 ? Formula::True() : Formula::False();
   }
-  return Formula{make_shared<FormulaEq>(e1, e2)};
+  return Formula{make_shared<const FormulaEq>(e1, e2)};
 }
 
 Formula operator!=(const Expression& e1, const Expression& e2) {
@@ -242,7 +255,7 @@ Formula operator!=(const Expression& e1, const Expression& e2) {
   if (diff.get_kind() == ExpressionKind::Constant) {
     return diff.Evaluate() != 0.0 ? Formula::True() : Formula::False();
   }
-  return Formula{make_shared<FormulaNeq>(e1, e2)};
+  return Formula{make_shared<const FormulaNeq>(e1, e2)};
 }
 
 Formula operator<(const Expression& e1, const Expression& e2) {
@@ -251,7 +264,7 @@ Formula operator<(const Expression& e1, const Expression& e2) {
   if (diff.get_kind() == ExpressionKind::Constant) {
     return diff.Evaluate() < 0 ? Formula::True() : Formula::False();
   }
-  return Formula{make_shared<FormulaLt>(e1, e2)};
+  return Formula{make_shared<const FormulaLt>(e1, e2)};
 }
 
 Formula operator<=(const Expression& e1, const Expression& e2) {
@@ -260,7 +273,7 @@ Formula operator<=(const Expression& e1, const Expression& e2) {
   if (diff.get_kind() == ExpressionKind::Constant) {
     return diff.Evaluate() <= 0 ? Formula::True() : Formula::False();
   }
-  return Formula{make_shared<FormulaLeq>(e1, e2)};
+  return Formula{make_shared<const FormulaLeq>(e1, e2)};
 }
 
 Formula operator>(const Expression& e1, const Expression& e2) {
@@ -269,7 +282,7 @@ Formula operator>(const Expression& e1, const Expression& e2) {
   if (diff.get_kind() == ExpressionKind::Constant) {
     return diff.Evaluate() > 0 ? Formula::True() : Formula::False();
   }
-  return Formula{make_shared<FormulaGt>(e1, e2)};
+  return Formula{make_shared<const FormulaGt>(e1, e2)};
 }
 
 Formula operator>=(const Expression& e1, const Expression& e2) {
@@ -278,11 +291,11 @@ Formula operator>=(const Expression& e1, const Expression& e2) {
   if (diff.get_kind() == ExpressionKind::Constant) {
     return diff.Evaluate() >= 0 ? Formula::True() : Formula::False();
   }
-  return Formula{make_shared<FormulaGeq>(e1, e2)};
+  return Formula{make_shared<const FormulaGeq>(e1, e2)};
 }
 
 Formula isnan(const Expression& e) {
-  return Formula{make_shared<FormulaIsnan>(e)};
+  return Formula{make_shared<const FormulaIsnan>(e)};
 }
 
 Formula isinf(const Expression& e) {
@@ -296,17 +309,17 @@ Formula isfinite(const Expression& e) {
 }
 
 Formula positive_semidefinite(const Eigen::Ref<const MatrixX<Expression>>& m) {
-  return Formula{make_shared<FormulaPositiveSemidefinite>(m)};
+  return Formula{make_shared<const FormulaPositiveSemidefinite>(m)};
 }
 
 Formula positive_semidefinite(const MatrixX<Expression>& m,
                               const Eigen::UpLoType mode) {
   switch (mode) {
     case Eigen::Lower:
-      return Formula{make_shared<FormulaPositiveSemidefinite>(
+      return Formula{make_shared<const FormulaPositiveSemidefinite>(
           m.triangularView<Eigen::Lower>())};
     case Eigen::Upper:
-      return Formula{make_shared<FormulaPositiveSemidefinite>(
+      return Formula{make_shared<const FormulaPositiveSemidefinite>(
           m.triangularView<Eigen::Upper>())};
     default:
       throw std::runtime_error(

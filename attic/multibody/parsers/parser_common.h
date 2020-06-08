@@ -5,6 +5,7 @@
 
 #include <tinyxml2.h>
 
+#include "drake/attic_warning.h"
 #include "drake/multibody/joints/floating_base_types.h"
 #include "drake/multibody/parsers/model_instance_id_table.h"
 #include "drake/multibody/rigid_body_frame.h"
@@ -53,7 +54,7 @@ struct FloatingJointConstants {
  *
  * @return The number of floating joint added to this rigid body tree.
  *
- * @throws A std::runtime_error if the floating_base_type is unrecognized or
+ * @throws std::runtime_error if the floating_base_type is unrecognized or
  * zero floating joints were added to the model.
  */
 int AddFloatingJoint(

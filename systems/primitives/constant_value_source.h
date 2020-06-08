@@ -2,31 +2,24 @@
 
 #include <memory>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/systems/framework/leaf_system.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace systems {
 
 /// A source block that always outputs a constant value.
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
+///
+/// @tparam_default_scalar
 /// @ingroup primitive_systems
-///
-/// This class uses Drake's `-inl.h` pattern.  When seeing linker errors from
-/// this class, please refer to https://drake.mit.edu/cxx_inl.html.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-///
-/// They are already available to link against in the containing library.
 template <typename T>
-class ConstantValueSource : public LeafSystem<T> {
+class ConstantValueSource final : public LeafSystem<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(ConstantValueSource)
 
-  /// @p value The constant value to emit.
-  explicit ConstantValueSource(std::unique_ptr<AbstractValue> value);
+  /// @param value The constant value to emit which is copied by this system.
+  explicit ConstantValueSource(const AbstractValue& value);
 
   /// Scalar-converting copy constructor. See @ref system_scalar_conversion.
   template <typename U>
@@ -41,3 +34,6 @@ class ConstantValueSource : public LeafSystem<T> {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::ConstantValueSource)

@@ -8,8 +8,7 @@ namespace rimless_wheel {
 
 template <typename T>
 RimlessWheel<T>::RimlessWheel()
-    : systems::LeafSystem<T>(
-          systems::SystemTypeTag<examples::rimless_wheel::RimlessWheel>{}) {
+    : systems::LeafSystem<T>(systems::SystemTypeTag<RimlessWheel>{}) {
   this->DeclareContinuousState(RimlessWheelContinuousState<T>(), 1, 1, 0);
 
   // Discrete state for stance toe distance along the ramp.
@@ -19,7 +18,7 @@ RimlessWheel<T>::RimlessWheel()
   // two feet/spokes are touching the ground, and angular velocity is
   // approximately zero).
   bool double_support = false;
-  this->DeclareAbstractState(systems::AbstractValue::Make(double_support));
+  this->DeclareAbstractState(AbstractValue::Make(double_support));
 
   // The minimal state of the system.
   this->DeclareVectorOutputPort(RimlessWheelContinuousState<T>(),
@@ -32,12 +31,12 @@ RimlessWheel<T>::RimlessWheel()
   this->DeclareNumericParameter(RimlessWheelParams<T>());
 
   // Create the witness functions.
-  step_backward_ = this->DeclareWitnessFunction(
+  step_backward_ = this->MakeWitnessFunction(
       "step backward",
       systems::WitnessFunctionDirection::kPositiveThenNonPositive,
       &RimlessWheel::StepBackwardGuard, &RimlessWheel::StepBackwardReset);
 
-  step_forward_ = this->DeclareWitnessFunction(
+  step_forward_ = this->MakeWitnessFunction(
       "step forward",
       systems::WitnessFunctionDirection::kPositiveThenNonPositive,
       &RimlessWheel::StepForwardGuard, &RimlessWheel::StepForwardReset);

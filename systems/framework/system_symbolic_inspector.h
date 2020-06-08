@@ -60,6 +60,10 @@ class SystemSymbolicInspector {
   /// does NOT depend on the output methods (they may be affine or not).
   bool HasAffineDynamics() const;
 
+  /// Returns true if any field in the @p context is abstract-valued.
+  static bool IsAbstract(const System<symbolic::Expression>& system,
+                         const Context<symbolic::Expression>& context);
+
   /// @name Reference symbolic components
   /// A set of accessor methods that provide direct access to the symbolic
   /// forms of the System.  This class carefully sets up and names all
@@ -113,7 +117,7 @@ class SystemSymbolicInspector {
   /// @param i The discrete state group number.
   Eigen::VectorBlock<const VectorX<symbolic::Expression>> discrete_update(
       int i) const {
-    DRAKE_DEMAND(i >= 0 && i < context_->get_num_discrete_state_groups());
+    DRAKE_DEMAND(i >= 0 && i < context_->num_discrete_state_groups());
     return discrete_updates_->get_vector(i).get_value();
   }
 
@@ -139,10 +143,6 @@ class SystemSymbolicInspector {
   void InitializeDiscreteState();
   // Populates the parameters in the context_ with symbolic variables.
   void InitializeParameters();
-
-  // Returns true if any field in the @p context is abstract-valued.
-  static bool IsAbstract(const System<symbolic::Expression>& system,
-                         const Context<symbolic::Expression>& context);
 
   const std::unique_ptr<Context<symbolic::Expression>> context_;
   // Rather than maintain a Context of symbolic::Variables (which are not a

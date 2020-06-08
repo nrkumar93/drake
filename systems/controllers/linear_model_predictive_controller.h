@@ -17,7 +17,7 @@ namespace controllers {
 /// as a function of x(k):
 ///
 ///   @f[ \min_{u(k),\ldots,u(k+N),x(k+1),\ldots,x(k+N)}
-///          \Sum_{i=k}^{k+N} ((x(i) - xd(i))ᵀQ(x(i) - xd(i)) +
+///          \sum_{i=k}^{k+N} ((x(i) - xd(i))ᵀQ(x(i) - xd(i)) +
 ///                            (u(i) - ud(i))ᵀR(u(i) - ud(i))) @f]
 ///   @f[ \mathrm{s.t. } x(k+1) = A(k)x(k) + B(k)u(k) @f]
 ///
@@ -27,15 +27,15 @@ namespace controllers {
 /// implementation solves the QP in whole at every time step, discarding any
 /// information between steps.
 ///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-///
+/// @tparam_double_only
 /// @ingroup control_systems
 template <typename T>
 class LinearModelPredictiveController : public LeafSystem<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(LinearModelPredictiveController)
 
+  // TODO(jadecastro) Implement a version that regulates to an arbitrary
+  // trajectory.
   /// Constructor for an unconstrained MPC formulation with linearization
   /// occurring about the provided base_context.  Since this formulation is
   /// devoid of any externally-imposed input/state constraints, the controller
@@ -57,10 +57,8 @@ class LinearModelPredictiveController : public LeafSystem<T> {
   /// of dimension num_inputs.
   /// @pre base_context must have discrete states set as appropriate for the
   /// given @p model.  The input must also be initialized via
-  /// `base_context->FixInputPort(0, u0)`, or otherwise initialized via Diagram.
-
-  // TODO(jadecastro) Implement a version that regulates to an arbitrary
-  // trajectory.
+  /// `input_port.FixValue(base_context, u0)`, or otherwise initialized via
+  /// Diagram.
   LinearModelPredictiveController(
       std::unique_ptr<systems::System<double>> model,
       std::unique_ptr<systems::Context<double>> base_context,

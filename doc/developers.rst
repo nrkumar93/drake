@@ -15,12 +15,12 @@ Introduction
 
 If you have improvements to Drake, send us your pull requests!
 
-Our standard workflow is to fork `Drake's official Github repository
+Our standard workflow is to fork `Drake's official GitHub repository
 <https://github.com/RobotLocomotion/drake/>`_ into your
-own Github account and then push your changes into a branch on your fork. Once
+own GitHub account and then push your changes into a branch on your fork. Once
 you believe your code is ready to be merged into Drake's primary repository,
 open a `pull request <https://help.github.com/articles/using-pull-requests/>`_
-via the Github website. Your code will then undergo an interactive review
+via the GitHub website. Your code will then undergo an interactive review
 process and :ref:`Continuous Integration (CI) <continuous_integration_notes>`
 tests before it is merged into
 `Drake's primary repository <https://github.com/RobotLocomotion/drake>`_.
@@ -73,30 +73,54 @@ The following table shows the configurations and platforms that Drake
 officially supports. Supported configurations are tested in continuous
 integration. All other configurations are provided on a best-effort basis.
 
-Drake requires a compiler running in C++14 mode or greater. MATLAB is only
-supported for CMake builds using the "Unix Makefiles" generator.
+Drake requires a compiler running in C++17 mode.
 
-+-----------------------------+-----------------+--------------------+------------+-------------------+--------+
-| Operating System            | Build System    | C/C++ Compiler     | Java       | MATLAB (Optional) | Python |
-+=============================+=================+====================+============+===================+========+
-+-----------------------------+-----------------+--------------------+------------+-------------------+--------+
-| Ubuntu 16.04 LTS ("Xenial") | | Bazel 0.16.1  | | Clang 4.0        | OpenJDK 8  | R2017a            | 2.7.11 |
-|                             | | CMake 3.5.1   | | GCC 5.4          |            |                   |        |
-+-----------------------------+-----------------+--------------------+------------+                   +--------+
-| macOS 10.12 ("Sierra")      | | Bazel 0.16.1  | Apple Clang 9.0.0  | Oracle 10  |                   | 2.7.15 |
-+-----------------------------+ | CMake 3.12.1  |                    |            +-------------------+        |
-| macOS 10.13 ("High Sierra") |                 |                    |            | R2017b            |        |
-+-----------------------------+-----------------+--------------------+------------+-------------------+--------+
++----------------------------------+-------+-------+---------------------+-------------------+--------+
+| Operating System                 | Bazel | CMake | C/C++ Compiler      | Java              | Python |
++==================================+=======+=======+=====================+===================+========+
++----------------------------------+-------+-------+---------------------+-------------------+--------+
+| Ubuntu 18.04 LTS (Bionic Beaver) | 3.0   | 3.10  | | Clang 6.0         | OpenJDK 11        | 3.6    |
+|                                  |       |       | | GCC 7.5 (default) |                   |        |
++----------------------------------+       +-------+---------------------+-------------------+--------+
+| macOS Mojave (10.14)             |       | 3.17  | | Apple LLVM 11.0.0 | | AdoptOpenJDK 14 | 3.8    |
+|                                  |       |       | | (Xcode 11.3)      | | (HotSpot JVM)   |        |
++----------------------------------+       |       +---------------------+                   |        |
+| macOS Catalina (10.15)           |       |       | | Apple LLVM 11.0.3 |                   |        |
+|                                  |       |       | | (Xcode 11.4)      |                   |        |
++----------------------------------+-------+-------+---------------------+-------------------+--------+
 
-macOS 10.13 ("High Sierra") MATLAB support is experimental and untested in continuous
-integration.
+CPython is the only Python implementation supported. On Ubuntu, amd64
+(i.e., x86_64) is the only supported architecture.
+
+.. _configuration-management-non-determinism:
+
+Configuration Management Non-Determinism
+----------------------------------------
+
+The indicated versions for build systems and languages are recorded after
+having been tested on Continuous Integration.
+
+Due to how the Debian ``apt`` and Homebrew package managers work, you may not
+have these exact versions on your system when (re)running
+``install_prereqs.sh``. In general, later minor versions for more stable
+packages (e.g. CMake, compilers) should not prove to be too much of an issue.
+
+For less stable packages, such as Bazel, later minor versions may cause
+breakages. If you are on Ubuntu, please rerun ``install_prereqs.sh`` as it can
+downgrade Bazel. If on Mac, there is no easy mechanism to downgrade with
+Homebrew; however, we generally try to stay on top of Bazel versions.
+
+If you have tried and are unable to configure your system by
+:ref:`following the instructions <build_from_source>`, please do not hesitate
+to :ref:`ask for help <getting_help>`.
 
 .. _binary-packages:
 
 Binary Packages
 ---------------
 
-The binary releases of Drake are built with GCC 5.4 on Ubuntu 16.04 and Apple Clang 9.0 on macOS 10.13.
+The binary releases of Drake are built with GCC 7.5 on Ubuntu Bionic, and Apple
+LLVM 11.0.0 on macOS Mojave.
 
 The links for these packages are listed in :ref:`binary-installation`.
 
@@ -107,9 +131,12 @@ Issue Tracking
     :maxdepth: 1
 
     issues
+    platform_reviewer_checklist
 
 Code Review
 ===========
+
+.. _review_process:
 
 Review Process
 --------------
@@ -150,6 +177,21 @@ We use https://reviewable.io for code reviews. You can sign in for free with
 your GitHub identity. Before your first code review, please take a look at
 :doc:`reviewable`.
 
+If you have an expected pace for your review, please add a ``priority`` label
+(which have different meanings for PRs and
+:ref:`for issues <issues-priority>`). The response expectations, for both the
+author and reviewer:
+
+- ``priority: emergency`` - Very quick response time, nominally reserved for
+  build cop.
+- ``priority: high`` - Some urgency, quick response time.
+- ``priority: medium`` - (Default) Normal response time.
+- ``priority: low`` - No rush.
+- ``priority: backlog`` - Give priority to all other PRs on your plate.
+
+If you are an external contributor, you will need to request that a priority be
+added by a Drake Developer.
+
 **Feature Review.** After creating your pull request, assign it to someone
 else on your team for feature review. Choose the person most familiar
 with the context of your pull request. This reviewer is responsible for
@@ -175,11 +217,17 @@ make the review faster.
 - @soonho-tri (Toyota Research Institute)
 - @RussTedrake (MIT / Toyota Research Institute)
 
-**Merge.** If you have write access to RobotLocomotion/drake, a green
-"Merge Pull Request" button will appear when your change is fully reviewed and
-passes CI. You may click it to merge your PR. If you do not have write access,
-or if you believe that status checks are failing for inconsequential reasons,
-ask your platform reviewer to perform the merge for you.
+**Merge.** Once the PR is fully reviewed and passes CI, the assigned platform
+reviewer will merge it to master.  If time is of the essence, you may post a
+reminder to the PR to get the reviewer's attention.  If the PR should not be
+merged yet, or if you prefer to merge it yourself, apply the label "status:
+do not merge" to disable the merge.
+
+If you are a frequent contributor who has been granted write access to
+RobotLocomotion/drake, a green "Merge Pull Request" button will appear when
+your change is fully reviewed and passes CI. You may click it to merge your PR.
+Choose the "Squash and merge option" unless otherwise instructed (see
+:ref:`curate_commits_before_merging`).
 
 **After Merge.** If your PR breaks continuous integration, the :doc:`buildcop`
 will contact you to work out a resolution.
@@ -214,21 +262,18 @@ new link on the GitHub issue, and close the issue.
 Handling User StackOverflow Questions
 -------------------------------------
 
-Please subscribe to the ``drake`` tag by following
-`these general instructions <https://meta.stackoverflow.com/a/336515/7829525>`_,
-if you are able to.
+Please subscribe to the ``drake`` tag by following these instructions:
+
+.. toctree::
+    :maxdepth: 1
+
+    stackoverflow_notifications
 
 Please also monitor for `unanswered StackOverflow posts
 <https://stackoverflow.com/unanswered/tagged/drake?tab=noanswers>`_
 once per day. If there are unanswered questions that you are unsure of the
 answer, consider posting on the Slack ``#onramp`` channel to see if someone
 can can look into the question.
-
-The following developers are subscribed to the ``drake`` tag, and will monitor
-it:
-
-  - Russ Tedrake
-  - Eric Cousineau
 
 Continuous Integration Notes
 ============================
@@ -283,3 +328,4 @@ Version Control
     :maxdepth: 1
 
     no_push_to_origin
+    model_version_control

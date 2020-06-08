@@ -30,7 +30,7 @@ PidController<T>::PidController(const MatrixX<double>& state_projection,
                                 const Eigen::VectorXd& kp,
                                 const Eigen::VectorXd& ki,
                                 const Eigen::VectorXd& kd)
-    : LeafSystem<T>(SystemTypeTag<controllers::PidController>{}),
+    : LeafSystem<T>(SystemTypeTag<PidController>{}),
       kp_(kp),
       ki_(ki),
       kd_(kd),
@@ -39,10 +39,10 @@ PidController<T>::PidController(const MatrixX<double>& state_projection,
       state_projection_(state_projection),
       output_projection_(output_projection) {
   if (kp_.size() != kd_.size() || kd_.size() != ki_.size()) {
-    throw std::logic_error("Gains must have equal length: |Kp| = " +
-                           std::to_string(kp_.size()) + ", |Ki| = " +
-                           std::to_string(ki_.size()) + ", |Kd| = " +
-                           std::to_string(kd_.size()));
+    throw std::logic_error(
+        "Gains must have equal length: |Kp| = " + std::to_string(kp_.size()) +
+        ", |Ki| = " + std::to_string(ki_.size()) +
+        ", |Kd| = " + std::to_string(kd_.size()));
   }
   if (state_projection_.rows() != 2 * num_controlled_q_) {
     throw std::logic_error(
@@ -60,15 +60,19 @@ PidController<T>::PidController(const MatrixX<double>& state_projection,
   this->DeclareContinuousState(num_controlled_q_);
 
   output_index_control_ =
-      this->DeclareVectorOutputPort(BasicVector<T>(output_projection_.rows()),
+      this->DeclareVectorOutputPort("control",
+                                    BasicVector<T>(output_projection_.rows()),
                                     &PidController<T>::CalcControl)
           .get_index();
 
   input_index_state_ =
-      this->DeclareInputPort(kVectorValued, num_full_state_).get_index();
+      this->DeclareInputPort("estimated_state", kVectorValued, num_full_state_)
+          .get_index();
 
   input_index_desired_state_ =
-      this->DeclareInputPort(kVectorValued, 2 * num_controlled_q_).get_index();
+      this->DeclareInputPort("desired_state", kVectorValued,
+                             2 * num_controlled_q_)
+          .get_index();
 }
 
 template <typename T>
@@ -81,9 +85,9 @@ template <typename T>
 void PidController<T>::DoCalcTimeDerivatives(
     const Context<T>& context, ContinuousState<T>* derivatives) const {
   const Eigen::VectorBlock<const VectorX<T>> state =
-      this->EvalEigenVectorInput(context, input_index_state_);
+      get_input_port_estimated_state().Eval(context);
   const Eigen::VectorBlock<const VectorX<T>> state_d =
-      this->EvalEigenVectorInput(context, input_index_desired_state_);
+      get_input_port_desired_state().Eval(context);
 
   // The derivative of the continuous state is the instantaneous position error.
   VectorBase<T>& derivatives_vector = derivatives->get_mutable_vector();
@@ -97,9 +101,9 @@ template <typename T>
 void PidController<T>::CalcControl(const Context<T>& context,
                                    BasicVector<T>* control) const {
   const Eigen::VectorBlock<const VectorX<T>> state =
-      this->EvalEigenVectorInput(context, input_index_state_);
+      get_input_port_estimated_state().Eval(context);
   const Eigen::VectorBlock<const VectorX<T>> state_d =
-      this->EvalEigenVectorInput(context, input_index_desired_state_);
+      get_input_port_desired_state().Eval(context);
 
   // State error.
   const VectorX<T> controlled_state_diff =
@@ -122,7 +126,9 @@ void PidController<T>::CalcControl(const Context<T>& context,
 
 // Adds a simple record-based representation of the PID controller to @p dot.
 template <typename T>
-void PidController<T>::GetGraphvizFragment(std::stringstream* dot) const {
+void PidController<T>::GetGraphvizFragment(int max_depth,
+                                           std::stringstream* dot) const {
+  unused(max_depth);
   std::string name = this->get_name();
   if (name.empty()) {
     name = "PID Controller";

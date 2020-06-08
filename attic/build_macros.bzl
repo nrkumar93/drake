@@ -5,65 +5,92 @@ load(
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
+    "drake_cc_package_library",
     "drake_cc_test",
 )
 
-def attic_drake_cc_binary(**kwargs):
+_ATTIC_COPTS = [
+    # Everything in these packages is deprecated.
+    "-Wno-deprecated-declarations",
+]
+
+# The attic code is deprecated and is not receiving many (if any) updates, so
+# the chance of breaking these variants is small.  We'll conserve CI resources
+# by skipping them.
+_ATTIC_TEST_TAGS = [
+    "no_asan",
+    "no_drd",
+    "no_helgrind",
+    "no_valgrind_tools",
+    "no_kcov",
+    "no_lsan",
+    "no_memcheck",
+    "no_tsan",
+    "no_ubsan",
+]
+
+_ATTIC_DEPS = [
+    # Everything in these packages requires a deprecation warning.
+    "//attic:attic_warning",
+]
+
+def attic_drake_cc_binary(name, *, copts = [], deps = [], **kwargs):
     """A wrapper to that should be exclusively used within attic/...."""
+    new_copts = (copts or []) + _ATTIC_COPTS
+    new_deps = (deps or []) + _ATTIC_DEPS
     drake_cc_binary(
+        name,
+        copts = new_copts,
+        deps = new_deps,
         **kwargs
     )
 
-def attic_drake_cc_googletest(**kwargs):
+def attic_drake_cc_googletest(
+        name,
+        *,
+        copts = [],
+        tags = [],
+        deps = [],
+        **kwargs):
     """A wrapper to that should be exclusively used within attic/...."""
-    drake_cc_googletest(**kwargs)
+    new_copts = (copts or []) + _ATTIC_COPTS
+    new_tags = (tags or []) + _ATTIC_TEST_TAGS
+    new_deps = (deps or []) + _ATTIC_DEPS
+    drake_cc_googletest(
+        name,
+        copts = new_copts,
+        tags = new_tags,
+        deps = new_deps,
+        **kwargs
+    )
 
-def attic_drake_cc_library(**kwargs):
+def attic_drake_cc_library(name, *, copts = [], deps = [], **kwargs):
     """A wrapper to that should be exclusively used within attic/...."""
+    new_copts = (copts or []) + _ATTIC_COPTS
+    new_deps = (deps or []) + _ATTIC_DEPS
     drake_cc_library(
+        name,
         strip_include_prefix = "/attic",
+        copts = new_copts,
+        deps = new_deps,
         **kwargs
     )
 
-def attic_drake_cc_test(**kwargs):
+def attic_drake_cc_package_library(**kwargs):
     """A wrapper to that should be exclusively used within attic/...."""
-    drake_cc_test(**kwargs)
+    drake_cc_package_library(
+        **kwargs
+    )
 
-def add_attic_aliases(short_labels):
-    """For each item it short_labels, declares //current_package:item as an
-    alias to actual label //attic/current_package:item.
-
-    The aliases serve as deprecation shims so that Bazel downstreams are not
-    affected by files moving into the attic.
-
-    To obtain a comprehensive list of what to pass into `short_labels`, you
-    may use something similar to this query:
-
-      bazel query 'visible(@stx//:stx,
-          //attic/somepkg/... except tests(//attic/somepkg/...))' |
-          fgrep -v 'installed_headers' | sort
-
-    (In other words -- find all of the public targets within the attic.)
-    """
-
-    # The name (e.g., "multibody/parsers") of the package we're aliasing.
-    subdir = native.package_name()
-
-    # Declare aliases for `short_labels` within `subdir`.
-    for item in short_labels:
-        # Alias the target itself.
-        full_item = "//attic/" + subdir + ":" + item
-        native.alias(
-            name = item,
-            actual = full_item,
-        )
-
-        # For some targets, we have to alias the installed_headers also.
-        if "models" in item:
-            continue  # Data, not cc_library.
-        if "genproto" in item:
-            continue  # Genrule, not cc_library.
-        native.alias(
-            name = item + ".installed_headers",
-            actual = full_item + ".installed_headers",
-        )
+def attic_drake_cc_test(name, *, copts = [], tags = [], deps = [], **kwargs):
+    """A wrapper to that should be exclusively used within attic/...."""
+    new_copts = (copts or []) + _ATTIC_COPTS
+    new_tags = (tags or []) + _ATTIC_TEST_TAGS
+    new_deps = (deps or []) + _ATTIC_DEPS
+    drake_cc_test(
+        name,
+        copts = new_copts,
+        tags = new_tags,
+        deps = new_deps,
+        **kwargs
+    )

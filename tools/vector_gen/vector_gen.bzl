@@ -24,10 +24,10 @@ def _relative_dirname_basename(label):
     return dirname(label), basename(label)
 
 def _vector_gen_outs(srcs, kind):
-    """Return the list of output filenames.  The `kind` is one of "vector"
-    (foo.h, foo.cc), "translator" (foo_translator.h, foo_translator.cc),
-    or "lcm" (lcmt_foo_t.lcm).  For compatibility with past practice, C++
-    output will appear under a "gen" folder, but *.lcm output will not.
+    """Return the list of output filenames.  The `kind` is either "vector"
+    (foo.h, foo.cc) or "lcm" (lcmt_foo_t.lcm).  For compatibility with past
+    practice, C++ output will appear under a "gen" folder, but *.lcm output
+    will not.
     """
 
     # Find and remove the dirname and extension shared by all srcs.
@@ -38,9 +38,9 @@ def _vector_gen_outs(srcs, kind):
         item_dirname, item_basename = _relative_dirname_basename(item)
         if item_dirname != subdir:
             fail("%s subdirectory doesn't match %s" % (item, srcs[0]))
-        if not item.endswith(".named_vector"):
-            fail(item + " doesn't end with .named_vector")
-        name = item_basename[:-len(".named_vector")]
+        if not item.endswith("_named_vector.yaml"):
+            fail(item + " doesn't match *_named_vector.yaml")
+        name = item_basename[:-len("_named_vector.yaml")]
         names.append(name)
 
     # Compute outs based on kind.
@@ -51,16 +51,6 @@ def _vector_gen_outs(srcs, kind):
         ]
         srcs = [
             join_paths(subdir, "gen", name + ".cc")
-            for name in names
-        ]
-        return struct(hdrs = hdrs, srcs = srcs)
-    elif kind == "translator":
-        hdrs = [
-            join_paths(subdir, "gen", name + "_translator.h")
-            for name in names
-        ]
-        srcs = [
-            join_paths(subdir, "gen", name + "_translator.cc")
             for name in names
         ]
         return struct(hdrs = hdrs, srcs = srcs)
@@ -133,7 +123,7 @@ def drake_cc_vector_gen(
 
     This rule only generates C++ code -- it does not compile it; within Drake,
     use the drake_cc_vector_gen_library rule below is likely a better choice.
-    It will both geneate and compile the code all in one rule.  This rule is
+    It will both generate and compile the code all in one rule.  This rule is
     intended for use by external projects that do not want to use Drake's
     cc_library defaults.
     """
@@ -155,6 +145,7 @@ def drake_cc_vector_gen(
             "//systems/framework:vector",
             "//common:dummy_value",
             "//common:essential",
+            "//common:name_value",
             "//common:symbolic",
         ]],
     )
@@ -164,7 +155,7 @@ def drake_cc_vector_gen_library(
         srcs = [],
         deps = [],
         **kwargs):
-    """Given the *.named_vector files in `srcs`, declare a drake_cc_library
+    """Given *_named_vector.yaml files in `srcs`, declare a drake_cc_library
     with the given `name`, containing the generated BasicVector subclasses for
     those `srcs`.  The `deps` are passed through to the declared library.
     """
@@ -183,43 +174,11 @@ def drake_cc_vector_gen_library(
         **kwargs
     )
 
-def drake_cc_vector_gen_translator_library(
-        name,
-        srcs = [],
-        deps = [],
-        **kwargs):
-    """Given the *.named_vector files in `srcs`, declare a drake_cc_library
-    with the given `name`, containing the generated LcmAndVectorBaseTranslator
-    subclasses for those `srcs`.  The `deps` are passed through to the declared
-    library, and must already contain (as supplied by our caller) a matching
-    drake_cc_vector_gen_library(...) label whose `srcs` are a superset of ours,
-    as well as a C++ library of generated LCM bindings for the LCM message(s).
-    """
-    outs = _vector_gen_outs(srcs = srcs, kind = "translator")
-    _vector_gen(
-        name = name + "_codegen",
-        srcs = srcs,
-        outs = outs.srcs + outs.hdrs,
-        include_prefix = "drake",
-        visibility = [],
-        env = hermetic_python_env(),
-    )
-    drake_cc_library(
-        name = name,
-        srcs = outs.srcs,
-        hdrs = outs.hdrs,
-        deps = deps + [
-            "//common:essential",
-            "//systems/lcm:translator",
-        ],
-        **kwargs
-    )
-
 def drake_vector_gen_lcm_sources(
         name,
         srcs = [],
         **kwargs):
-    """Given the *.named_vector files in `srcs`, generate matching LCM message
+    """Given *_named_vector.yaml files in `srcs`, generate matching LCM message
     definition source files.  For a src named foo/bar.named_vector, the output
     file will be named foo/lcmt_bar_t.lcm.
     """

@@ -6,13 +6,14 @@
 #include "drake/common/eigen_types.h"
 #include "drake/common/find_resource.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/common/test_utilities/limit_malloc.h"
 #include "drake/examples/multibody/cart_pole/gen/cart_pole_params.h"
-#include "drake/multibody/multibody_tree/joint_actuator.h"
-#include "drake/multibody/multibody_tree/joints/prismatic_joint.h"
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
-#include "drake/multibody/multibody_tree/multibody_plant/multibody_plant.h"
-#include "drake/multibody/multibody_tree/parsing/multibody_plant_sdf_parser.h"
-#include "drake/multibody/multibody_tree/uniform_gravity_field_element.h"
+#include "drake/multibody/parsing/parser.h"
+#include "drake/multibody/plant/multibody_plant.h"
+#include "drake/multibody/tree/joint_actuator.h"
+#include "drake/multibody/tree/prismatic_joint.h"
+#include "drake/multibody/tree/revolute_joint.h"
+#include "drake/multibody/tree/uniform_gravity_field_element.h"
 #include "drake/systems/framework/context.h"
 
 namespace drake {
@@ -23,8 +24,8 @@ namespace {
 
 using drake::multibody::Body;
 using drake::multibody::JointActuator;
-using drake::multibody::multibody_plant::MultibodyPlant;
-using drake::multibody::parsing::AddModelFromSdfFile;
+using drake::multibody::MultibodyPlant;
+using drake::multibody::Parser;
 using drake::multibody::PrismaticJoint;
 using drake::multibody::RevoluteJoint;
 using drake::multibody::UniformGravityFieldElement;
@@ -36,10 +37,10 @@ class CartPoleTest : public ::testing::Test {
     // Make the cart_pole model.
     const std::string full_name = FindResourceOrThrow(
         "drake/examples/multibody/cart_pole/cart_pole.sdf");
-    AddModelFromSdfFile(full_name, &cart_pole_);
+    Parser(&cart_pole_).AddModelFromFile(full_name);
 
     // Add gravity to the model.
-    cart_pole_.AddForceElement<UniformGravityFieldElement>(
+    cart_pole_.mutable_gravity_field().set_gravity_vector(
         -default_parameters_.gravity() * Vector3<double>::UnitZ());
 
     // Now the model is complete.
@@ -60,13 +61,12 @@ class CartPoleTest : public ::testing::Test {
 
     // Create a context to store the state for this model:
     context_ = cart_pole_.CreateDefaultContext();
-    context_->FixInputPort(cart_pole_.get_actuation_input_port().get_index(),
-                           Vector1d(0));
+    cart_pole_.get_actuation_input_port().FixValue(context_.get(), 0.);
   }
 
   // Makes the mass matrix for the cart-pole system.
   // See http://underactuated.csail.mit.edu/underactuated.html?chapter=acrobot.
-  Matrix2<double> CartPoleHandWritenMassMatrix(double theta) {
+  Matrix2<double> CartPoleHandWrittenMassMatrix(double theta) {
     const double mc = default_parameters_.mc();  // mass of the cart in kg.
     const double mp = default_parameters_.mp();  // Pole's point mass in kg.
     const double l = default_parameters_.l();    // length of the pole in m
@@ -77,7 +77,7 @@ class CartPoleTest : public ::testing::Test {
     return M;
   }
 
-  Vector4<double> CartPoleHandWritenDynamics(
+  Vector4<double> CartPoleHandWrittenDynamics(
       const Vector2<double>& q, const Vector2<double>& v) {
     const double mp = default_parameters_.mp();  // Pole's point mass in kg.
     const double l = default_parameters_.l();    // length of the pole in m
@@ -85,7 +85,7 @@ class CartPoleTest : public ::testing::Test {
 
     // Mass matrix.
     const double theta = q(1);
-    const Matrix2<double> M = CartPoleHandWritenMassMatrix(theta);
+    const Matrix2<double> M = CartPoleHandWrittenMassMatrix(theta);
 
     // Coriolis and gyroscopic terms.
     const double theta_dot = v(1);
@@ -103,11 +103,11 @@ class CartPoleTest : public ::testing::Test {
   }
 
  protected:
-  MultibodyPlant<double> cart_pole_;
+  MultibodyPlant<double> cart_pole_{0.0};
   const PrismaticJoint<double>* cart_slider_{nullptr};
   const RevoluteJoint<double>* pole_pin_{nullptr};
   std::unique_ptr<Context<double>> context_;
-  // Default parameters generated from cart_pole_params.named_vector.
+  // Default parameters generated from cart_pole_params_named_vector.yaml.
   const CartPoleParams<double> default_parameters_;
 };
 
@@ -120,13 +120,19 @@ TEST_F(CartPoleTest, MassMatrix) {
 
   Matrix2<double> M;
   pole_pin_->set_angle(context_.get(), theta);
-  cart_pole_.tree().CalcMassMatrixViaInverseDynamics(*context_, &M);
-  Matrix2<double> M_expected = CartPoleHandWritenMassMatrix(theta);
+  cart_pole_.CalcMassMatrixViaInverseDynamics(*context_, &M);
+  Matrix2<double> M_expected = CartPoleHandWrittenMassMatrix(theta);
 
   // Matrix verified to this tolerance.
   const double kTolerance = 10 * std::numeric_limits<double>::epsilon();
   EXPECT_TRUE(CompareMatrices(M, M_expected,
                   kTolerance, MatrixCompareType::relative));
+
+  {  // Repeat the computation to confirm the heap behavior.  We allow the
+     // method to heap-allocate 4 temporaries.
+    drake::test::LimitMalloc guard({.max_num_allocations = 4});
+    cart_pole_.CalcMassMatrixViaInverseDynamics(*context_, &M);
+  }
 }
 
 // Tests that the hand-derived dynamics matches that computed with a
@@ -145,7 +151,7 @@ TEST_F(CartPoleTest, SystemDynamics) {
       cart_pole_.AllocateTimeDerivatives();
   cart_pole_.CalcTimeDerivatives(*context_, xc_dot.get());
 
-  const Vector4<double> xc_dot_expected = CartPoleHandWritenDynamics(q, v);
+  const Vector4<double> xc_dot_expected = CartPoleHandWrittenDynamics(q, v);
 
   const double kTolerance = 10 * std::numeric_limits<double>::epsilon();
   EXPECT_TRUE(CompareMatrices(xc_dot->CopyToVector(),

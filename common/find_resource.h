@@ -1,11 +1,11 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "drake/common/drake_assert.h"
 #include "drake/common/drake_copyable.h"
-#include "drake/common/drake_optional.h"
 
 namespace drake {
 
@@ -23,15 +23,15 @@ class FindResourceResult {
   DRAKE_DEFAULT_COPY_AND_MOVE_AND_ASSIGN(FindResourceResult);
 
   /// Returns the absolute path to the resource, iff the resource was found.
-  optional<std::string> get_absolute_path() const;
+  std::optional<std::string> get_absolute_path() const;
 
   /// Either returns the get_absolute_path() iff the resource was found,
-  /// or else throws runtime_error.
+  /// or else throws std::runtime_error.
   std::string get_absolute_path_or_throw() const;
 
   /// Returns the error message, iff the resource was not found.
   /// The string will never be empty; only the optional can be empty.
-  optional<std::string> get_error_message() const;
+  std::optional<std::string> get_error_message() const;
 
   /// Returns the resource_path asked of FindResource.
   /// (This may be empty only in the make_empty() case.)
@@ -61,7 +61,7 @@ class FindResourceResult {
   std::string resource_path_;
 
   // The absolute path where resource_path was found, if success.
-  optional<std::string> absolute_path_;
+  std::optional<std::string> absolute_path_;
 
   // An error message, permitted to be present only when base_path is empty.
   //
@@ -69,37 +69,34 @@ class FindResourceResult {
   // (e.g., a default-constructed and/or moved-from object), which represents
   // resource-not-found along with an unspecified non-empty default error
   // message from get_error_message().
-  optional<std::string> error_message_;
+  std::optional<std::string> error_message_;
 };
-
-/// Adds a path in which resources are searched in a persistent variable. Paths
-/// are accumulated each time this function is called. It is searched after the
-/// path given by the environment variable but before the path that can be
-/// found with the sentinel `.drake-resource-sentinel`. This can be used to
-/// find data in installed distributions of drake (or in `pydrake`). The given
-/// path must be absolute or else throws runtime_error.
-void AddResourceSearchPath(std::string root_directory);
-
-/// Gets current root directory value from a persistent variable.
-std::vector<std::string> GetResourceSearchPaths();
 
 /// Attempts to locate a Drake resource named by the given @p resource_path.
 /// The @p resource_path refers to the relative path within the Drake source
 /// repository, prepended with `drake/`.  For example, to find the source
 /// file `examples/pendulum/Pendulum.urdf`, the @p resource_path would be
 /// `drake/examples/pendulum/Pendulum.urdf`.  Paths that do not start with
-/// `drake/` will return a failed result.
+/// `drake/` will return an error result.  The @p resource_path must refer
+/// to a file (not a directory).
 ///
-/// The search scans for the resource in the following places and in
-/// the following order: 1) in the DRAKE_RESOURCE_ROOT environment variable
-/// 2) in the directories specified by `AddResourceSearchPath()` and 3) in the
-/// drake source workspace. If all of these are unavailable, or do not have the
-/// resource, then it will return a failed result.
-FindResourceResult FindResource(std::string resource_path);
+/// The search scans for the resource in the following resource roots and in
+/// the following order:
+///
+/// 1. In the DRAKE_RESOURCE_ROOT environment variable.
+/// 2. In the Bazel runfiles for a bazel-bin/pkg/program.
+/// 3. In the Drake CMake install directory.
+///
+/// The first resource root from the list that exists is used to find any and
+/// all Drake resources.  If the resource root does not contain the resource,
+/// the result is an error even (if a resource root lower on the list happens
+/// to have the resource).  If all three roots are unavailable, then returns an
+/// error result.
+FindResourceResult FindResource(const std::string& resource_path);
 
 /// Convenient wrapper for querying FindResource(resource_path) followed by
 /// FindResourceResult::get_absolute_path_or_throw().
-std::string FindResourceOrThrow(std::string resource_path);
+std::string FindResourceOrThrow(const std::string& resource_path);
 
 /// The name of the environment variable that provides the first place where
 /// FindResource attempts to look.  The environment variable is allowed to be

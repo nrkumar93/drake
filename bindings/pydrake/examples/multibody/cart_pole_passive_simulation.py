@@ -1,15 +1,12 @@
-"""
-Provides an example translation of `cart_pole_passive_simluation.cc`.
-"""
+"""Provides an example translation of `cart_pole_passive_simluation.cc`."""
 
 import argparse
 
 from pydrake.common import FindResourceOrThrow
 from pydrake.geometry import (ConnectDrakeVisualizer, SceneGraph)
 from pydrake.lcm import DrakeLcm
-from pydrake.multibody.multibody_tree import UniformGravityFieldElement
-from pydrake.multibody.multibody_tree.multibody_plant import MultibodyPlant
-from pydrake.multibody.multibody_tree.parsing import AddModelFromSdfFile
+from pydrake.multibody.plant import MultibodyPlant
+from pydrake.multibody.parsing import Parser
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.analysis import Simulator
 
@@ -35,10 +32,9 @@ def main():
     builder = DiagramBuilder()
     scene_graph = builder.AddSystem(SceneGraph())
     cart_pole = builder.AddSystem(MultibodyPlant(time_step=args.time_step))
-    AddModelFromSdfFile(
-        file_name=file_name, plant=cart_pole, scene_graph=scene_graph)
-    cart_pole.AddForceElement(UniformGravityFieldElement([0, 0, -9.81]))
-    cart_pole.Finalize(scene_graph)
+    cart_pole.RegisterAsSourceForSceneGraph(scene_graph)
+    Parser(plant=cart_pole).AddModelFromFile(file_name)
+    cart_pole.Finalize()
     assert cart_pole.geometry_source_is_registered()
 
     builder.Connect(
@@ -55,8 +51,7 @@ def main():
     cart_pole_context = diagram.GetMutableSubsystemContext(
         cart_pole, diagram_context)
 
-    cart_pole_context.FixInputPort(
-        cart_pole.get_actuation_input_port().get_index(), [0])
+    cart_pole.get_actuation_input_port().FixValue(cart_pole_context, 0)
 
     cart_slider = cart_pole.GetJointByName("CartSlider")
     pole_pin = cart_pole.GetJointByName("PolePin")
@@ -67,7 +62,7 @@ def main():
     simulator.set_publish_every_time_step(False)
     simulator.set_target_realtime_rate(args.target_realtime_rate)
     simulator.Initialize()
-    simulator.StepTo(args.simulation_time)
+    simulator.AdvanceTo(args.simulation_time)
 
 
 if __name__ == "__main__":

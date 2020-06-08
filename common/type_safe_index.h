@@ -6,6 +6,7 @@
 
 #include "drake/common/drake_assert.h"
 #include "drake/common/drake_throw.h"
+#include "drake/common/hash.h"
 #include "drake/common/nice_type_name.h"
 
 namespace drake {
@@ -38,17 +39,17 @@ namespace drake {
 /// The type-safe index is a _stripped down_ `int`. Each uniquely declared
 /// index type has the following properties:
 ///
-///   - Valid index values are _explicitly_ constructed from `int` values.
-///   - The index is implicitly convertible to an `int` (to serve as an index).
-///   - The index supports increment, decrement, and in-place addition and
-///     subtraction to support standard index-like operations.
-///   - An index _cannot_ be constructed or compared to an index of another
-///     type.
-///   - In general, indices of different types are _not_ interconvertible.
-///   - Binary integer operators (e.g., +, -, |, *, etc.) _always_ produce `int`
-///     return values. One can even use operands of different index types in
-///     such a binary expression. It is the _programmer's_ responsibility to
-///     confirm that the resultant `int` value has meaning.
+/// - Valid index values are _explicitly_ constructed from `int` values.
+/// - The index is implicitly convertible to an `int` (to serve as an index).
+/// - The index supports increment, decrement, and in-place addition and
+///   subtraction to support standard index-like operations.
+/// - An index _cannot_ be constructed or compared to an index of another
+///   type.
+/// - In general, indices of different types are _not_ interconvertible.
+/// - Binary integer operators (e.g., +, -, |, *, etc.) _always_ produce `int`
+///   return values. One can even use operands of different index types in
+///   such a binary expression. It is the _programmer's_ responsibility to
+///   confirm that the resultant `int` value has meaning.
 ///
 /// While there _is_ the concept of an "invalid" index, this only exists to
 /// support default construction _where appropriate_ (e.g., using indices in
@@ -79,7 +80,7 @@ namespace drake {
 /// __Construction from integral types__
 ///
 /// C++ will do
-/// [implict integer conversions](https://en.cppreference.com/w/cpp/language/implicit_conversion#Integral_conversions).
+/// [implicit integer conversions](https://en.cppreference.com/w/cpp/language/implicit_conversion#Integral_conversions).
 /// This allows construction of %TypeSafeIndex values with arbitrary integral
 /// types. Index values must lie in the range of [0, 2³¹). The constructor will
 /// validate the input value (in Debug mode). Ultimately, the caller is
@@ -327,8 +328,10 @@ class TypeSafeIndex {
   // without unsigned/signed comparison warnings (which Drake considers to be an
   // error). Furthermore, the SFINAE is necessary to prevent ambiguity.
   // Index == int can be resolved two ways:
-  //   - convert Index to int
-  //   - promote int to size_t
+  //
+  // - convert Index to int
+  // - promote int to size_t
+  //
   // SFINAE prevents the latter.
 
   /// Whitelist equality test with indices of this tag.
@@ -345,7 +348,7 @@ class TypeSafeIndex {
       std::is_integral<U>::value && std::is_unsigned<U>::value, bool>::type
   operator==(const U& value) const {
     DRAKE_ASSERT_VOID(AssertValid(index_, "Testing == with invalid index."));
-    return value <= std::numeric_limits<int>::max() &&
+    return value <= static_cast<U>(kMaxIndex) &&
         index_ == static_cast<int>(value);
   }
 
@@ -367,7 +370,7 @@ class TypeSafeIndex {
       std::is_integral<U>::value && std::is_unsigned<U>::value, bool>::type
   operator!=(const U& value) const {
     DRAKE_ASSERT_VOID(AssertValid(index_, "Testing != with invalid index."));
-    return value > std::numeric_limits<int>::max() ||
+    return value > static_cast<U>(kMaxIndex) ||
         index_ != static_cast<int>(value);
   }
 
@@ -389,7 +392,7 @@ class TypeSafeIndex {
       std::is_integral<U>::value && std::is_unsigned<U>::value, bool>::type
   operator<(const U& value) const {
     DRAKE_ASSERT_VOID(AssertValid(index_, "Testing < with invalid index."));
-    return value > std::numeric_limits<int>::max() ||
+    return value > static_cast<U>(kMaxIndex) ||
         index_ < static_cast<int>(value);
   }
 
@@ -411,7 +414,7 @@ class TypeSafeIndex {
       std::is_integral<U>::value && std::is_unsigned<U>::value, bool>::type
   operator<=(const U& value) const {
     DRAKE_ASSERT_VOID(AssertValid(index_, "Testing <= with invalid index."));
-    return value > std::numeric_limits<int>::max() ||
+    return value > static_cast<U>(kMaxIndex) ||
         index_ <= static_cast<int>(value);
   }
 
@@ -433,8 +436,8 @@ class TypeSafeIndex {
       std::is_integral<U>::value && std::is_unsigned<U>::value, bool>::type
   operator>(const U& value) const {
     DRAKE_ASSERT_VOID(AssertValid(index_, "Testing > with invalid index."));
-    return value < std::numeric_limits<int>::max() &&
-        index_ > static_cast<int>(value);
+    return value <= static_cast<U>(kMaxIndex) &&
+           index_ > static_cast<int>(value);
   }
 
   /// Blacklist greater than test with indices of other tags.
@@ -455,8 +458,8 @@ class TypeSafeIndex {
       std::is_integral<U>::value && std::is_unsigned<U>::value, bool>::type
   operator>=(const U& value) const {
     DRAKE_ASSERT_VOID(AssertValid(index_, "Testing >= with invalid index."));
-    return value <= std::numeric_limits<int>::max() &&
-        index_ >= static_cast<int>(value);
+    return value <= static_cast<U>(kMaxIndex) &&
+           index_ >= static_cast<int>(value);
   }
 
   /// Blacklist greater than or equals test with indices of other tags.
@@ -465,11 +468,22 @@ class TypeSafeIndex {
 
   ///@}
 
+  /// Implements the @ref hash_append concept. And invalid index will
+  /// successfully hash (in order to satisfy STL requirements), and it is up to
+  /// the user to confirm it is valid before using it as a key (or other hashing
+  /// application).
+  template <typename HashAlgorithm>
+  friend void hash_append(HashAlgorithm& hasher,
+                          const TypeSafeIndex& i) noexcept {
+    using drake::hash_append;
+    hash_append(hasher, i.index_);
+  }
+
  private:
   // Checks if this index lies in the valid range; throws an exception if not.
   // Invocations provide a string explaining the origin of the bad value.
   static void AssertValid(int64_t index, const char* source) {
-    if (index < 0 || index > std::numeric_limits<int>::max()) {
+    if (index < 0 || index > kMaxIndex) {
       throw std::runtime_error(
           std::string(source) + " Type \"" +
           drake::NiceTypeName::Get<TypeSafeIndex<Tag>>() +
@@ -480,7 +494,7 @@ class TypeSafeIndex {
   // This tests for overflow conditions based on adding the given delta into
   // the current index value.
   void AssertNoOverflow(int delta, const char* source) const {
-    if (delta > 0 && index_ > std::numeric_limits<int>::max() - delta) {
+    if (delta > 0 && index_ > kMaxIndex - delta) {
       throw std::runtime_error(
           std::string(source) + " Type \"" +
           drake::NiceTypeName::Get<TypeSafeIndex<Tag>>() +
@@ -495,6 +509,16 @@ class TypeSafeIndex {
   };
 
   int index_{kDefaultInvalid};
+
+  // The largest representable index.
+  // Note: The handling of comparisons of TypeSafeIndex with unsigned integral
+  // types with *fewer* bits relies on truncations of *this* value consisting
+  // of all 1s. The maximum int satisfies that requirement. If, for whatever
+  // reason, some *alternative* maximum index is preferred (or the underlying
+  // integral type of TypeSafeIndex changes), keep this requirement in mind.
+  // Otherwise, comparisons against smaller unsigned integral types is likely
+  // to fail.
+  static constexpr int kMaxIndex = std::numeric_limits<int>::max();
 };
 
 template <typename Tag, typename U>
@@ -542,11 +566,9 @@ operator>=(const U& value, const TypeSafeIndex<Tag>& tag) {
 }  // namespace drake
 
 namespace std {
-/// Specialization of std::hash for drake::TypeSafeIndex<Tag>.
+
+/// Enables use of the type-safe index to serve as a key in STL containers.
+/// @relates TypeSafeIndex
 template <typename Tag>
-struct hash<drake::TypeSafeIndex<Tag>> {
-  size_t operator()(const drake::TypeSafeIndex<Tag>& index) const {
-    return std::hash<int>()(index);
-  }
-};
+struct hash<drake::TypeSafeIndex<Tag>> : public drake::DefaultHash {};
 }  // namespace std

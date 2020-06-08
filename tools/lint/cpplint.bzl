@@ -1,6 +1,6 @@
 # -*- python -*-
 
-load("//tools/skylark:drake_py.bzl", "py_test_isolated")
+load("@drake//tools/skylark:drake_py.bzl", "py_test_isolated")
 
 # From https://bazel.build/versions/master/docs/be/c-cpp.html#cc_library.srcs
 _SOURCE_EXTENSIONS = [source_ext for source_ext in """
@@ -16,11 +16,7 @@ _SOURCE_EXTENSIONS = [source_ext for source_ext in """
 .inc
 """.split("\n") if len(source_ext)]
 
-# Do not lint generated protocol buffer files.
-_IGNORE_EXTENSIONS = [
-    ".pb.h",
-    ".pb.cc",
-]
+_IGNORE_EXTENSIONS = []
 
 # The cpplint.py command-line argument so it doesn't skip our files!
 _EXTENSIONS_ARGS = ["--extensions=" + ",".join(
@@ -48,7 +44,12 @@ def _is_source_label(label):
             return True
     return False
 
-def _add_linter_rules(source_labels, source_filenames, name, data = None):
+def _add_linter_rules(
+        source_labels,
+        source_filenames,
+        name,
+        data = None,
+        enable_clang_format_lint = False):
     # Common attributes for all of our py_test invocations.
     data = (data or [])
     size = "small"
@@ -60,16 +61,19 @@ def _add_linter_rules(source_labels, source_filenames, name, data = None):
     # (Projects that want their own config can place a CPPLINT.cfg in their
     # root package.  Projects that want to use exactly the Drake defaults can
     # alias Drake's config file into their top-level BUILD.bazel file.)
-    cpplint_cfg = ["//:CPPLINT.cfg"] + native.glob([
-        "CPPLINT.cfg",
-        "test/CPPLINT.cfg",
-    ])
+    cpplint_data = list(data)
+    cpplint_cfgs = ["//:CPPLINT.cfg"]
+    for x in native.glob(["CPPLINT.cfg", "test/CPPLINT.cfg"]):
+        cpplint_cfgs.append("//" + native.package_name() + ":" + x)
+    for item in cpplint_cfgs:
+        if item not in cpplint_data:
+            cpplint_data.append(item)
 
     # Google cpplint.
     py_test_isolated(
         name = name + "_cpplint",
         srcs = ["@styleguide//:cpplint"],
-        data = data + cpplint_cfg + source_labels,
+        data = cpplint_data + source_labels,
         args = _EXTENSIONS_ARGS + source_filenames,
         main = "@styleguide//:cpplint/cpplint.py",
         size = size,
@@ -87,7 +91,23 @@ def _add_linter_rules(source_labels, source_filenames, name, data = None):
         tags = ["drakelint", "lint"],
     )
 
-def cpplint(existing_rules = None, data = None, extra_srcs = None):
+    # Possibly clang-format idempotence.
+    if enable_clang_format_lint:
+        py_test_isolated(
+            name = name + "_clang_format_lint",
+            srcs = ["@drake//tools/lint:clang_format_lint"],
+            data = data + source_labels,
+            args = source_filenames,
+            main = "@drake//tools/lint:clang_format_lint.py",
+            size = size,
+            tags = ["clang_format_lint", "lint"],
+        )
+
+def cpplint(
+        existing_rules = None,
+        data = None,
+        extra_srcs = None,
+        enable_clang_format_lint = False):
     """For every rule in the BUILD file so far, adds a test rule that runs
     cpplint over the C++ sources listed in that rule.  Thus, BUILD file authors
     should call this function at the *end* of every C++-related BUILD file.
@@ -110,6 +130,9 @@ def cpplint(existing_rules = None, data = None, extra_srcs = None):
         if "nolint" in rule.get("tags"):
             # Disable linting when requested (e.g., for generated code).
             continue
+        use_clang_lint = enable_clang_format_lint and (
+            "nolint_clang_format" not in rule.get("tags")
+        )
 
         # Extract the list of C++ source code labels and convert to filenames.
         candidate_labels = (
@@ -128,8 +151,9 @@ def cpplint(existing_rules = None, data = None, extra_srcs = None):
             _add_linter_rules(
                 source_labels,
                 source_filenames,
-                rule["name"],
-                data,
+                name = rule["name"],
+                data = data,
+                enable_clang_format_lint = use_clang_lint,
             )
 
     # Lint all of the extra_srcs separately in a single rule.
@@ -139,6 +163,7 @@ def cpplint(existing_rules = None, data = None, extra_srcs = None):
         _add_linter_rules(
             source_labels,
             source_filenames,
-            "extra_srcs_cpplint",
-            data,
+            name = "extra_srcs_cpplint",
+            data = data,
+            enable_clang_format_lint = enable_clang_format_lint,
         )

@@ -10,6 +10,7 @@
 
 #include <Eigen/Dense>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_throw.h"
 #include "drake/common/dummy_value.h"
 #include "drake/systems/framework/vector_base.h"
@@ -20,7 +21,7 @@ namespace systems {
 /// BasicVector is a semantics-free wrapper around an Eigen vector that
 /// satisfies VectorBase. Once constructed, its size is fixed.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
+/// @tparam_default_scalar
 template <typename T>
 class BasicVector : public VectorBase<T> {
  public:
@@ -37,22 +38,22 @@ class BasicVector : public VectorBase<T> {
   explicit BasicVector(int size)
       : values_(VectorX<T>::Constant(size, dummy_value<T>::get())) {}
 
-  /// Constructs a BasicVector with the specified @p data.
-  explicit BasicVector(const VectorX<T>& data) : values_(data) {}
+  /// Constructs a BasicVector with the specified @p vec data.
+  explicit BasicVector(VectorX<T> vec) : values_(std::move(vec)) {}
 
-  /// Constructs a BasicVector whose elements are the elements of @p data.
-  BasicVector(const std::initializer_list<T>& data)
-      : BasicVector<T>(data.size()) {
+  /// Constructs a BasicVector whose elements are the elements of @p init.
+  BasicVector(const std::initializer_list<T>& init)
+      : BasicVector<T>(init.size()) {
     int i = 0;
-    for (const T& datum : data) {
-      this->SetAtIndex(i++, datum);
+    for (const T& datum : init) {
+      (*this)[i++] = datum;
     }
   }
 
-  /// Constructs a BasicVector whose elements are the elements of @p data.
+  /// Constructs a BasicVector whose elements are the elements of @p init.
   static std::unique_ptr<BasicVector<T>> Make(
-      const std::initializer_list<T>& data) {
-    return std::make_unique<BasicVector<T>>(data);
+      const std::initializer_list<T>& init) {
+    return std::make_unique<BasicVector<T>>(init);
   }
 
   /// Constructs a BasicVector where each element is constructed using the
@@ -66,11 +67,11 @@ class BasicVector : public VectorBase<T> {
     return data;
   }
 
-  int size() const override { return static_cast<int>(values_.rows()); }
+  int size() const final { return static_cast<int>(values_.rows()); }
 
   /// Sets the vector to the given value. After a.set_value(b.get_value()), a
   /// must be identical to b.
-  /// Throws std::out_of_range if the new value has different dimensions.
+  /// @throws std::out_of_range if the new value has different dimensions.
   void set_value(const Eigen::Ref<const VectorX<T>>& value) {
     if (value.rows() != values_.rows()) {
       throw std::out_of_range(
@@ -91,36 +92,22 @@ class BasicVector : public VectorBase<T> {
     return values_.head(values_.rows());
   }
 
-  const T& GetAtIndex(int index) const override {
-    DRAKE_THROW_UNLESS(index < size());
-    return values_[index];
-  }
-
-  T& GetAtIndex(int index) override {
-    DRAKE_THROW_UNLESS(index < size());
-    return values_[index];
-  }
-
-  void SetFromVector(const Eigen::Ref<const VectorX<T>>& value) override {
+  void SetFromVector(const Eigen::Ref<const VectorX<T>>& value) final {
     set_value(value);
   }
 
-  VectorX<T> CopyToVector() const override { return values_; }
+  VectorX<T> CopyToVector() const final { return values_; }
 
   void ScaleAndAddToVector(const T& scale,
-                           Eigen::Ref<VectorX<T>> vec) const override {
-    if (vec.rows() != size()) {
+                           EigenPtr<VectorX<T>> vec) const final {
+    DRAKE_THROW_UNLESS(vec != nullptr);
+    if (vec->rows() != size()) {
       throw std::out_of_range("Addends must be the same size.");
     }
-    vec += scale * values_;
+    *vec += scale * values_;
   }
 
-  void SetZero() override { values_.setZero(); }
-
-  /// Computes the infinity norm for this vector.
-  T NormInf() const override {
-    return values_.template lpNorm<Eigen::Infinity>();
-  }
+  void SetZero() final { values_.setZero(); }
 
   /// Copies the entire vector to a new BasicVector, with the same concrete
   /// implementation type.
@@ -134,13 +121,23 @@ class BasicVector : public VectorBase<T> {
   }
 
  protected:
+  const T& DoGetAtIndex(int index) const final {
+    DRAKE_THROW_UNLESS(index < size());
+    return values_[index];
+  }
+
+  T& DoGetAtIndex(int index) final {
+    DRAKE_THROW_UNLESS(index < size());
+    return values_[index];
+  }
+
   /// Returns a new BasicVector containing a copy of the entire vector.
   /// Caller must take ownership, and may rely on the NVI wrapper to initialize
   /// the clone elementwise.
   ///
   /// Subclasses of BasicVector must override DoClone to return their covariant
   /// type.
-  virtual BasicVector<T>* DoClone() const {
+  [[nodiscard]] virtual BasicVector<T>* DoClone() const {
     return new BasicVector<T>(this->size());
   }
 
@@ -151,7 +148,7 @@ class BasicVector : public VectorBase<T> {
   template<typename F, typename... Fargs>
   static void MakeRecursive(BasicVector<T>* data, int index,
                             F constructor_arg, Fargs&&... recursive_args) {
-    data->SetAtIndex(index++, T(constructor_arg));
+    (*data)[index++] = T(constructor_arg);
     BasicVector<T>::MakeRecursive(data, index, recursive_args...);
   }
 
@@ -159,8 +156,14 @@ class BasicVector : public VectorBase<T> {
   template<typename F, typename... Fargs>
   static void MakeRecursive(BasicVector<T>* data, int index,
                             F constructor_arg) {
-    data->SetAtIndex(index++, T(constructor_arg));
+    (*data)[index++] = T(constructor_arg);
   }
+
+  /// Provides const access to the element storage.
+  const VectorX<T>& values() const { return values_; }
+
+  /// Provides mutable access to the element storage.
+  VectorX<T>& values() { return values_; }
 
  private:
   // Add in multiple scaled vectors to this vector. All vectors
@@ -170,34 +173,20 @@ class BasicVector : public VectorBase<T> {
   // is also (i.e., in addition to 'this') a contiguous vector.
   void DoPlusEqScaled(
       const std::initializer_list<std::pair<T, const VectorBase<T>&>>& rhs_scal)
-      override {
+      final {
     for (const auto& operand : rhs_scal)
-      operand.second.ScaleAndAddToVector(operand.first, values_);
+      operand.second.ScaleAndAddToVector(operand.first, &values_);
   }
 
   // The column vector of T values.
   VectorX<T> values_;
   // N.B. Do not add more member fields without considering the effect on
   // subclasses.  Derived class's Clone() methods currently assume that the
-  // BasicVector(const VectorX<T>&) constructor is all that is needed.
+  // BasicVector(VectorX<T>) constructor is all that is needed.
 };
-
-// Allows a BasicVector<T> to be streamed into a string. This is useful for
-// debugging purposes.
-template <typename T>
-std::ostream& operator<<(std::ostream& os, const BasicVector<T>& vec) {
-  os << "[";
-
-  Eigen::VectorBlock<const VectorX<T>> v = vec.get_value();
-  for (int i = 0; i < v.size(); ++i) {
-    if (i > 0)
-       os << ", ";
-    os << v[i];
-  }
-
-  os << "]";
-  return os;
-}
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::BasicVector)

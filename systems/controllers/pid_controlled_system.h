@@ -53,12 +53,7 @@ namespace controllers {
 /// desired state (size 2 * U), `S` is used to compute the state error as
 /// `x_err = S * x - x_d`.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-/// - AutoDiffXd
-///
+/// @tparam_nonsymbolic_scalar
 /// @ingroup control_systems
 template <typename T>
 class PidControlledSystem : public Diagram<T> {
@@ -74,6 +69,8 @@ class PidControlledSystem : public Diagram<T> {
   /// @param[in] Kd the derivative constant.
   /// @param[in] state_output_port_index identifies the output port on the
   /// plant that contains the (full) state information.
+  ///
+  /// @pydrake_mkdoc_identifier{5args_double_gains}
   PidControlledSystem(std::unique_ptr<System<T>> plant, double Kp, double Ki,
                       double Kd, int state_output_port_index = 0);
 
@@ -86,6 +83,8 @@ class PidControlledSystem : public Diagram<T> {
   /// @param[in] Kd the derivative vector constant.
   /// @param[in] state_output_port_index identifies the output port on the
   /// plant that contains the (full) state information.
+  ///
+  /// @pydrake_mkdoc_identifier{5args_vector_gains}
   PidControlledSystem(std::unique_ptr<System<T>> plant,
                       const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki,
                       const Eigen::VectorXd& Kd,
@@ -104,6 +103,8 @@ class PidControlledSystem : public Diagram<T> {
   /// @param[in] Kd the derivative constant.
   /// @param[in] state_output_port_index identifies the output port on the
   /// plant that contains the (full) state information.
+  ///
+  /// @pydrake_mkdoc_identifier{6args_double_gains}
   PidControlledSystem(std::unique_ptr<System<T>> plant,
                       const MatrixX<double>& feedback_selector, double Kp,
                       double Ki, double Kd, int state_output_port_index = 0);
@@ -121,6 +122,8 @@ class PidControlledSystem : public Diagram<T> {
   /// @param[in] Kd the derivative vector constant.
   /// @param[in] state_output_port_index identifies the output port on the
   /// plant that contains the (full) state information.
+  ///
+  /// @pydrake_mkdoc_identifier{6args_vector_gains}
   PidControlledSystem(std::unique_ptr<System<T>> plant,
                       const MatrixX<double>& feedback_selector,
                       const Eigen::VectorXd& Kp, const Eigen::VectorXd& Ki,

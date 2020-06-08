@@ -8,11 +8,7 @@ load(
     "drake_cc_package_library",
     "drake_cc_test",
 )
-load(
-    "@drake//tools/skylark:drake_proto.bzl",
-    "drake_cc_proto_library",
-)
-load("//tools/skylark:test_tags.bzl", "gurobi_test_tags")
+load("@drake//tools/skylark:test_tags.bzl", "gurobi_test_tags")
 load("//tools/lint:lint.bzl", "add_lint_tests")
 
 package(default_visibility = ["//visibility:public"])
@@ -29,24 +25,32 @@ drake_cc_library(
     name = "kinematic_constraint",
     srcs = [
         "angle_between_vectors_constraint.cc",
+        "distance_constraint.cc",
+        "distance_constraint_utilities.cc",
         "gaze_target_constraint.cc",
         "kinematic_constraint_utilities.cc",
+        "minimum_distance_constraint.cc",
         "orientation_constraint.cc",
+        "point_to_point_distance_constraint.cc",
         "position_constraint.cc",
     ],
     hdrs = [
         "angle_between_vectors_constraint.h",
+        "distance_constraint.h",
+        "distance_constraint_utilities.h",
         "gaze_target_constraint.h",
         "kinematic_constraint_utilities.h",
+        "minimum_distance_constraint.h",
         "orientation_constraint.h",
+        "point_to_point_distance_constraint.h",
         "position_constraint.h",
     ],
-    visibility = ["//visibility:private"],
     deps = [
         "//math:geometric_transform",
         "//math:gradient",
-        "//multibody/multibody_tree",
+        "//multibody/plant",
         "//solvers:constraint",
+        "//solvers:minimum_value_constraint",
     ],
 )
 
@@ -61,7 +65,7 @@ drake_cc_library(
     visibility = ["//visibility:private"],
     deps = [
         ":kinematic_constraint",
-        "//multibody/multibody_tree/multibody_plant",
+        "//multibody/plant",
         "//solvers:mathematical_program",
     ],
 )
@@ -79,11 +83,12 @@ drake_cc_library(
     deps = [
         "//common:find_resource",
         "//common/test_utilities:eigen_matrix_compare",
+        "//math:compute_numerical_gradient",
         "//math:gradient",
         "//multibody/benchmarks/kuka_iiwa_robot",
-        "//multibody/multibody_tree",
-        "//multibody/multibody_tree/multibody_plant",
-        "//multibody/multibody_tree/parsing:multibody_plant_sdf_parser",
+        "//multibody/parsing",
+        "//multibody/plant",
+        "//multibody/tree",
         "@gtest//:without_main",
     ],
 )
@@ -101,6 +106,7 @@ drake_cc_googletest(
     deps = [
         ":inverse_kinematics_test_utilities",
         ":kinematic_constraint",
+        "//math:geometric_transform",
     ],
 )
 
@@ -121,14 +127,40 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
-    name = "inverse_kinematics_test",
-    # TODO(betsymcphail) Ubsan fails for this test. See #9475.
-    tags = [
-        "no_ubsan",
+    name = "minimum_distance_constraint_test",
+    deps = [
+        ":inverse_kinematics_test_utilities",
+        ":kinematic_constraint",
+        "//common/test_utilities:expect_throws_message",
+        "//solvers/test_utilities",
     ],
+)
+
+drake_cc_googletest(
+    name = "distance_constraint_test",
+    deps = [
+        ":inverse_kinematics_test_utilities",
+        ":kinematic_constraint",
+        "//solvers/test_utilities",
+    ],
+)
+
+drake_cc_googletest(
+    name = "point_to_point_distance_constraint_test",
+    deps = [
+        ":inverse_kinematics_test_utilities",
+        ":kinematic_constraint",
+        "//solvers/test_utilities",
+    ],
+)
+
+drake_cc_googletest(
+    name = "inverse_kinematics_test",
     deps = [
         ":inverse_kinematics_core",
         ":inverse_kinematics_test_utilities",
+        "//math:geometric_transform",
+        "//solvers:solve",
     ],
 )
 

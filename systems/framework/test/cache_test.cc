@@ -1,5 +1,7 @@
 #include "drake/systems/framework/cache.h"
 
+#include "drake/common/test_utilities/expect_no_throw.h"
+
 // Tests the Context (runtime) side of caching, which consists of a
 // Cache object containing CacheEntryValue objects, each intended to correspond
 // to one of a System's CacheEntry objects. User interaction with the cache is
@@ -12,10 +14,10 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/systems/framework/context_base.h"
 #include "drake/systems/framework/test_utilities/my_vector.h"
 #include "drake/systems/framework/test_utilities/pack_value.h"
-#include "drake/systems/framework/value.h"
 
 using std::string;
 using Eigen::Vector3d;
@@ -328,6 +330,71 @@ TEST_F(CacheTest, DisableCachingWorks) {
   EXPECT_TRUE(vec_val.is_out_of_date());
 }
 
+// Freezing the cache should prevent mutable access to any out-of-date value.
+// These are the mutable methods:
+//   SetValueOrThrow<T>()
+//   set_value<V>()
+//   GetMutableAbstractValueOrThrow()
+//   GetMutableValueOrThrow<V>()
+//   swap_value()
+TEST_F(CacheTest, FreezeUnfreezeWork) {
+  // Test that the flag gets set and reset.
+  EXPECT_FALSE(context_.is_cache_frozen());
+  context_.FreezeCache();
+  EXPECT_TRUE(context_.is_cache_frozen());
+  context_.UnfreezeCache();
+  EXPECT_FALSE(context_.is_cache_frozen());
+
+  CacheEntryValue& str_val = cache_value(string_index_);
+  EXPECT_FALSE(str_val.is_out_of_date());
+  // All mutable methods should be OK here as long as the entry is out of date.
+  str_val.mark_out_of_date();
+  DRAKE_EXPECT_NO_THROW(str_val.SetValueOrThrow<std::string>("one"));
+  str_val.mark_out_of_date();
+  DRAKE_EXPECT_NO_THROW(str_val.set_value<std::string>("two"));
+  str_val.mark_out_of_date();
+  // The next two leave the entry out of date.
+  DRAKE_EXPECT_NO_THROW(str_val.GetMutableAbstractValueOrThrow());
+  DRAKE_EXPECT_NO_THROW(str_val.GetMutableValueOrThrow<std::string>());
+
+  auto swapper = AbstractValue::Make<std::string>("for swapping");
+  DRAKE_EXPECT_NO_THROW(str_val.swap_value(&swapper));
+
+
+  // With cache frozen but up to date, check some const methods to make sure
+  // they still work.
+  str_val.mark_up_to_date();
+  context_.FreezeCache();
+  DRAKE_EXPECT_NO_THROW(str_val.GetAbstractValueOrThrow());
+  DRAKE_EXPECT_NO_THROW(str_val.GetValueOrThrow<std::string>());
+  DRAKE_EXPECT_NO_THROW(str_val.get_value<std::string>());
+
+  // Const methods still fail if entry is out of date (just check one).
+  str_val.mark_out_of_date();
+  DRAKE_EXPECT_THROWS_MESSAGE(str_val.GetValueOrThrow<std::string>(),
+                              std::logic_error,
+                              ".*string thing.*GetValueOrThrow.*out of date.*");
+
+  // But, all mutable methods should fail now. "Set" methods should leave the
+  // cache entry out of date.
+  DRAKE_EXPECT_THROWS_MESSAGE(
+      str_val.SetValueOrThrow<std::string>("three"), std::logic_error,
+      ".*string thing.*SetValueOrThrow.*cache is frozen.*");
+  // (Despite the snake_case name, this still checks for frozen cache.)
+  DRAKE_EXPECT_THROWS_MESSAGE(str_val.set_value<std::string>("four"),
+                              std::logic_error,
+                              ".*string thing.*set_value.*cache is frozen.*");
+  DRAKE_EXPECT_THROWS_MESSAGE(
+      str_val.GetMutableAbstractValueOrThrow(), std::logic_error,
+      ".*string thing.*GetMutableAbstractValueOrThrow.*cache is frozen.*");
+  DRAKE_EXPECT_THROWS_MESSAGE(
+      str_val.GetMutableValueOrThrow<std::string>(), std::logic_error,
+      ".*string thing.*GetMutableValueOrThrow.*cache is frozen.*");
+  DRAKE_EXPECT_THROWS_MESSAGE(
+      str_val.swap_value(&swapper), std::logic_error,
+      ".*string thing.*swap_value.*cache is frozen.*");
+}
+
 // Test that the vector-valued cache entry works and preserved the underlying
 // concrete type.
 TEST_F(CacheTest, VectorCacheEntryWorks) {
@@ -362,18 +429,18 @@ TEST_F(CacheTest, CanSwapValue) {
   EXPECT_EQ(entry_value.get_value<string>(), "initial");
   auto new_value = AbstractValue::Make<string>("new value");
   entry_value.swap_value(&new_value);
-  EXPECT_EQ(new_value->GetValue<string>(), "initial");
+  EXPECT_EQ(new_value->get_value<string>(), "initial");
   EXPECT_TRUE(entry_value.is_out_of_date());
   entry_value.mark_up_to_date();
   EXPECT_EQ(entry_value.get_value<string>(), "new value");
 
 // In Debug builds, try a bad swap and expect it to be caught.
-#ifdef DRAKE_ASSERT_IS_ARMED
-  std::unique_ptr<AbstractValue> empty_ptr;
-  EXPECT_THROW(entry_value.swap_value(&empty_ptr), std::logic_error);
-  auto bad_value = AbstractValue::Make<int>(29);
-  EXPECT_THROW(entry_value.swap_value(&bad_value), std::logic_error);
-#endif
+  if (kDrakeAssertIsArmed) {
+    std::unique_ptr<AbstractValue> empty_ptr;
+    EXPECT_THROW(entry_value.swap_value(&empty_ptr), std::logic_error);
+    auto bad_value = AbstractValue::Make<int>(29);
+    EXPECT_THROW(entry_value.swap_value(&bad_value), std::logic_error);
+  }
 }
 
 TEST_F(CacheTest, InvalidationIsRecursive) {
@@ -421,8 +488,9 @@ TEST_F(CacheTest, Clone) {
 
     // Test that the new cache entry is valid and is owned by the new context.
     // This is also a unit test for ThrowIfBadCacheEntryValue().
-    EXPECT_NO_THROW(value.ThrowIfBadCacheEntryValue(&context_));
-    EXPECT_NO_THROW(clone_value.ThrowIfBadCacheEntryValue(&clone_context));
+    DRAKE_EXPECT_NO_THROW(value.ThrowIfBadCacheEntryValue(&context_));
+    DRAKE_EXPECT_NO_THROW(
+        clone_value.ThrowIfBadCacheEntryValue(&clone_context));
     EXPECT_THROW(clone_value.ThrowIfBadCacheEntryValue(&context_),
                  std::logic_error);
 
@@ -444,9 +512,9 @@ TEST_F(CacheTest, Clone) {
     const DependencyTracker& value_tracker = tracker(value.ticket());
     const DependencyTracker& clone_value_tracker =
         tracker(value.ticket(), &clone_context);
-    EXPECT_NO_THROW(
+    DRAKE_EXPECT_NO_THROW(
         value_tracker.ThrowIfBadDependencyTracker(&context_, &value));
-    EXPECT_NO_THROW(clone_value_tracker.ThrowIfBadDependencyTracker(
+    DRAKE_EXPECT_NO_THROW(clone_value_tracker.ThrowIfBadDependencyTracker(
         &clone_context, &clone_value));
     EXPECT_EQ(value_tracker.ticket(), value.ticket());
     EXPECT_EQ(clone_value_tracker.ticket(), value.ticket());
@@ -518,15 +586,15 @@ TEST_F(CacheTest, ValueMethodsWork) {
   EXPECT_THROW(value.PeekAbstractValueOrThrow(), std::logic_error);
   EXPECT_THROW(value.PeekValueOrThrow<int>(), std::logic_error);
 
-#ifdef DRAKE_ASSERT_IS_ARMED
-  EXPECT_THROW(value.get_abstract_value(), std::logic_error);
-  EXPECT_THROW(value.get_value<int>(), std::logic_error);
-  EXPECT_THROW(value.set_value<int>(5), std::logic_error);
-  EXPECT_THROW(value.is_out_of_date(), std::logic_error);
-  EXPECT_THROW(value.needs_recomputation(), std::logic_error);
-  EXPECT_THROW(value.mark_up_to_date(), std::logic_error);
-  EXPECT_THROW(value.swap_value(&swap_with_me), std::logic_error);
-#endif
+  if (kDrakeAssertIsArmed) {
+    EXPECT_THROW(value.get_abstract_value(), std::logic_error);
+    EXPECT_THROW(value.get_value<int>(), std::logic_error);
+    EXPECT_THROW(value.set_value<int>(5), std::logic_error);
+    EXPECT_THROW(value.is_out_of_date(), std::logic_error);
+    EXPECT_THROW(value.needs_recomputation(), std::logic_error);
+    EXPECT_THROW(value.mark_up_to_date(), std::logic_error);
+    EXPECT_THROW(value.swap_value(&swap_with_me), std::logic_error);
+  }
 
   // Now provide an initial value (not yet up to date).
   value.SetInitialValue(PackValue(42));
@@ -537,23 +605,23 @@ TEST_F(CacheTest, ValueMethodsWork) {
   // "Get" methods should fail, "GetMutable" and "Peek" succeed.
   EXPECT_THROW(value.GetValueOrThrow<int>(), std::logic_error);
   EXPECT_THROW(value.GetAbstractValueOrThrow(), std::logic_error);
-  EXPECT_NO_THROW(value.GetMutableValueOrThrow<int>());
-  EXPECT_NO_THROW(value.GetMutableAbstractValueOrThrow());
-  EXPECT_NO_THROW(value.PeekValueOrThrow<int>());
-  EXPECT_NO_THROW(value.PeekAbstractValueOrThrow());
+  DRAKE_EXPECT_NO_THROW(value.GetMutableValueOrThrow<int>());
+  DRAKE_EXPECT_NO_THROW(value.GetMutableAbstractValueOrThrow());
+  DRAKE_EXPECT_NO_THROW(value.PeekValueOrThrow<int>());
+  DRAKE_EXPECT_NO_THROW(value.PeekAbstractValueOrThrow());
 
   // The fast "get" methods must check for up to date in Debug builds.
-#ifdef DRAKE_ASSERT_IS_ARMED
-  EXPECT_THROW(value.get_value<int>(), std::logic_error);
-  EXPECT_THROW(value.get_abstract_value(), std::logic_error);
-#endif
+  if (kDrakeAssertIsArmed) {
+    EXPECT_THROW(value.get_value<int>(), std::logic_error);
+    EXPECT_THROW(value.get_abstract_value(), std::logic_error);
+  }
 
   // Swap doesn't care about up to date or not, but always marks the swapped-in
   // value out of date.
   value.swap_value(&swap_with_me);
   EXPECT_TRUE(value.is_out_of_date());  // Still out of date.
   EXPECT_EQ(value.PeekValueOrThrow<int>(), 29);
-  EXPECT_EQ(swap_with_me->GetValueOrThrow<int>(), 42);
+  EXPECT_EQ(swap_with_me->get_value<int>(), 42);
 
   value.GetMutableValueOrThrow<int>() = 43;
   EXPECT_EQ(value.PeekValueOrThrow<int>(), 43);
@@ -564,26 +632,26 @@ TEST_F(CacheTest, ValueMethodsWork) {
   // methods should succeed but "GetMutable" and "Set" methods should fail.
   value.mark_up_to_date();
 
-  EXPECT_NO_THROW(value.get_abstract_value());
-  EXPECT_NO_THROW(value.get_value<int>());
-  EXPECT_NO_THROW(value.GetValueOrThrow<int>());
-  EXPECT_NO_THROW(value.GetAbstractValueOrThrow());
-  EXPECT_NO_THROW(value.PeekValueOrThrow<int>());
-  EXPECT_NO_THROW(value.PeekAbstractValueOrThrow());
+  DRAKE_EXPECT_NO_THROW(value.get_abstract_value());
+  DRAKE_EXPECT_NO_THROW(value.get_value<int>());
+  DRAKE_EXPECT_NO_THROW(value.GetValueOrThrow<int>());
+  DRAKE_EXPECT_NO_THROW(value.GetAbstractValueOrThrow());
+  DRAKE_EXPECT_NO_THROW(value.PeekValueOrThrow<int>());
+  DRAKE_EXPECT_NO_THROW(value.PeekAbstractValueOrThrow());
   EXPECT_THROW(value.GetMutableValueOrThrow<int>(), std::logic_error);
   EXPECT_THROW(value.GetMutableAbstractValueOrThrow(), std::logic_error);
   EXPECT_THROW(value.SetValueOrThrow<int>(5), std::logic_error);
 
   // The fast "set" method must check for up to date in Debug builds.
-#ifdef DRAKE_ASSERT_IS_ARMED
-  EXPECT_THROW(value.set_value<int>(5), std::logic_error);
-#endif
+  if (kDrakeAssertIsArmed) {
+    EXPECT_THROW(value.set_value<int>(5), std::logic_error);
+  }
 
   // And "swap" still doesn't care about up to date on entry.
   value.swap_value(&swap_with_me);
   EXPECT_TRUE(value.is_out_of_date());  // Should have changed.
   EXPECT_EQ(value.PeekValueOrThrow<int>(), 42);
-  EXPECT_EQ(swap_with_me->GetValueOrThrow<int>(), 44);
+  EXPECT_EQ(swap_with_me->get_value<int>(), 44);
   value.mark_up_to_date();
 
   // Get the same value as concrete or abstract type.

@@ -4,10 +4,11 @@
 #include <utility>
 #include <vector>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_assert.h"
 #include "drake/common/drake_copyable.h"
+#include "drake/common/value.h"
 #include "drake/systems/framework/basic_vector.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace systems {
@@ -25,7 +26,8 @@ it has captured.
 A `SystemOutput<T>` object can only be obtained using
 `System<T>::AllocateOutput()` or by copying an existing %SystemOutput object.
 
-@tparam T The type of the output data. Must be a valid Eigen scalar. */
+@tparam_default_scalar
+*/
 template <typename T>
 class SystemOutput {
  public:
@@ -35,7 +37,7 @@ class SystemOutput {
 
   /** Returns the number of output ports specified for this %SystemOutput
   during allocation. */
-  int get_num_ports() const { return static_cast<int>(port_values_.size()); }
+  int num_ports() const { return static_cast<int>(port_values_.size()); }
 
   // TODO(sherm1) All of these should return references. We don't need to
   // support missing entries.
@@ -43,16 +45,16 @@ class SystemOutput {
   /** Returns the last-saved value of output port `index` as an AbstractValue.
   This works for any output port regardless of it actual type. */
   const AbstractValue* get_data(int index) const {
-    DRAKE_ASSERT(0 <= index && index < get_num_ports());
+    DRAKE_ASSERT(0 <= index && index < num_ports());
     return port_values_[index].get();
   }
 
   /** Returns the last-saved value of output port `index` as a `BasicVector<T>`,
   although the actual concrete type is preserved from the actual output port.
-  Throws std::bad_cast if the port is not vector-valued. */
+  @throws std::bad_cast if the port is not vector-valued. */
   const BasicVector<T>* get_vector_data(int index) const {
-    DRAKE_ASSERT(0 <= index && index < get_num_ports());
-    return &port_values_[index]->template GetValue<BasicVector<T>>();
+    DRAKE_ASSERT(0 <= index && index < num_ports());
+    return &port_values_[index]->template get_value<BasicVector<T>>();
   }
 
   /** (Advanced) Returns mutable access to an AbstractValue object that is
@@ -61,7 +63,7 @@ class SystemOutput {
   users should just call `System<T>::CalcOutputs()` to get all the output
   port values at once. */
   AbstractValue* GetMutableData(int index) {
-    DRAKE_ASSERT(0 <= index && index < get_num_ports());
+    DRAKE_ASSERT(0 <= index && index < num_ports());
     return port_values_[index].get_mutable();
   }
 
@@ -69,11 +71,11 @@ class SystemOutput {
   suitable for holding the value of output port `index` of the allocating
   System. The object's concrete type is preserved from the output port. Most
   users should just call `System<T>::CalcOutputs()` to get all the output
-  port values at once. Throws std::bad_cast if the port is not vector-valued. */
+  port values at once.
+  @throws std::bad_cast if the port is not vector-valued. */
   BasicVector<T>* GetMutableVectorData(int index) {
-    DRAKE_ASSERT(0 <= index && index < get_num_ports());
-    return &port_values_[index]
-                ->template GetMutableValueOrThrow<BasicVector<T>>();
+    DRAKE_ASSERT(0 <= index && index < num_ports());
+    return &port_values_[index]->template get_mutable_value<BasicVector<T>>();
   }
 
  private:
@@ -92,3 +94,6 @@ class SystemOutput {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::SystemOutput)

@@ -34,7 +34,7 @@ const int kInvalidPortIdentifier = -1;
 template <typename T>
 RigidBodyPlant<T>::RigidBodyPlant(
     std::unique_ptr<const RigidBodyTree<double>> tree, double timestep)
-    : LeafSystem<T>(SystemTypeTag<drake::systems::RigidBodyPlant>{}),
+    : LeafSystem<T>(SystemTypeTag<RigidBodyPlant>{}),
       tree_(move(tree)),
       timestep_(timestep),
       compliant_contact_model_(std::make_unique<CompliantContactModel<T>>()) {
@@ -55,7 +55,7 @@ RigidBodyPlant<T>::RigidBodyPlant(
 template <typename T>
 template <typename U>
 RigidBodyPlant<T>::RigidBodyPlant(const RigidBodyPlant<U>& other)
-    : LeafSystem<T>(SystemTypeTag<drake::systems::RigidBodyPlant>{}),
+    : LeafSystem<T>(SystemTypeTag<RigidBodyPlant>{}),
       tree_(other.get_rigid_body_tree().Clone()),
       timestep_(other.get_time_step()),
       compliant_contact_model_(std::make_unique<CompliantContactModel<T>>(
@@ -66,9 +66,21 @@ RigidBodyPlant<T>::RigidBodyPlant(const RigidBodyPlant<U>& other)
 template <typename T>
 void RigidBodyPlant<T>::initialize() {
   DRAKE_DEMAND(tree_ != nullptr);
+  if (is_state_discrete()) {
+    // Configuration and velocity.
+    this->DeclareDiscreteState(get_num_states());
+    // The last time that the state was (discretely) updated.
+    this->DeclareDiscreteState(1);
+  } else {
+    // TODO(amcastro-tri): add z state to track energy conservation.
+    this->DeclareContinuousState(
+        get_num_positions() /* num_q */, get_num_velocities() /* num_v */,
+        0 /* num_z */);
+  }
   state_output_port_index_ =
       this->DeclareVectorOutputPort(BasicVector<T>(get_num_states()),
-                                    &RigidBodyPlant::CopyStateToOutput)
+                                    &RigidBodyPlant::CopyStateToOutput,
+                                    {this->all_state_ticket()})
           .get_index();
   if (is_state_discrete()) {
     // TODO(jwnimmer-tri) Add an implementation of the state derivative output
@@ -78,7 +90,8 @@ void RigidBodyPlant<T>::initialize() {
     state_derivative_output_port_index_ =
         this->DeclareVectorOutputPort(
             BasicVector<T>(get_num_states()),
-            &RigidBodyPlant::CalcStateDerivativeOutput)
+            &RigidBodyPlant::CalcStateDerivativeOutput,
+            {this->xcdot_ticket()})
         .get_index();
   }
   ExportModelInstanceCentricPorts();
@@ -86,7 +99,8 @@ void RigidBodyPlant<T>::initialize() {
   kinematics_output_port_index_ =
       this->DeclareAbstractOutputPort(
               KinematicsResults<T>(tree_.get()),
-              &RigidBodyPlant::CalcKinematicsResultsOutput)
+              &RigidBodyPlant::CalcKinematicsResultsOutput,
+              {this->kinematics_ticket()})
           .get_index();
 
   // Declares an abstract valued output port for contact information.
@@ -101,7 +115,8 @@ template <class T>
 OutputPortIndex RigidBodyPlant<T>::DeclareContactResultsOutputPort() {
   return this->DeclareAbstractOutputPort(
       ContactResults<T>(),
-      &RigidBodyPlant::CalcContactResultsOutput).get_index();
+      &RigidBodyPlant::CalcContactResultsOutput,
+      {this->kinematics_ticket()}).get_index();
 }
 
 template <class T>
@@ -151,14 +166,17 @@ void RigidBodyPlant<T>::ExportModelInstanceCentricPorts() {
       if (get_num_actuators(i) == 0) {
         continue;
       }
-      input_map_[i] =
-          this->DeclareInputPort(kVectorValued, actuator_map_[i].second)
-              .get_index();
-      torque_output_map_[i] =
-          this->DeclareVectorOutputPort(BasicVector<T>(get_num_actuators(i)),
-          [this, i](const Context<T>& context, BasicVector<T>* output) {
-            this->CopyInstanceTorqueOutput(i, context, output);
-          }).get_index();
+      const auto& input_port =
+          this->DeclareInputPort(kVectorValued, actuator_map_[i].second);
+      const auto& output_port =
+          this->DeclareVectorOutputPort(
+              BasicVector<T>(get_num_actuators(i)),
+              [this, i](const Context<T>& context, BasicVector<T>* output) {
+                this->CopyInstanceTorqueOutput(i, context, output);
+              },
+              {input_port.ticket()});
+      input_map_[i] = input_port.get_index();
+      torque_output_map_[i] = output_port.get_index();
     }
 
     // Now create the appropriate maps for the position and velocity
@@ -207,7 +225,8 @@ void RigidBodyPlant<T>::ExportModelInstanceCentricPorts() {
           this->DeclareVectorOutputPort(BasicVector<T>(get_num_states(i)),
           [this, i](const Context<T>& context, BasicVector<T>* output) {
             this->CalcInstanceOutput(i, context, output);
-          }).get_index();
+          },
+          {this->all_state_ticket()}).get_index();
     }
   }
 }
@@ -225,11 +244,6 @@ template <typename T>
 void RigidBodyPlant<T>::set_default_compliant_material(
     const CompliantMaterial& material) {
   compliant_contact_model_->set_default_material(material);
-}
-
-template <typename T>
-optional<bool> RigidBodyPlant<T>::DoHasDirectFeedthrough(int, int) const {
-  return false;
 }
 
 template <typename T>
@@ -409,41 +423,6 @@ RigidBodyPlant<T>::model_instance_torque_output_port(
 }
 
 template <typename T>
-std::unique_ptr<ContinuousState<T>> RigidBodyPlant<T>::AllocateContinuousState()
-    const {
-  if (is_state_discrete()) {
-    // Return an empty continuous state if the plant state is discrete.
-    return std::make_unique<ContinuousState<T>>();
-  }
-
-  // TODO(amcastro-tri): add z state to track energy conservation.
-  return make_unique<ContinuousState<T>>(
-      make_unique<BasicVector<T>>(get_num_states()),
-      get_num_positions() /* num_q */, get_num_velocities() /* num_v */,
-      0 /* num_z */);
-}
-
-template <typename T>
-std::unique_ptr<DiscreteValues<T>> RigidBodyPlant<T>::AllocateDiscreteState()
-    const {
-  if (!is_state_discrete()) {
-    // State of the plant is continuous- return an empty discrete state.
-    return std::make_unique<DiscreteValues<T>>();
-  }
-  std::vector<std::unique_ptr<BasicVector<T>>> discrete_state_vector;
-
-  // Configuration and velocity.
-  discrete_state_vector.push_back(
-      make_unique<BasicVector<T>>(get_num_states()));
-
-  // The last time that the state was (discretely) updated.
-  discrete_state_vector.push_back(
-      make_unique<BasicVector<T>>(1));
-
-  return make_unique<DiscreteValues<T>>(std::move(discrete_state_vector));
-}
-
-template <typename T>
 bool RigidBodyPlant<T>::model_instance_has_actuators(
     int model_instance_id) const {
   DRAKE_ASSERT(static_cast<int>(input_map_.size()) ==
@@ -493,9 +472,8 @@ template <typename T>
 void RigidBodyPlant<T>::CalcStateDerivativeOutput(
     const Context<T>& context,
     BasicVector<T>* output) const {
-  unique_ptr<ContinuousState<T>> derivatives = this->AllocateTimeDerivatives();
-  this->CalcTimeDerivatives(context, derivatives.get());
-  output->SetFrom(derivatives->get_vector());
+  const ContinuousState<T>& derivatives = this->EvalTimeDerivatives(context);
+  output->SetFrom(derivatives.get_vector());
 }
 
 // Updates one model-instance-centric state output port.
@@ -1083,9 +1061,9 @@ RigidBodyPlant<T>::DoCalcDiscreteVariableUpdatesImpl(
         limits.push_back(JointLimit());
         limits.back().v_index = b->get_velocity_start_index();
         limits.back().signed_distance = (qjoint - qmin);
-        SPDLOG_DEBUG(drake::log(), "body name: {} ", b->get_name());
-        SPDLOG_DEBUG(drake::log(), "joint name: {} ", joint.get_name());
-        SPDLOG_DEBUG(drake::log(), "joint signed distance: {} ",
+        DRAKE_LOGGER_DEBUG("body name: {} ", b->get_name());
+        DRAKE_LOGGER_DEBUG("joint name: {} ", joint.get_name());
+        DRAKE_LOGGER_DEBUG("joint signed distance: {} ",
             limits.back().signed_distance);
         limits.back().lower_limit = true;
       }
@@ -1094,9 +1072,9 @@ RigidBodyPlant<T>::DoCalcDiscreteVariableUpdatesImpl(
         limits.push_back(JointLimit());
         limits.back().v_index = b->get_velocity_start_index();
         limits.back().signed_distance = (qmax - qjoint);
-        SPDLOG_DEBUG(drake::log(), "body name: {} ", b->get_name());
-        SPDLOG_DEBUG(drake::log(), "joint name: {} ", joint.get_name());
-        SPDLOG_DEBUG(drake::log(), "joint signed distance: {} ",
+        DRAKE_LOGGER_DEBUG("body name: {} ", b->get_name());
+        DRAKE_LOGGER_DEBUG("joint name: {} ", joint.get_name());
+        DRAKE_LOGGER_DEBUG("joint signed distance: {} ",
             limits.back().signed_distance);
         limits.back().lower_limit = false;
       }
@@ -1156,9 +1134,9 @@ RigidBodyPlant<T>::DoCalcDiscreteVariableUpdatesImpl(
     F.col(i) = data.F_mult(unit);
     L.col(i) = data.L_mult(unit);
   }
-  SPDLOG_DEBUG(drake::log(), "N: {}", N);
-  SPDLOG_DEBUG(drake::log(), "F: {}", F);
-  SPDLOG_DEBUG(drake::log(), "L: {}", L);
+  DRAKE_LOGGER_DEBUG("N: {}", N);
+  DRAKE_LOGGER_DEBUG("F: {}", F);
+  DRAKE_LOGGER_DEBUG("L: {}", L);
   #endif
 
   // Set the regularization and stabilization terms for contact tangent
@@ -1198,30 +1176,30 @@ RigidBodyPlant<T>::DoCalcDiscreteVariableUpdatesImpl(
   constraint_solver_.SolveImpactProblem(data, &contact_force);
   constraint_solver_.ComputeGeneralizedVelocityChange(data, contact_force,
       &new_velocity);
-  SPDLOG_DEBUG(drake::log(), "Actuator forces: {} ", u.transpose());
-  SPDLOG_DEBUG(drake::log(), "Transformed actuator forces: {} ",
+  DRAKE_LOGGER_DEBUG("Actuator forces: {} ", u.transpose());
+  DRAKE_LOGGER_DEBUG("Transformed actuator forces: {} ",
       (tree.B * u).transpose());
-  SPDLOG_DEBUG(drake::log(), "force: {}", right_hand_side.transpose());
-  SPDLOG_DEBUG(drake::log(), "old velocity: {}", v.transpose());
-  SPDLOG_DEBUG(drake::log(), "integrated forward velocity: {}",
+  DRAKE_LOGGER_DEBUG("force: {}", right_hand_side.transpose());
+  DRAKE_LOGGER_DEBUG("old velocity: {}", v.transpose());
+  DRAKE_LOGGER_DEBUG("integrated forward velocity: {}",
       data.solve_inertia(data.Mv).transpose());
-  SPDLOG_DEBUG(drake::log(), "change in velocity: {}",
+  DRAKE_LOGGER_DEBUG("change in velocity: {}",
       new_velocity.transpose());
   new_velocity += data.solve_inertia(data.Mv);
-  SPDLOG_DEBUG(drake::log(), "new velocity: {}", new_velocity.transpose());
-  SPDLOG_DEBUG(drake::log(), "new configuration: {}",
+  DRAKE_LOGGER_DEBUG("new velocity: {}", new_velocity.transpose());
+  DRAKE_LOGGER_DEBUG("new configuration: {}",
       (q + dt * tree.transformVelocityToQDot(kinematics_cache, new_velocity)).
       transpose());
-  SPDLOG_DEBUG(drake::log(), "N * new velocity: {} ", data.N_mult(new_velocity).
+  DRAKE_LOGGER_DEBUG("N * new velocity: {} ", data.N_mult(new_velocity).
       transpose());
-  SPDLOG_DEBUG(drake::log(), "F * new velocity: {} ", data.F_mult(new_velocity).
+  DRAKE_LOGGER_DEBUG("F * new velocity: {} ", data.F_mult(new_velocity).
       transpose());
-  SPDLOG_DEBUG(drake::log(), "L * new velocity: {} ", data.L_mult(new_velocity).
+  DRAKE_LOGGER_DEBUG("L * new velocity: {} ", data.L_mult(new_velocity).
       transpose());
-  SPDLOG_DEBUG(drake::log(), "G * new velocity: {} ", data.G_mult(new_velocity).
+  DRAKE_LOGGER_DEBUG("G * new velocity: {} ", data.G_mult(new_velocity).
       transpose());
-  SPDLOG_DEBUG(drake::log(), "G * v: {} ", data.G_mult(v).transpose());
-  SPDLOG_DEBUG(drake::log(), "g(): {}",
+  DRAKE_LOGGER_DEBUG("G * v: {} ", data.G_mult(v).transpose());
+  DRAKE_LOGGER_DEBUG("g(): {}",
       tree.positionConstraints(kinematics_cache).transpose());
 
   // qn = q + dt*qdot.
@@ -1431,6 +1409,5 @@ VectorX<T> RigidBodyPlant<T>::EvaluateActuatorInputs(
 }  // namespace systems
 }  // namespace drake
 
-// Explicitly instantiates on the most common scalar types.
 DRAKE_DEFINE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_NONSYMBOLIC_SCALARS(
     class ::drake::systems::RigidBodyPlant)

@@ -19,26 +19,24 @@ namespace rimless_wheel {
 ///   http://underactuated.mit.edu/underactuated.html?chapter=simple_legs
 /// In addition, this model has two additional (discrete) state variables that
 /// are not required in the mathematical model:
-///   - the position of the stance toe along the ramp (helpful for outputting
-///     a floating-base model coordinate, e.g. for visualization),
-///   - a boolean indicator for "double support" (to avoid the numerical
-///     challenges of simulation around the Zeno phenomenon at the standing
-///     fixed point).
 ///
-/// Inputs: None.
+/// - the position of the stance toe along the ramp (helpful for outputting
+///   a floating-base model coordinate, e.g. for visualization),
+/// - a boolean indicator for "double support" (to avoid the numerical
+///   challenges of simulation around the Zeno phenomenon at the standing
+///   fixed point).
+///
+/// @system{RimlessWheel, ,
+///   @output_port{minimal_state (theta and thetadot only)}
+///   @output_port{floating_base_state}
+/// }
+///
 /// Continuous States: theta, thetadot.
 /// Discrete States: stance toe position, double support indicator.
-/// Outputs:
-///   0) continuous (minimal coordinates) state output (theta and thetadot only)
-///   1) floating-base state output
 /// Parameters: mass, length, number of spokes, etc, are all set as Context
 ///   parameters using RimlessWheelParams.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-/// Instantiated templates for the following scalar types @p T are provided:
-/// - double
-/// - AutoDiffXd
-///
+/// @tparam_nonsymbolic_scalar
 template <typename T>
 class RimlessWheel final : public systems::LeafSystem<T> {
  public:

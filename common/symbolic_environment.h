@@ -11,6 +11,8 @@
 #include <unordered_map>
 
 #include "drake/common/drake_copyable.h"
+#include "drake/common/eigen_types.h"
+#include "drake/common/random.h"
 #include "drake/common/symbolic.h"
 
 namespace drake {
@@ -105,6 +107,17 @@ class Environment {
 
   /** Inserts a pair (@p key, @p elem). */
   void insert(const key_type& key, const mapped_type& elem);
+
+  /** Given a matrix of symbolic variables @p keys and a matrix of values @p
+   * elements, inserts each pair (keys(i, j), elements(i, j)) into the
+   * environment.
+   *
+   * @throw std::runtime_error if the size of @p keys is different from the size
+   * of @p elements.
+   */
+  void insert(const Eigen::Ref<const MatrixX<key_type>>& keys,
+              const Eigen::Ref<const MatrixX<mapped_type>>& elements);
+
   /** Checks whether the container is empty.  */
   bool empty() const { return map_.empty(); }
   /** Returns the number of elements. */
@@ -135,5 +148,11 @@ class Environment {
  private:
   map map_;
 };
+
+/** Populates the environment @p env by sampling values for the unassigned
+ *  random variables in @p variables using @p random_generator. */
+Environment PopulateRandomVariables(Environment env, const Variables& variables,
+                                    RandomGenerator* random_generator);
+
 }  // namespace symbolic
 }  // namespace drake

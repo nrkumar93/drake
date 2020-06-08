@@ -129,7 +129,7 @@ std::vector<ModelType> GetUsableModelTypes() {
   return types;
 }
 
-INSTANTIATE_TEST_CASE_P(AllModelTypesTests, AllModelTypesTests,
+INSTANTIATE_TEST_SUITE_P(AllModelTypesTests, AllModelTypesTests,
                         ::testing::ValuesIn(GetAllModelTypes()));
 
 // Fixture for tests that should only be applied to usable collision model
@@ -157,16 +157,17 @@ TEST_P(UsableModelTypesTests, RemoveElement) {
   RemoveElement(*elem2);
 }
 
-INSTANTIATE_TEST_CASE_P(UsableModelTypesTests, UsableModelTypesTests,
+INSTANTIATE_TEST_SUITE_P(UsableModelTypesTests, UsableModelTypesTests,
                         ::testing::ValuesIn(GetUsableModelTypes()));
 
 #ifndef DRAKE_DISABLE_FCL
 // Fixture for locking down FclModel's not-yet-implemented functions.
-class FclModelDeathTests : public ModelTestBase,
-                           public ::testing::WithParamInterface<
-                               std::function<void(FclModelDeathTests*)>> {
+class FclModelNotImplementedTests :
+    public ModelTestBase,
+    public ::testing::WithParamInterface<
+        std::function<void(FclModelNotImplementedTests*)>> {
  public:
-  FclModelDeathTests() {
+  FclModelNotImplementedTests() {
     model_ = drake::multibody::collision::newModel(ModelType::kFcl);
   }
 
@@ -219,22 +220,22 @@ class FclModelDeathTests : public ModelTestBase,
   }
 };
 
-TEST_P(FclModelDeathTests, NotImplemented) {
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-  EXPECT_DEATH(GetParam()(this), "Not implemented.");
+TEST_P(FclModelNotImplementedTests, NotImplemented) {
+  EXPECT_THROW(GetParam()(this), std::exception);
 }
 
-INSTANTIATE_TEST_CASE_P(
-    NotImplementedTest, FclModelDeathTests,
-    ::testing::Values(&FclModelDeathTests::CallAddBox,
-                      &FclModelDeathTests::CallAddCapsule,
-                      &FclModelDeathTests::CallAddMesh,
-                      &FclModelDeathTests::CallClosestPointsAllToAll,
-                      &FclModelDeathTests::CallCollisionDetectFromPoints,
-                      &FclModelDeathTests::CallClearCachedResults,
-                      &FclModelDeathTests::CallCollisionRaycast,
-                      &FclModelDeathTests::CallCollidingPointsCheckOnly,
-                      &FclModelDeathTests::CallCollidingPoints));
+INSTANTIATE_TEST_SUITE_P(
+    NotImplementedTest, FclModelNotImplementedTests,
+    ::testing::Values(
+       &FclModelNotImplementedTests::CallAddBox,
+       &FclModelNotImplementedTests::CallAddCapsule,
+       &FclModelNotImplementedTests::CallAddMesh,
+       &FclModelNotImplementedTests::CallClosestPointsAllToAll,
+       &FclModelNotImplementedTests::CallCollisionDetectFromPoints,
+       &FclModelNotImplementedTests::CallClearCachedResults,
+       &FclModelNotImplementedTests::CallCollisionRaycast,
+       &FclModelNotImplementedTests::CallCollidingPointsCheckOnly,
+       &FclModelNotImplementedTests::CallCollidingPoints));
 #endif
 
 // Fixture for testing collision queries involving pairs of collision
@@ -484,13 +485,13 @@ std::vector<ShapeVsShapeTestParam> GenerateSphereVsCylinderParam() {
 }
 
 // Instantiate pairwise test cases.
-INSTANTIATE_TEST_CASE_P(SphereVsSphere, ShapeVsShapeTest,
+INSTANTIATE_TEST_SUITE_P(SphereVsSphere, ShapeVsShapeTest,
                         ::testing::ValuesIn(GenerateSphereVsSphereParam()));
 
-INSTANTIATE_TEST_CASE_P(CylinderVsCylinder, ShapeVsShapeTest,
+INSTANTIATE_TEST_SUITE_P(CylinderVsCylinder, ShapeVsShapeTest,
                         ::testing::ValuesIn(GenerateCylinderVsCylinderParam()));
 
-INSTANTIATE_TEST_CASE_P(SphereVsCylinder, ShapeVsShapeTest,
+INSTANTIATE_TEST_SUITE_P(SphereVsCylinder, ShapeVsShapeTest,
                         ::testing::ValuesIn(GenerateSphereVsCylinderParam()));
 
 // GENERAL REMARKS ON THE TESTS PERFORMED

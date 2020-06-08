@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/eigen_types.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/systems/framework/diagram.h"
 #include "drake/systems/framework/diagram_builder.h"
 #include "drake/systems/framework/leaf_system.h"
@@ -22,7 +23,7 @@ class TestPlant : public LeafSystem<double> {
   TestPlant() {}
 
   double GetInputValue(const Context<double>& context) {
-    return EvalEigenVectorInput(context, 0)(0);
+    return get_input_port(0).Eval(context)[0];
   }
 };
 
@@ -46,19 +47,15 @@ class TestPlantWithMinOutputs : public TestPlant {
   TestPlantWithMinOutputs() {
     DeclareVectorInputPort(BasicVector<double>(1));
     DeclareVectorOutputPort(BasicVector<double>(2),
-                            &TestPlantWithMinOutputs::CalcOutputVector);
+                            &TestPlantWithMinOutputs::CalcOutputVector,
+                            {this->nothing_ticket()});
   }
 
-  void CalcOutputVector(const Context<double>& context,
+  void CalcOutputVector(const Context<double>&,
                         BasicVector<double>* output) const {
     BasicVector<double>& output_vector = *output;
     output_vector[0] = 1.;
     output_vector[1] = 0.1;
-  }
-
- protected:
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return false;
   }
 };
 
@@ -85,10 +82,11 @@ class TestPlantWithMoreOutputs : public TestPlant {
   TestPlantWithMoreOutputs() {
     DeclareVectorInputPort(BasicVector<double>(1));
     DeclareVectorOutputPort(BasicVector<double>(6),
-                            &TestPlantWithMoreOutputs::CalcOutputVector);
+                            &TestPlantWithMoreOutputs::CalcOutputVector,
+                            {this->nothing_ticket()});
   }
 
-  void CalcOutputVector(const Context<double>& context,
+  void CalcOutputVector(const Context<double>&,
                         BasicVector<double>* output) const {
     BasicVector<double>& output_vector = *output;
     output_vector[0] = 1.;
@@ -97,11 +95,6 @@ class TestPlantWithMoreOutputs : public TestPlant {
     output_vector[3] = 6.89;
     output_vector[4] = 90.37;
     output_vector[5] = 498.9;
-  }
-
- protected:
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return false;
   }
 };
 
@@ -112,13 +105,15 @@ class TestPlantWithMoreOutputPorts : public TestPlant {
     // Declare some non-state output port.
     DeclareVectorOutputPort(
         BasicVector<double>(3),
-        &TestPlantWithMoreOutputPorts::CalcNonStateOutputVector);
+        &TestPlantWithMoreOutputPorts::CalcNonStateOutputVector,
+        {this->nothing_ticket()});
     DeclareVectorOutputPort(
         BasicVector<double>(2),
-        &TestPlantWithMoreOutputPorts::CalcStateOutputVector);
+        &TestPlantWithMoreOutputPorts::CalcStateOutputVector,
+        {this->nothing_ticket()});
   }
 
-  void CalcNonStateOutputVector(const Context<double>& context,
+  void CalcNonStateOutputVector(const Context<double>&,
                                 BasicVector<double>* output) const {
     BasicVector<double>& output_vector = *output;
     output_vector[0] = 2.;
@@ -126,16 +121,11 @@ class TestPlantWithMoreOutputPorts : public TestPlant {
     output_vector[2] = 0.02;
   }
 
-  void CalcStateOutputVector(const Context<double>& context,
+  void CalcStateOutputVector(const Context<double>&,
                         BasicVector<double>* output) const {
     BasicVector<double>& output_vector = *output;
     output_vector[0] = 43.;
     output_vector[1] = 0.68;
-  }
-
- protected:
-  optional<bool> DoHasDirectFeedthrough(int, int) const override {
-    return false;
   }
 };
 
@@ -236,7 +226,7 @@ TEST_F(PidControlledSystemTest, PlantWithMoreOutputPorts) {
   PidControlledSystem<double> system(std::move(plant), Kp_, Ki_, Kd_,
                                      state_output_port_index);
 
-  EXPECT_EQ(system.get_num_output_ports(), 2);
+  EXPECT_EQ(system.num_output_ports(), 2);
   EXPECT_EQ(system.get_output_port(0).size(), 3);
   EXPECT_EQ(system.get_output_port(1).size(), 2);
 
@@ -360,7 +350,7 @@ TEST_F(ConnectControllerTest, MultipleControllerTest) {
       feedback_selector_, Kp, Ki, Kd, &builder_);
 
   ConnectPidPorts(second_plant_pid_ports);
-  EXPECT_NO_THROW(builder_.Build());
+  DRAKE_EXPECT_NO_THROW(builder_.Build());
 }
 
 }  // namespace

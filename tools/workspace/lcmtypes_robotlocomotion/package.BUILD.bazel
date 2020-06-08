@@ -68,7 +68,9 @@ install(
     rename = {
         "share/java/liblcmtypes_robotlocomotion_java.jar": "lcmtypes_robotlocomotion.jar",  # noqa
     },
-    deps = [":install_cmake_config"],
+    deps = [
+        ":install_cmake_config",
+    ],
 )
 
 # See https://github.com/RobotLocomotion/lcmtypes/issues/2 and

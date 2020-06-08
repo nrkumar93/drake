@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,7 +12,6 @@
 
 #include "drake/common/drake_copyable.h"
 #include "drake/lcm/drake_lcm_interface.h"
-#include "drake/lcm/drake_lcm_message_handler_interface.h"
 
 namespace drake {
 namespace lcm {
@@ -62,7 +62,7 @@ class DrakeLcmLog : public DrakeLcmInterface {
    * mode.
    */
   void Publish(const std::string& channel, const void* data, int data_size,
-               optional<double> time_sec) override;
+               std::optional<double> time_sec) override;
 
   /**
    * Subscribes @p handler to @p channel. Multiple handlers can subscribe to the
@@ -70,13 +70,16 @@ class DrakeLcmLog : public DrakeLcmInterface {
    *
    * @throws std::logic_error if this instance is not constructed in read-only
    * mode.
+   *
+   * @return nullptr because this implementation does not support unsubscribe.
    */
-  void Subscribe(const std::string& channel, HandlerFunction handler) override;
+  std::shared_ptr<DrakeSubscriptionInterface> Subscribe(
+      const std::string& channel, HandlerFunction handler) override;
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-  void Subscribe(const std::string&, DrakeLcmMessageHandlerInterface*) override;
-#pragma GCC diagnostic pop  // pop -Wdeprecated-declarations
+  /**
+   * This is a no-op for Read mode, and an exception in Write mode.
+   */
+  int HandleSubscriptions(int) override;
 
   /**
    * Returns the time in seconds for the next logged message's occurrence time
@@ -122,6 +125,8 @@ class DrakeLcmLog : public DrakeLcmInterface {
   }
 
  private:
+  void OnHandleSubscriptionsError(const std::string&) override;
+
   const bool is_write_;
   const bool overwrite_publish_time_with_system_clock_;
 

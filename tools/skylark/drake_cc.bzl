@@ -2,9 +2,6 @@
 
 load("@cc//:compiler.bzl", "COMPILER_ID")
 
-# Keep CXX_FLAGS, CLANG_FLAGS, and GCC_FLAGS in sync with CMAKE_CXX_FLAGS in
-# matlab/cmake/flags.cmake.
-
 # The CXX_FLAGS will be enabled for all C++ rules in the project
 # building with any compiler.
 CXX_FLAGS = [
@@ -15,11 +12,13 @@ CXX_FLAGS = [
     "-Werror=old-style-cast",
     "-Werror=overloaded-virtual",
     "-Werror=shadow",
+    "-Werror=unused-result",
 ]
 
 # The CLANG_FLAGS will be enabled for all C++ rules in the project when
 # building with clang (including the Apple LLVM compiler).
 CLANG_FLAGS = CXX_FLAGS + [
+    "-Werror=absolute-value",
     "-Werror=inconsistent-missing-override",
     "-Werror=non-virtual-dtor",
     "-Werror=return-stack-address",
@@ -51,14 +50,25 @@ def _platform_copts(rule_copts, rule_gcc_copts, rule_clang_copts, cc_test = 0):
     When cc_test=1, the GCC_CC_TEST_FLAGS will be added.  It should only be set
     to 1 from cc_test rules or rules that are boil down to cc_test rules.
     """
-    extra_gcc_flags = []
-    if cc_test:
-        extra_gcc_flags = GCC_CC_TEST_FLAGS
     if COMPILER_ID.endswith("Clang"):
-        return CLANG_FLAGS + rule_copts + rule_clang_copts
-    if COMPILER_ID == "GNU":
-        return GCC_FLAGS + extra_gcc_flags + rule_copts + rule_gcc_copts
-    return rule_copts
+        result = CLANG_FLAGS + rule_copts + rule_clang_copts
+    elif COMPILER_ID == "GNU":
+        extra_gcc_flags = GCC_CC_TEST_FLAGS if cc_test else []
+        result = GCC_FLAGS + extra_gcc_flags + rule_copts + rule_gcc_copts
+    else:
+        result = rule_copts
+
+    # We can't handle select() yet.
+    # TODO(jwnimmer-tri) We should handle select.
+    if type(result) != "list":
+        return result
+    return select({
+        "//tools:drake_werror": result,
+        "//conditions:default": [
+            x.replace("-Werror=", "-W")
+            for x in result
+        ],
+    })
 
 def _dsym_command(name):
     """Returns the command to produce .dSYM on macOS, or a no-op on Linux."""
@@ -80,6 +90,13 @@ def _check_library_deps_blacklist(name, deps):
         # TODO(jwnimmer-tri) We should handle select.
         return
     for dep in deps:
+        if name == "drake_cc_googletest_main":
+            # This library-with-main is a special case.
+            continue
+        if dep.endswith(":add_text_logging_gflags"):
+            fail("The cc_library '" + name + "' must not depend on " +
+                 "//common:add_text_logging_gflags; only cc_binary targets " +
+                 "are allowed to have gflags")
         if dep.endswith(":main"):
             fail("The cc_library '" + name + "' must not depend on a :main " +
                  "function from a cc_library; only cc_binary program should " +
@@ -146,7 +163,9 @@ def installed_headers_for_drake_deps(deps):
         for x in deps
         if (
             not x.startswith("@") and
-            not x.startswith("//drake/lcmtypes:")
+            not x.startswith("//drake/lcmtypes:") and
+            not x == "//:drake_shared_library" and
+            not x.startswith("//third_party")
         )
     ]
 
@@ -204,8 +223,8 @@ def _path_startswith_match(path, only_startswith, never_startswith):
     if only_startswith:
         if not path.startswith(only_startswith):
             return False
-    if never_startswith:
-        if path.startswith(never_startswith):
+    for prefix in never_startswith:
+        if path.startswith(prefix):
             return False
     return True
 
@@ -219,7 +238,7 @@ def _gather_transitive_hdrs_impl(ctx):
     # Filter in/out items matching a prefix.
     result = depset([
         x
-        for x in all_hdrs
+        for x in all_hdrs.to_list()
         if _path_startswith_match(
             x.short_path,
             ctx.attr.only_startswith,
@@ -236,7 +255,7 @@ _gather_transitive_hdrs = rule(
             providers = [DrakeCc],
         ),
         "only_startswith": attr.string(),
-        "never_startswith": attr.string(),
+        "never_startswith": attr.string_list(),
     },
     implementation = _gather_transitive_hdrs_impl,
 )
@@ -245,7 +264,7 @@ def drake_transitive_installed_hdrs_filegroup(
         name,
         deps = [],
         only_startswith = None,
-        never_startswith = None,
+        never_startswith = [],
         **kwargs):
     """Declare a filegroup that contains the transtive installed hdrs of the
     targets named by `deps`.
@@ -271,10 +290,10 @@ def _raw_drake_cc_library(
         declare_installed_headers = 0,
         install_hdrs_exclude = [],
         **kwargs):
-    """Creates a rule to declare a C++ library.  Uses Drake's include_prefix and
-    checks the deps blacklist.  If declare_installed_headers is true, also adds
-    a drake_installed_headers() target.  (This should be set if and only if the
-    caller is drake_cc_library.)
+    """Creates a rule to declare a C++ library.  Uses Drake's include_prefix
+    and checks the deps blacklist.  If declare_installed_headers is true, also
+    adds a drake_installed_headers() target.  (This should be set if and only
+    if the caller is drake_cc_library.)
     """
     _check_library_deps_blacklist(name, deps)
     _, private_hdrs = _prune_private_hdrs(srcs)
@@ -346,6 +365,7 @@ def drake_cc_library(
         clang_copts = [],
         gcc_copts = [],
         linkstatic = 1,
+        declare_installed_headers = 1,
         install_hdrs_exclude = [],
         **kwargs):
     """Creates a rule to declare a C++ library.
@@ -372,7 +392,7 @@ def drake_cc_library(
         srcs = srcs,
         deps = deps,
         copts = new_copts,
-        declare_installed_headers = 1,
+        declare_installed_headers = declare_installed_headers,
         **kwargs
     )
     _raw_drake_cc_library(
@@ -382,7 +402,7 @@ def drake_cc_library(
         deps = new_deps,
         copts = new_copts,
         linkstatic = linkstatic,
-        declare_installed_headers = 1,
+        declare_installed_headers = declare_installed_headers,
         install_hdrs_exclude = install_hdrs_exclude,
         **kwargs
     )
@@ -466,22 +486,6 @@ def drake_cc_binary(
         testonly = testonly,
         **kwargs
     )
-    if linkshared == 1:
-        # On Linux, we need to disable "new" dtags in the linker so that we use
-        # RPATH instead of RUNPATH.  When doing runtime linking, RPATH is
-        # checked *before* LD_LIBRARY_PATH, which is important to avoid using
-        # the MATLAB versions of certain libraries (protobuf).  macOS doesn't
-        # understand this flag, so it is conditional on Linux only.  Note that
-        # the string we use for rpath here doesn't actually matter; it will be
-        # replaced during installation later.
-        linkopts = select({
-            "//tools/cc_toolchain:apple": linkopts,
-            "//conditions:default": linkopts + [
-                "-Wl,--disable-new-dtags",
-                "-Wl,-rpath=/usr/lib/x86_64-linux-gnu",
-                "-Wl,-soname," + name,
-            ],
-        })
 
     native.cc_binary(
         name = name,
@@ -533,11 +537,12 @@ def drake_cc_test(
         name,
         size = None,
         srcs = [],
+        args = [],
+        tags = [],
         deps = [],
         copts = [],
         gcc_copts = [],
         clang_copts = [],
-        disable_in_compilation_mode_dbg = False,
         **kwargs):
     """Creates a rule to declare a C++ unit test.  Note that for almost all
     cases, drake_cc_googletest should be used, instead of this rule.
@@ -545,10 +550,6 @@ def drake_cc_test(
     By default, sets size="small" because that indicates a unit test.
     By default, sets name="test/${name}.cc" per Drake's filename convention.
     Unconditionally forces testonly=1.
-
-    If disable_in_compilation_mode_dbg is True, the srcs will be suppressed
-    in debug-mode builds, so the test will trivially pass. This option should
-    be used only rarely, and the reason should always be documented.
     """
     if size == None:
         size = "small"
@@ -563,17 +564,12 @@ def drake_cc_test(
         copts = new_copts,
         **kwargs
     )
-    if disable_in_compilation_mode_dbg:
-        # Remove the test declarations from the test in debug mode.
-        # TODO(david-german-tri): Actually suppress the test rule.
-        new_srcs = select({
-            "//tools/cc_toolchain:debug": [],
-            "//conditions:default": new_srcs,
-        })
     native.cc_test(
         name = name,
         size = size,
         srcs = new_srcs,
+        args = args,
+        tags = tags,
         deps = new_deps,
         copts = new_copts,
         **kwargs
@@ -593,7 +589,10 @@ def drake_cc_test(
 
 def drake_cc_googletest(
         name,
+        args = [],
+        tags = [],
         deps = [],
+        disable_in_compilation_mode_dbg = False,
         use_default_main = True,
         **kwargs):
     """Creates a rule to declare a C++ unit test using googletest.
@@ -603,9 +602,9 @@ def drake_cc_googletest(
     By default, sets use_default_main=True to use a default main() function.
     Otherwise, it will depend on @gtest//:without_main.
 
-    If disable_in_compilation_mode_dbg is True, the srcs will be suppressed
-    in debug-mode builds, so the test will trivially pass. This option should
-    be used only rarely, and the reason should always be documented.
+    If disable_in_compilation_mode_dbg is True, then in debug-mode builds all
+    test cases will be suppressed, so the test will trivially pass. This option
+    should be used only rarely, and the reason should always be documented.
     """
     if use_default_main:
         deps = deps + [
@@ -613,8 +612,30 @@ def drake_cc_googletest(
         ]
     else:
         deps = deps + ["@gtest//:without_main"]
+    new_args = args
+    new_tags = tags
+    if disable_in_compilation_mode_dbg:
+        # If we're in debug compilation mode, then skip all test cases so that
+        # the test will trivially pass.
+        new_args = args + select({
+            "//tools/cc_toolchain:debug": ["--gtest_filter=-*"],
+            "//conditions:default": [],
+        })
+
+        # Skip this test when run under various dynamic tools that use
+        # debug-like compiler flags.
+        new_tags = new_tags + [
+            "no_asan",
+            "no_kcov",
+            "no_lsan",
+            "no_memcheck",
+            "no_tsan",
+            "no_ubsan",
+        ]
     drake_cc_test(
         name = name,
+        args = new_args,
+        tags = new_tags,
         deps = deps,
         **kwargs
     )

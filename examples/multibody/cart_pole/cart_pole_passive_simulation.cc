@@ -4,15 +4,13 @@
 
 #include "drake/common/drake_assert.h"
 #include "drake/common/find_resource.h"
-#include "drake/common/text_logging_gflags.h"
 #include "drake/geometry/geometry_visualization.h"
 #include "drake/geometry/scene_graph.h"
 #include "drake/lcm/drake_lcm.h"
-#include "drake/multibody/multibody_tree/joints/prismatic_joint.h"
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
-#include "drake/multibody/multibody_tree/multibody_plant/multibody_plant.h"
-#include "drake/multibody/multibody_tree/parsing/multibody_plant_sdf_parser.h"
-#include "drake/multibody/multibody_tree/uniform_gravity_field_element.h"
+#include "drake/multibody/parsing/parser.h"
+#include "drake/multibody/plant/multibody_plant.h"
+#include "drake/multibody/tree/prismatic_joint.h"
+#include "drake/multibody/tree/revolute_joint.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/framework/diagram_builder.h"
 
@@ -26,11 +24,10 @@ using geometry::SceneGraph;
 using lcm::DrakeLcm;
 
 // "multibody" namespace is ambiguous here without "drake::".
-using drake::multibody::multibody_plant::MultibodyPlant;
-using drake::multibody::parsing::AddModelFromSdfFile;
+using drake::multibody::MultibodyPlant;
+using drake::multibody::Parser;
 using drake::multibody::PrismaticJoint;
 using drake::multibody::RevoluteJoint;
-using drake::multibody::UniformGravityFieldElement;
 
 DEFINE_double(target_realtime_rate, 1.0,
               "Desired rate relative to real time.  See documentation for "
@@ -55,14 +52,10 @@ int do_main() {
       "drake/examples/multibody/cart_pole/cart_pole.sdf");
   MultibodyPlant<double>& cart_pole =
       *builder.AddSystem<MultibodyPlant>(FLAGS_time_step);
-  AddModelFromSdfFile(full_name, &cart_pole, &scene_graph);
-
-  // Add gravity to the model.
-  cart_pole.AddForceElement<UniformGravityFieldElement>(
-      -9.81 * Vector3<double>::UnitZ());
+  Parser(&cart_pole, &scene_graph).AddModelFromFile(full_name);
 
   // Now the model is complete.
-  cart_pole.Finalize(&scene_graph);
+  cart_pole.Finalize();
 
   // Sanity check on the availability of the optional source id before using it.
   DRAKE_DEMAND(cart_pole.geometry_source_is_registered());
@@ -82,8 +75,7 @@ int do_main() {
       diagram->GetMutableSubsystemContext(cart_pole, diagram_context.get());
 
   // There is no input actuation in this example for the passive dynamics.
-  cart_pole_context.FixInputPort(
-      cart_pole.get_actuation_input_port().get_index(), Vector1d(0));
+  cart_pole.get_actuation_input_port().FixValue(&cart_pole_context, 0.);
 
   // Get joints so that we can set initial conditions.
   const PrismaticJoint<double>& cart_slider =
@@ -100,7 +92,7 @@ int do_main() {
   simulator.set_publish_every_time_step(false);
   simulator.set_target_realtime_rate(FLAGS_target_realtime_rate);
   simulator.Initialize();
-  simulator.StepTo(FLAGS_simulation_time);
+  simulator.AdvanceTo(FLAGS_simulation_time);
 
   return 0;
 }
@@ -117,6 +109,5 @@ int main(int argc, char* argv[]) {
       "with SceneGraph visualization. "
       "Launch drake-visualizer before running this example.");
   gflags::ParseCommandLineFlags(&argc, &argv, true);
-  drake::logging::HandleSpdlogGflags();
   return drake::examples::multibody::cart_pole::do_main();
 }

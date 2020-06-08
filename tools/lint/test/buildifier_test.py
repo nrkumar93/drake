@@ -27,7 +27,7 @@ class BuildifierTest(unittest.TestCase):
         process = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         stdout, _ = process.communicate()
-        return process.returncode, stdout
+        return process.returncode, stdout.decode('utf8')
 
     def test_mode_check(self):
         returncode, output = self._call_buildifier(
@@ -42,10 +42,14 @@ class BuildifierTest(unittest.TestCase):
         self.assertEqual(returncode, 1, output)
         self.assertListEqual(output.splitlines(), [
             "ERROR: buildifier: the required formatting is incorrect",
-            ("ERROR: tmp/BUILD.bazel:1: " +
+            ("ERROR: tmp/BUILD.bazel:1: "
              "error: the required formatting is incorrect"),
-            ("ERROR: tmp/BUILD.bazel:1: note: " +
+            ("ERROR: tmp/BUILD.bazel:1: note: "
              "fix via bazel-bin/tools/lint/buildifier tmp/BUILD.bazel"),
+            ("ERROR: tmp/BUILD.bazel:1: note: "
+             "if that program does not exist, "
+             "you might need to compile it first: "
+             "bazel build //tools/lint/..."),
             "NOTE: see https://drake.mit.edu/bazel.html#buildifier"
         ])
 

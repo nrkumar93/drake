@@ -1,6 +1,7 @@
 #include "drake/systems/primitives/first_order_low_pass_filter.h"
 
 #include <sstream>
+#include <stdexcept>
 
 #include "drake/common/default_scalars.h"
 #include "drake/common/drake_assert.h"
@@ -18,7 +19,7 @@ template <typename T>
 FirstOrderLowPassFilter<T>::FirstOrderLowPassFilter(
     const VectorX<double>& time_constants)
     : VectorSystem<T>(
-          SystemTypeTag<systems::FirstOrderLowPassFilter>{},
+          SystemTypeTag<FirstOrderLowPassFilter>{},
           time_constants.size(), time_constants.size()),
       time_constants_(time_constants) {
   DRAKE_ASSERT(time_constants.size() > 0);
@@ -39,7 +40,7 @@ double FirstOrderLowPassFilter<T>::get_time_constant() const {
     s << "The time constants vector, [" << time_constants_ << "], cannot be "
          "represented as a scalar value. Please use "
          "FirstOrderLowPassFilter::get_time_constants_vector() instead.";
-    DRAKE_ABORT_MSG(s.str().c_str());
+    throw std::domain_error(s.str());
   }
   return time_constants_[0];
 }

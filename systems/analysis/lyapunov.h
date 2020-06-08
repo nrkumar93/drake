@@ -2,7 +2,8 @@
 
 #include <functional>
 
-#include "drake/common/symbolic.h"
+#include "drake/common/autodiff.h"
+#include "drake/common/eigen_types.h"
 #include "drake/systems/framework/context.h"
 #include "drake/systems/framework/system.h"
 
@@ -52,6 +53,7 @@ namespace analysis {
 /// conditions described above.  The resulting Lyapunov function is
 ///   V(x) = ∑ pᵢ φᵢ(x),
 ///
+/// @ingroup analysis
 Eigen::VectorXd SampleBasedLyapunovAnalysis(
     const System<double>& system, const Context<double>& context,
     const std::function<VectorX<AutoDiffXd>(const VectorX<AutoDiffXd>& state)>&

@@ -6,7 +6,10 @@
 namespace drake {
 namespace pydrake {
 
-PYBIND11_MODULE(framework, m) {
+// TODO(eric.cousineau): Remove leading underscore once deprecation shim module
+// is removed.
+PYBIND11_MODULE(_framework, m) {
+  PYDRAKE_PREVENT_PYTHON3_MODULE_REIMPORT(m);
   m.doc() = "Bindings for the core Systems framework.";
 
   // Import autodiff and symbolic modules so that their types are declared for
@@ -15,9 +18,9 @@ PYBIND11_MODULE(framework, m) {
   py::module::import("pydrake.symbolic");
 
   // Incorporate definitions as pieces (to speed up compilation).
-  DefineFrameworkPySystems(m);
-  DefineFrameworkPySemantics(m);
   DefineFrameworkPyValues(m);
+  DefineFrameworkPySemantics(m);
+  DefineFrameworkPySystems(m);
 }
 
 }  // namespace pydrake

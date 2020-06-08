@@ -1,5 +1,4 @@
 /** @addtogroup constraint_overview
-    @ingroup multibody_concepts
 
 This documentation describes the types of multibody constraints supported in
 Drake, including specialized constraint types- namely point-based contact
@@ -18,22 +17,24 @@ constraints and does so in a manner very different from "smoothing methods"
 (also known as "penalty methods"). Smoothing methods have traditionally required
 significant computation to maintain `g = 0` to high accuracy (and typically
 yielding what is known in ODE and DAE literature as a "computationally stiff
-system").   
+system").
 
 We also provide the core components of an efficient first-order integration
 scheme for a system with both compliant and rigid unilateral constraints. Such
 a system arises in many contact problems, where the correct modeling parameters
 would yield a computationally stiff system. The integration scheme is
 low-accuracy but very stable for mechanical systems, even when the algebraic
-variables (i.e., the constraint forces) are computed to low accuracy. 
+variables (i.e., the constraint forces) are computed to low accuracy.
 
 This discussion will provide necessary background material in:
+
  - @ref constraint_types
  - @ref constraint_stabilization
  - @ref constraint_Jacobians
  - @ref contact_surface_constraints
 
 and will delve into the constraint solver functionality in:
+
  - @ref discretization
 
  A prodigious number of variables will be referenced throughout the discussion
@@ -169,8 +170,8 @@ direction (λ ≥ 0). This triplet is known as a *complementarity constraint*.
 
 /** @defgroup constraint_stabilization Constraint stabilization
 @ingroup constraint_overview
- 
-Both truncation and rounding errors can prevent constraints from being 
+
+Both truncation and rounding errors can prevent constraints from being
 exactly satisfied. For example, consider the bilateral holonomic constraint
 equation gₚ(t,q) = 0. Even if
 gₚ(t₀,q(t₀)) = ġₚ(t₀,q(t₀),v(t₀)) = g̈ₚ(t₀,q(t₀),v(t₀),v̇(t₀)) = 0, it is often
@@ -229,10 +230,6 @@ coordinates and generalized velocities (see @ref quasi_coordinates). This yields
 the requisite form:<pre>
 ġₚ = ∂gₚ/∂q⋅N(q)⋅v
 </pre>
-In robotics literature, `∂gₚ/∂q⋅N(q)` is known as a *geometric Jacobian* while
-`∂gₚ/∂q` is known as an *analytical Jacobian*
-@ref Sciavicco2000 "[Sciavicco 2000]". The latter can be cumbersome to derive
-and less efficient to work with.
 
 Fortunately, adding new constraints defined in the form `gₚ(t,q)` does not
 require considering this distinction using the operator paradigm (see, e.g.,
@@ -317,7 +314,7 @@ constraint problem data</h4>
     @ref drake::multibody::constraint::ConstraintVelProblemData
     "ConstraintVelProblemData")
 */
- 
+
 /** @defgroup constraint_references References
  @ingroup constraint_overview
 

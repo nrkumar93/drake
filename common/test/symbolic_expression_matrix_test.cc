@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/symbolic.h"
+#include "drake/common/test_utilities/eigen_matrix_compare.h"
 #include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
 
@@ -8,16 +9,21 @@ namespace drake {
 namespace symbolic {
 namespace {
 
+using test::ExprEqual;
 using test::FormulaEqual;
 
 class SymbolicExpressionMatrixTest : public ::testing::Test {
  protected:
+  const Variable var_a_{"a"};
   const Variable var_x_{"x"};
   const Variable var_y_{"y"};
   const Variable var_z_{"z"};
+  const Variable var_w_{"w"};
+  const Expression a_{var_a_};
   const Expression x_{var_x_};
   const Expression y_{var_y_};
   const Expression z_{var_z_};
+  const Expression w_{var_w_};
 
   const Expression zero_{0.0};
   const Expression one_{1.0};
@@ -174,7 +180,7 @@ TEST_F(SymbolicExpressionMatrixTest, CheckStructuralEquality) {
 bool CheckMatrixOperatorEq(const MatrixX<Expression>& m1,
                            const MatrixX<Expression>& m2) {
   const Formula f1{m1 == m2};
-  const Formula f2{(m1.array() == m2.array()).redux(detail::logic_and)};
+  const Formula f2{(m1.array() == m2.array()).redux(internal::logic_and)};
   return f1.EqualTo(f2);
 }
 
@@ -184,7 +190,7 @@ bool CheckMatrixOperatorEq(const MatrixX<Expression>& m1,
 bool CheckMatrixOperatorNeq(const MatrixX<Expression>& m1,
                             const MatrixX<Expression>& m2) {
   const Formula f1{m1 != m2};
-  const Formula f2{(m1.array() != m2.array()).redux(detail::logic_or)};
+  const Formula f2{(m1.array() != m2.array()).redux(internal::logic_or)};
   return f1.EqualTo(f2);
 }
 
@@ -194,7 +200,7 @@ bool CheckMatrixOperatorNeq(const MatrixX<Expression>& m1,
 bool CheckMatrixOperatorLt(const MatrixX<Expression>& m1,
                            const MatrixX<Expression>& m2) {
   const Formula f1{m1 < m2};
-  const Formula f2{(m1.array() < m2.array()).redux(detail::logic_and)};
+  const Formula f2{(m1.array() < m2.array()).redux(internal::logic_and)};
   return f1.EqualTo(f2);
 }
 
@@ -204,7 +210,7 @@ bool CheckMatrixOperatorLt(const MatrixX<Expression>& m1,
 bool CheckMatrixOperatorLte(const MatrixX<Expression>& m1,
                             const MatrixX<Expression>& m2) {
   const Formula f1{m1 <= m2};
-  const Formula f2{(m1.array() <= m2.array()).redux(detail::logic_and)};
+  const Formula f2{(m1.array() <= m2.array()).redux(internal::logic_and)};
   return f1.EqualTo(f2);
 }
 
@@ -214,7 +220,7 @@ bool CheckMatrixOperatorLte(const MatrixX<Expression>& m1,
 bool CheckMatrixOperatorGt(const MatrixX<Expression>& m1,
                            const MatrixX<Expression>& m2) {
   const Formula f1{m1 > m2};
-  const Formula f2{(m1.array() > m2.array()).redux(detail::logic_and)};
+  const Formula f2{(m1.array() > m2.array()).redux(internal::logic_and)};
   return f1.EqualTo(f2);
 }
 
@@ -224,7 +230,7 @@ bool CheckMatrixOperatorGt(const MatrixX<Expression>& m1,
 bool CheckMatrixOperatorGte(const MatrixX<Expression>& m1,
                             const MatrixX<Expression>& m2) {
   const Formula f1{m1 >= m2};
-  const Formula f2{(m1.array() >= m2.array()).redux(detail::logic_and)};
+  const Formula f2{(m1.array() >= m2.array()).redux(internal::logic_and)};
   return f1.EqualTo(f2);
 }
 
@@ -429,7 +435,7 @@ TEST_F(SymbolicExpressionMatrixTest, MatrixVarRopMatrixVar) {
   EXPECT_TRUE(CheckMatrixOperatorNeq(matrix_var_2_, matrix_var_1_));
 }
 
-TEST_F(SymbolicExpressionMatrixTest, Evaluate) {
+TEST_F(SymbolicExpressionMatrixTest, EvaluateDenseMatrix) {
   const Environment env{{{var_x_, 1.0}, {var_y_, 2.0}, {var_z_, 3.0}}};
 
   // 1. A_ is a fixed-size matrix (3 x 2) = [x  1]
@@ -466,6 +472,113 @@ TEST_F(SymbolicExpressionMatrixTest, Evaluate) {
   DRAKE_EXPECT_THROWS_MESSAGE(Evaluate(C, env), std::runtime_error,
                               "NaN is detected during Symbolic computation.");
 }
+
+TEST_F(SymbolicExpressionMatrixTest, EvaluateSparseMatrix) {
+  const Environment env{{{var_x_, 1.0}, {var_y_, 2.0}, {var_z_, 3.0}}};
+
+  Eigen::SparseMatrix<Expression> A{3, 2};
+  A.insert(0, 0) = x_ + y_;
+  A.insert(2, 1) = 3 + z_;
+
+  const Eigen::SparseMatrix<double> A_eval{Evaluate(A, env)};
+
+  EXPECT_EQ(A.nonZeros(), A_eval.nonZeros());
+
+  EXPECT_EQ(A.coeff(0, 0).Evaluate(env), A_eval.coeff(0, 0));
+  EXPECT_EQ(A.coeff(2, 1).Evaluate(env), A_eval.coeff(2, 1));
+}
+
+TEST_F(SymbolicExpressionMatrixTest, EvaluateWithRandomGenerator) {
+  RandomGenerator g{};
+
+  const Variable uni{"uni", Variable::Type::RANDOM_UNIFORM};
+  const Variable gau{"gau", Variable::Type::RANDOM_GAUSSIAN};
+  const Variable exp{"exp", Variable::Type::RANDOM_EXPONENTIAL};
+  const Environment env{{{var_x_, 1.0}, {var_y_, 2.0}, {var_z_, 3.0}}};
+
+  // 1. A_ is a fixed-size matrix (3 x 2) = [x               uni * gau + exp]
+  //                                        [uni * gau + exp              -1]
+  //                                        [z                      3.141592]
+  Eigen::Matrix<Expression, 3, 2> A;
+  // clang-format off
+  A << x_,              uni * gau + exp,
+       uni * gau + exp,              -1,
+       z_,                     3.141592;
+  // clang-format on
+
+  // A(1,0) and A(0, 1) are the same symbolic expressions. Therefore, they
+  // should be evaluated to the same value regardless of sampled values for the
+  // random variables in A.
+  const Eigen::Matrix<double, 3, 2> A_eval{Evaluate(A, env, &g)};
+  EXPECT_PRED2(ExprEqual, A(1, 0), A(0, 1));
+  EXPECT_EQ(A_eval(1, 0), A_eval(0, 1));
+
+  // 2. B is a dynamic-size matrix (2 x 2) = [uni + gau + exp                x]
+  //                                         [y                uni + gau + exp]
+  MatrixX<Expression> B(2, 2);
+  // clang-format off
+  B << uni + gau + exp,              x_,
+       y_,              uni + gau + exp;
+  // clang-format on
+
+  // B(0, 0) and B(1, 1) are the same symbolic expressions. Therefore, they
+  // should be evaluated to the same value regardless of sampled values for the
+  // random variables in B.
+  const Eigen::Matrix<double, 2, 2> B_eval{Evaluate(B, env, &g)};
+  EXPECT_PRED2(ExprEqual, B(0, 0), B(1, 1));
+  EXPECT_EQ(B_eval(0, 0), B_eval(1, 1));
+}
+
+// Tests Eigen `.inverse` method works for symbolic matrices. We demonstrate it
+// by showing that the following two values are matched for a 2x2 symbolic
+// matrix `M` and a substitution (Variable -> double) `subst`:
+//
+//  1. Substitute(M.inverse(), subst)
+//  2. Substitute(M, subst).inverse()
+//
+// Note that in 1) Matrix<Expression>::inverse() is called while in 2)
+// Matrix<double>::inverse() is used.
+TEST_F(SymbolicExpressionMatrixTest, Inverse) {
+  Eigen::Matrix<Expression, 2, 2> M;
+  // clang-format off
+  M << x_, y_,
+       z_, w_;
+  // clang-format on
+  const Substitution subst{
+      {var_x_, 1.0},
+      {var_y_, 2.0},
+      {var_w_, 3.0},
+      {var_z_, 4.0},
+  };
+  EXPECT_TRUE(CompareMatrices(Substitute(M.inverse(), subst),
+                              Substitute(M, subst).inverse(), 1e-10));
+}
+
+TEST_F(SymbolicExpressionMatrixTest, IsAffine) {
+  Eigen::Matrix<Expression, 2, 2> M;
+  // clang-format off
+  M << a_ * a_ * x_, x_,
+       2 * x_,       3*x_ + 1;
+  // clang-format on
+
+  // M is affine in {x}.
+  EXPECT_TRUE(IsAffine(M, {var_x_}));
+
+  // However, M is *not* affine in {a, x}.
+  EXPECT_FALSE(IsAffine(M));
+}
+
+// We found that the following example could leak memory. This test makes sure
+// that we provide a correct work-around. FYI, `--config asan` option is
+// required to see failures from this test case.
+//
+// See https://github.com/RobotLocomotion/drake/issues/12453 for details.
+TEST_F(SymbolicExpressionMatrixTest, SparseMatrixMultiplicationNoMemoryLeak) {
+  Eigen::SparseMatrix<Expression> M1(2, 2);
+  Eigen::SparseMatrix<Expression> M2(2, 2);
+  (M1 * M2).eval();
+}
+
 }  // namespace
 }  // namespace symbolic
 }  // namespace drake

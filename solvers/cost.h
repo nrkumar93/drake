@@ -32,14 +32,14 @@ class Cost : public EvaluatorBase {
 };
 
 /**
- * Implements a cost of the form @f a'x + b @f.
+ * Implements a cost of the form @f[ a'x + b @f].
  */
 class LinearCost : public Cost {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(LinearCost)
 
   /**
-   * Construct a linear cost of the form @f a'x + b @f.
+   * Construct a linear cost of the form @f[ a'x + b @f].
    * @param a Linear term.
    * @param b (optional) Constant term.
    */
@@ -61,7 +61,7 @@ class LinearCost : public Cost {
 
   /**
    * Updates the linear term, upper and lower bounds in the linear constraint.
-   * The updated constraint is @f a_new' x + b_new @f.
+   * The updated constraint is @f[ a_new' x + b_new @f].
    * Note that the number of variables (number of cols) cannot change.
    * @param new_a New linear term.
    * @param new_b (optional) New constant term.
@@ -86,6 +86,9 @@ class LinearCost : public Cost {
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
 
+  std::ostream& DoDisplay(std::ostream&,
+                          const VectorX<symbolic::Variable>&) const override;
+
  private:
   template <typename DerivedX, typename U>
   void DoEvalGeneric(const Eigen::MatrixBase<DerivedX>& x, VectorX<U>* y) const;
@@ -95,14 +98,14 @@ class LinearCost : public Cost {
 };
 
 /**
- * Implements a cost of the form @f .5 x'Qx + b'x + c @f.
+ * Implements a cost of the form @f[ .5 x'Qx + b'x + c @f].
  */
 class QuadraticCost : public Cost {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(QuadraticCost)
 
   /**
-   * Constructs a cost of the form @f .5 x'Qx + b'x + c @f.
+   * Constructs a cost of the form @f[ .5 x'Qx + b'x + c @f].
    * @param Q Quadratic term.
    * @param b Linear term.
    * @param c (optional) Constant term.
@@ -161,6 +164,9 @@ class QuadraticCost : public Cost {
 
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
               VectorX<symbolic::Expression>* y) const override;
+
+  std::ostream& DoDisplay(std::ostream&,
+                          const VectorX<symbolic::Variable>&) const override;
 
   Eigen::MatrixXd Q_;
   Eigen::VectorXd b_;
@@ -251,7 +257,6 @@ class PolynomialCost : public EvaluatorCost<PolynomialEvaluator> {
  * @tparam FF The forwarded function type (e.g., `const F&, `F&&`, ...).
  * The class `F` should have functions numInputs(), numOutputs(), and
  * eval(x, y).
- * @see detail::FunctionTraits.
  */
 template <typename FF>
 std::shared_ptr<Cost> MakeFunctionCost(FF&& f) {

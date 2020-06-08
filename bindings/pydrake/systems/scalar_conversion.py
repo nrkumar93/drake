@@ -1,13 +1,14 @@
 """Provides utilities to aid in scalar type conversion."""
 
 import copy
+from functools import partial
 
 from pydrake.systems.framework import (
     LeafSystem_,
     SystemScalarConverter,
 )
-from pydrake.util.cpp_template import (
-    _get_module_name_from_stack,
+from pydrake.common.cpp_template import (
+    _get_module_from_stack,
     TemplateClass,
 )
 
@@ -24,21 +25,21 @@ def _get_conversion_pairs(T_list):
 class TemplateSystem(TemplateClass):
     """Defines templated systems enabling scalar type conversion in Python.
 
-    This differs from `TemplateClass` in that (a) the template must specify its
-    parameters at construction time and (b) `.define` is overridden to allow
-    defining `f(T)` for convenience.
+    This differs from ``TemplateClass`` in that (a) the template must specify
+    its parameters at construction time and (b) `.define` is overridden to
+    allow defining ``f(T)`` for convenience.
 
     Any class that is added must:
-    - Not define `__init__`, as this will be overridden.
-    - Define `_construct(self, <args>, converter=None, <kwargs>)` and
-      `_construct_copy(self, other, converter=None)` instead.
-      - `converter` must be present as an argument to ensure that it
-        propagates properly.
+
+    * Not define ``__init__``, as this will be overridden.
+    * Define ``_construct(self, <args>, converter=None, <kwargs>)`` and
+      ``_construct_copy(self, other, converter=None)`` instead. ``converter``
+      must be present as an argument to ensure that it propagates properly.
 
     If any of these constraints are violated, then an error will be thrown
     at the time of the first class instantiation.
 
-    Example:
+    Example::
 
         @TemplateSystem.define("MySystem_")
         def MySystem_(T):
@@ -56,36 +57,36 @@ class TemplateSystem(TemplateClass):
         MySystem = MySystem_[None]  # Default instantiation.
 
     Things to note:
-    - When defining `_construct_copy`, if you are delegating to `_construct`
-      within the same class, you should use `Impl._construct(self, ...)`; if
-      you use `self._construct`, then you may get a child class's constructor
-      if you are inheriting.
-    - If you are delegating construction to a parent Python class for both
-      constructors, use the parent class's `__init__` method, not its
-      `_construct` or `_construct_copy` methods.
-    - `converter` should always be non-None, as guaranteed by the overriding
-      `__init__`. We use `converter=None` to imply it should be positional,
-       since Python2 does not have keyword-only arguments.
+
+    * When defining ``_construct_copy``, if you are delegating to
+      ``_construct`` within the same class, you should use
+      ``Impl._construct(self, ...)``; if you use ``self._construct``, then you
+      may get a child class's constructor if you are inheriting.
+    * If you are delegating construction to a parent Python class for both
+      constructors, use the parent class's ``__init__`` method, not its
+      ``_construct`` or ``_construct_copy`` methods.
+    * ``converter`` should always be non-None, as guaranteed by the
+      overriding ``__init__``. We use ``converter=None`` to imply it should be
+      positional, since Python2 does not have keyword-only arguments.
     """
     # TODO(eric.cousineau): Figure out if there is a way to avoid needing to
     # pass around converters in user code, avoiding the need to have Python
     # users deal with `SystemScalarConverter`.
-    def __init__(self, name, T_list=None, T_pairs=None, module_name=None):
-        """Constructs `TemplateSystem`.
+    def __init__(self, name, T_list=None, T_pairs=None, scope=None):
+        """Constructs ``TemplateSystem``.
 
-        @param T_list
-            List of T's that the given system supports. By default, it is all
-            types supported by `LeafSystem`.
-        @param T_pairs List of pairs, (T, U), defining a conversion from a
-            scalar type of U to T.
-            If None, this will use all possible pairs that the Python bindings
-            of `SystemScalarConverter` support.
-        @param module_name
-            Defining `module_name`, per `TemplateClass`'s constructor.
+        Args:
+            T_list: List of T's that the given system supports. By default, it
+                is all types supported by `LeafSystem`.
+            T_pairs: List of pairs, (T, U), defining a conversion from a
+                scalar type of U to T. If None, this will use all possible
+                pairs that the Python bindings of ``SystemScalarConverter``
+                support.
+            scope: Defining ``scope``, per ``TemplateClass``'s constructor.
         """
-        if module_name is None:
-            module_name = _get_module_name_from_stack()
-        TemplateClass.__init__(self, name, module_name=module_name)
+        if scope is None:
+            scope = _get_module_from_stack()
+        TemplateClass.__init__(self, name, scope=scope)
 
         # Check scalar types and conversions, using defaults if unspecified.
         if T_list is None:
@@ -109,25 +110,26 @@ class TemplateSystem(TemplateClass):
         self._converter = self._make_converter()
 
     @classmethod
-    def define(cls, name, T_list=None, T_pairs=None, *args, **kwargs):
+    def define(
+            cls, name, T_list=None, T_pairs=None, *args, scope=None, **kwargs):
         """Provides a decorator which can be used define a scalar-type
         convertible System as a template.
 
-        The decorated function must be of the from `f(T)`, which returns a
-        class which will be the instantation for type `T` of the given
+        The decorated function must be of the form ``f(T)``, which returns a
+        class which will be the instantiation for type ``T`` of the given
         template.
 
-        @param name
-            Name of the system template. This should match the name of the
-            object being decorated.
-        @param T_list
-            See `__init__` for more information.
-        @param T_pairs
-            See `__init__` for more information.
-        @param args, kwargs
-            These are passed to the constructor of `TemplateSystem`.
+        Args:
+            name: Name of the system template. This should match the name of
+                the object being decorated.
+            T_list: See ``__init__`` for more information.
+            T_pairs: See ``__init__`` for more information.
+            args, kwargs: These are passed to the constructor of
+                ``TemplateSystem``.
         """
-        template = cls(name, T_list, T_pairs, *args, **kwargs)
+        if scope is None:
+            scope = _get_module_from_stack()
+        template = cls(name, T_list, T_pairs, *args, scope=scope, **kwargs)
         param_list = [(T,) for T in template._T_list]
 
         def decorator(instantiation_func):
@@ -189,6 +191,7 @@ class TemplateSystem(TemplateClass):
                     self, *args, converter=converter, **kwargs)
 
         cls.__init__ = system_init
+        return cls
 
     def _check_if_copying(self, obj, *args, **kwargs):
         # Checks if a function signature implies a copy constructor.
@@ -199,22 +202,22 @@ class TemplateSystem(TemplateClass):
                 return True
         return False
 
+    def _make(self, T, U, system_U):
+        # Converts system_U (of scalar type U) to an instance of scalar type
+        # T. This should mirror the logic in
+        # `system_scalar_converter_internal::Make` under the file
+        # `system_scalar_converter.h`.
+        assert isinstance(system_U, self[U])
+        result_T = self[T](system_U)
+        result_T.set_name(system_U.get_name())
+        return result_T
+
     def _make_converter(self):
         # Creates system scalar converter for the template class.
         converter = SystemScalarConverter()
-
-        # Define capture to ensure the current values are bound, and do not
-        # change through iteration.
         # N.B. This does not directly instantiate the template; it is deferred
         # to when the conversion is called.
-        def add_captured(T_pair):
-            T, U = T_pair
-
-            def conversion(system):
-                assert isinstance(system, self[U])
-                return self[T](system)
-
+        for (T, U) in self._T_pairs:
+            conversion = partial(self._make, T, U)
             converter.Add[T, U](conversion)
-
-        map(add_captured, self._T_pairs)
         return converter

@@ -8,12 +8,9 @@ def qdldl_repository(
     github_archive(
         name = name,
         repository = "oxfordcontrol/qdldl",
-        # When changing the commit of QDLDL used by Drake, ideally try to keep
-        # it aligned with what Drake's commit of OSQP desires, e.g.,
-        # https://github.com/oxfordcontrol/osqp/tree/v0.4.0/lin_sys/direct/qdldl
-        # shows that v0.4.0 of OSQP prefers v0.1.2 of QDLDL.
-        commit = "v0.1.2",
-        sha256 = "e059b02516a5314e2a1d69c9ede910ef3a532699c76d5455a53dbff8a97f1fe5",  # noqa
+        # When updating this commit, see drake/tools/workspace/qdldl/README.md.
+        commit = "v0.1.4",
+        sha256 = "4eaed3b2d66d051cea0a57b0f80a81fc04ec72c8a906f8020b2b07e31d3b549c",  # noqa
         build_file = "@drake//tools/workspace/qdldl:package.BUILD.bazel",
         mirrors = mirrors,
     )

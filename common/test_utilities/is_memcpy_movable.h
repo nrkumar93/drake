@@ -21,8 +21,8 @@ namespace test {
 /// object. Please see https://github.com/RobotLocomotion/drake/issues/5974 for
 /// more information.
 template <typename T, typename InvariantPred = std::equal_to<T>>
-bool IsMemcpyMovable(const T& value,
-                     const InvariantPred& invariant_pred = InvariantPred()) {
+[[nodiscard]] bool IsMemcpyMovable(
+    const T& value, const InvariantPred& invariant_pred = InvariantPred()) {
   // 1. Create ptr_to_original via placement-new.
   auto original_storage = std::make_unique<
       typename std::aligned_storage<sizeof(T), alignof(T)>::type>();
@@ -32,7 +32,7 @@ bool IsMemcpyMovable(const T& value,
   auto moved_storage = std::make_unique<
       typename std::aligned_storage<sizeof(T), alignof(T)>::type>();
   T* const ptr_to_moved{reinterpret_cast<T* const>(moved_storage.get())};
-  memcpy(ptr_to_moved, ptr_to_original, sizeof(T));
+  memcpy(static_cast<void*>(ptr_to_moved), ptr_to_original, sizeof(T));
 
   // 3. Free original_storage.
   original_storage.reset();

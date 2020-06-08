@@ -19,20 +19,8 @@
 #include "drake/common/eigen_types.h"
 #include "drake/common/symbolic.h"
 #include "drake/math/matrix_util.h"
-#include "drake/solvers/equality_constrained_qp_solver.h"
-#include "drake/solvers/gurobi_solver.h"
-#include "drake/solvers/ipopt_solver.h"
-#include "drake/solvers/linear_system_solver.h"
-#include "drake/solvers/moby_lcp_solver.h"
-#include "drake/solvers/mosek_solver.h"
-#include "drake/solvers/nlopt_solver.h"
-#include "drake/solvers/osqp_solver.h"
-#include "drake/solvers/scs_solver.h"
-#include "drake/solvers/snopt_solver.h"
 #include "drake/solvers/sos_basis_generator.h"
 #include "drake/solvers/symbolic_extraction.h"
-// Note that the file mathematical_program_api.cc also contains some of the
-// implementation of mathematical_program.h
 
 namespace drake {
 namespace solvers {
@@ -64,75 +52,13 @@ using internal::CreateBinding;
 using internal::DecomposeLinearExpression;
 using internal::SymbolicError;
 
-namespace {
-
-// Solver for simple linear systems of equalities
-AttributesSet kLinearSystemSolverCapabilities = kLinearEqualityConstraint;
-
-// Solver for equality-constrained QPs
-AttributesSet kEqualityConstrainedQPCapabilities =
-    (kQuadraticCost | kLinearCost | kLinearEqualityConstraint);
-
-// Solver for Linear Complementarity Problems (LCPs)
-AttributesSet kMobyLcpCapabilities = kLinearComplementarityConstraint;
-
-// Gurobi solver capabilities.
-AttributesSet kGurobiCapabilities =
-    (kLinearEqualityConstraint | kLinearConstraint | kLorentzConeConstraint |
-     kRotatedLorentzConeConstraint | kLinearCost | kQuadraticCost |
-     kBinaryVariable);
-
-// OSQP solver capabilities. This is a QP solver.
-AttributesSet kOsqpCapabilities =
-    (kLinearEqualityConstraint | kLinearConstraint | kLinearCost |
-     kQuadraticCost);
-
-// Mosek solver capabilities.
-AttributesSet kMosekCapabilities =
-    (kLinearEqualityConstraint | kLinearConstraint | kLorentzConeConstraint |
-     kRotatedLorentzConeConstraint | kLinearCost | kQuadraticCost |
-     kPositiveSemidefiniteConstraint | kBinaryVariable);
-
-// Scs solver capatilities.
-AttributesSet kScsCapabilities =
-    (kLinearEqualityConstraint | kLinearConstraint | kLorentzConeConstraint |
-     kRotatedLorentzConeConstraint | kLinearCost | kQuadraticCost |
-     kPositiveSemidefiniteConstraint);
-
-// Solvers for generic systems of constraints and costs.
-AttributesSet kGenericSolverCapabilities =
-    (kGenericCost | kGenericConstraint | kQuadraticCost | kQuadraticConstraint |
-     kLorentzConeConstraint | kRotatedLorentzConeConstraint | kLinearCost |
-     kLinearConstraint | kLinearEqualityConstraint | kCallback);
-
-// Snopt solver capabilities.
-AttributesSet kSnoptCapabilities =
-    (kGenericSolverCapabilities | kLinearComplementarityConstraint);
-
-// Returns true iff no capabilities are in required and not in available.
-bool is_satisfied(AttributesSet required, AttributesSet available) {
-  return ((required & ~available) == kNoCapabilities);
-}
-}  // namespace
-
-constexpr double MathematicalProgram::kGlobalInfeasibleCost;
-constexpr double MathematicalProgram::kUnboundedCost;
-
 MathematicalProgram::MathematicalProgram()
     : x_initial_guess_(0),
       optimal_cost_(numeric_limits<double>::quiet_NaN()),
       lower_bound_cost_(-numeric_limits<double>::infinity()),
-      required_capabilities_(kNoCapabilities),
-      ipopt_solver_(new IpoptSolver()),
-      nlopt_solver_(new NloptSolver()),
-      snopt_solver_(new SnoptSolver()),
-      moby_lcp_solver_(new MobyLCPSolver<double>()),
-      linear_system_solver_(new LinearSystemSolver()),
-      equality_constrained_qp_solver_(new EqualityConstrainedQPSolver()),
-      gurobi_solver_(new GurobiSolver()),
-      mosek_solver_(new MosekSolver()),
-      osqp_solver_(new OsqpSolver()),
-      scs_solver_(new ScsSolver()) {}
+      required_capabilities_{} {}
+
+MathematicalProgram::~MathematicalProgram() = default;
 
 std::unique_ptr<MathematicalProgram> MathematicalProgram::Clone() const {
   // The constructor of MathematicalProgram will construct each solver. It
@@ -160,14 +86,13 @@ std::unique_ptr<MathematicalProgram> MathematicalProgram::Clone() const {
       positive_semidefinite_constraint_;
   new_prog->linear_matrix_inequality_constraint_ =
       linear_matrix_inequality_constraint_;
+  new_prog->exponential_cone_constraints_ = exponential_cone_constraints_;
   new_prog->linear_complementarity_constraints_ =
       linear_complementarity_constraints_;
 
   new_prog->x_initial_guess_ = x_initial_guess_;
   new_prog->solver_id_ = solver_id_;
-  new_prog->solver_options_double_ = solver_options_double_;
-  new_prog->solver_options_int_ = solver_options_int_;
-  new_prog->solver_options_str_ = solver_options_str_;
+  new_prog->solver_options_ = solver_options_;
 
   new_prog->required_capabilities_ = required_capabilities_;
   return new_prog;
@@ -236,31 +161,88 @@ symbolic::Polynomial MathematicalProgram::NewFreePolynomial(
   return p;
 }
 
-std::pair<symbolic::Polynomial, Binding<PositiveSemidefiniteConstraint>>
-MathematicalProgram::NewSosPolynomial(
-    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis) {
-  const MatrixXDecisionVariable Q{
-      NewSymmetricContinuousVariables(monomial_basis.size())};
-  const auto psd_binding = AddPositiveSemidefiniteConstraint(Q);
-  // Constructs a coefficient matrix of Polynomials Q_poly from Q. In the
-  // process, we make sure that each Q_poly(i, j) is treated as a decision
-  // variable, not an indeterminate.
-  const drake::MatrixX<symbolic::Polynomial> Q_poly{
-      Q.unaryExpr([](const Variable& q_i_j) {
-        return symbolic::Polynomial{q_i_j /* coeff */, {} /* Monomial */};
-      })};
-  // p = mᵀ * Q_poly * m.
-  const symbolic::Polynomial p{monomial_basis.dot(Q_poly * monomial_basis)};
-  return make_pair(p, psd_binding);
+// This is the utility function for creating new nonnegative polynomials
+// (sos-polynomial, sdsos-polynomial, dsos-polynomial). It creates a
+// symmetric matrix Q as decision variables, and return m' * Q * m as the new
+// polynomial, where m is the monomial basis.
+pair<symbolic::Polynomial, MatrixXDecisionVariable>
+MathematicalProgram::NewNonnegativePolynomial(
+    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis,
+    NonnegativePolynomial type) {
+  const MatrixXDecisionVariable Q =
+      NewSymmetricContinuousVariables(monomial_basis.size());
+  const symbolic::Polynomial p =
+      NewNonnegativePolynomial(Q, monomial_basis, type);
+  return std::make_pair(p, Q);
 }
 
-pair<symbolic::Polynomial, Binding<PositiveSemidefiniteConstraint>>
-MathematicalProgram::NewSosPolynomial(const Variables& indeterminates,
-                                      const int degree) {
+symbolic::Polynomial MathematicalProgram::NewNonnegativePolynomial(
+    const Eigen::Ref<const MatrixX<symbolic::Variable>>& grammian,
+    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis,
+    NonnegativePolynomial type) {
+  DRAKE_ASSERT(grammian.rows() == grammian.cols());
+  DRAKE_ASSERT(grammian.rows() == monomial_basis.rows());
+  // TODO(hongkai.dai & soonho.kong): ideally we should compute p in one line as
+  // monomial_basis.dot(grammian * monomial_basis). But as explained in #10200,
+  // this one line version is too slow, so we use this double for loop to
+  // compute the matrix product by hand. I will revert to the one line version
+  // when it is fast.
+  symbolic::Polynomial p{};
+  for (int i = 0; i < grammian.rows(); ++i) {
+    p.AddProduct(grammian(i, i), pow(monomial_basis(i), 2));
+    for (int j = i + 1; j < grammian.cols(); ++j) {
+      p.AddProduct(2 * grammian(i, j), monomial_basis(i) * monomial_basis(j));
+    }
+  }
+  switch (type) {
+    case MathematicalProgram::NonnegativePolynomial::kSos: {
+      AddPositiveSemidefiniteConstraint(grammian);
+      break;
+    }
+    case MathematicalProgram::NonnegativePolynomial::kSdsos: {
+      AddScaledDiagonallyDominantMatrixConstraint(grammian);
+      break;
+    }
+    case MathematicalProgram::NonnegativePolynomial::kDsos: {
+      AddPositiveDiagonallyDominantMatrixConstraint(
+          grammian.cast<symbolic::Expression>());
+      break;
+    }
+  }
+  return p;
+}
+
+pair<symbolic::Polynomial, MatrixXDecisionVariable>
+MathematicalProgram::NewNonnegativePolynomial(
+    const symbolic::Variables& indeterminates, int degree,
+    NonnegativePolynomial type) {
   DRAKE_DEMAND(degree > 0 && degree % 2 == 0);
   const drake::VectorX<symbolic::Monomial> x{
       MonomialBasis(indeterminates, degree / 2)};
-  return NewSosPolynomial(x);
+  return NewNonnegativePolynomial(x, type);
+}
+
+std::pair<symbolic::Polynomial, MatrixXDecisionVariable>
+MathematicalProgram::NewSosPolynomial(
+    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis) {
+  return NewNonnegativePolynomial(
+      monomial_basis, MathematicalProgram::NonnegativePolynomial::kSos);
+}
+
+pair<symbolic::Polynomial, MatrixXDecisionVariable>
+MathematicalProgram::NewSosPolynomial(const Variables& indeterminates,
+                                      const int degree) {
+  return NewNonnegativePolynomial(
+      indeterminates, degree, MathematicalProgram::NonnegativePolynomial::kSos);
+}
+
+symbolic::Polynomial MathematicalProgram::MakePolynomial(
+    const symbolic::Expression& e) const {
+  return symbolic::Polynomial{e, symbolic::Variables{indeterminates()}};
+}
+
+void MathematicalProgram::Reparse(symbolic::Polynomial* const p) const {
+  p->SetIndeterminates(symbolic::Variables{indeterminates()});
 }
 
 MatrixXIndeterminate MathematicalProgram::NewIndeterminates(
@@ -331,7 +313,7 @@ Binding<VisualizationCallback> MathematicalProgram::AddVisualizationCallback(
   visualization_callbacks_.push_back(
       internal::CreateBinding<VisualizationCallback>(
           make_shared<VisualizationCallback>(vars.size(), callback), vars));
-  required_capabilities_ |= kCallback;
+  required_capabilities_.insert(ProgramAttribute::kCallback);
   return visualization_callbacks_.back();
 }
 
@@ -344,7 +326,7 @@ Binding<Cost> MathematicalProgram::AddCost(const Binding<Cost>& binding) {
     return AddCost(internal::BindingDynamicCast<LinearCost>(binding));
   } else {
     CheckBinding(binding);
-    required_capabilities_ |= kGenericCost;
+    required_capabilities_.insert(ProgramAttribute::kGenericCost);
     generic_costs_.push_back(binding);
     return generic_costs_.back();
   }
@@ -353,7 +335,7 @@ Binding<Cost> MathematicalProgram::AddCost(const Binding<Cost>& binding) {
 Binding<LinearCost> MathematicalProgram::AddCost(
     const Binding<LinearCost>& binding) {
   CheckBinding(binding);
-  required_capabilities_ |= kLinearCost;
+  required_capabilities_.insert(ProgramAttribute::kLinearCost);
   linear_costs_.push_back(binding);
   return linear_costs_.back();
 }
@@ -371,7 +353,7 @@ Binding<LinearCost> MathematicalProgram::AddLinearCost(
 Binding<QuadraticCost> MathematicalProgram::AddCost(
     const Binding<QuadraticCost>& binding) {
   CheckBinding(binding);
-  required_capabilities_ |= kQuadraticCost;
+  required_capabilities_.insert(ProgramAttribute::kQuadraticCost);
   DRAKE_ASSERT(binding.evaluator()->Q().rows() ==
                    static_cast<int>(binding.GetNumElements()) &&
                binding.evaluator()->b().rows() ==
@@ -416,6 +398,150 @@ Binding<Cost> MathematicalProgram::AddCost(const Expression& e) {
   return AddCost(internal::ParseCost(e));
 }
 
+void MathematicalProgram::AddMaximizeLogDeterminantSymmetricMatrixCost(
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& X) {
+  DRAKE_DEMAND(X.rows() == X.cols());
+  const int X_rows = X.rows();
+  auto Z_lower = NewContinuousVariables(X_rows * (X_rows + 1) / 2);
+  MatrixX<symbolic::Expression> Z(X_rows, X_rows);
+  Z.setZero();
+  // diag_Z is the diagonal matrix that only contains the diagonal entries of Z.
+  MatrixX<symbolic::Expression> diag_Z(X_rows, X_rows);
+  diag_Z.setZero();
+  int Z_lower_index = 0;
+  for (int j = 0; j < X_rows; ++j) {
+    for (int i = j; i < X_rows; ++i) {
+      Z(i, j) = Z_lower(Z_lower_index++);
+    }
+    diag_Z(j, j) = Z(j, j);
+  }
+
+  MatrixX<symbolic::Expression> psd_mat(2 * X_rows, 2 * X_rows);
+  // clang-format off
+  psd_mat << X,             Z,
+             Z.transpose(), diag_Z;
+  // clang-format on
+  AddPositiveSemidefiniteConstraint(psd_mat);
+  // Now introduce the slack variable t.
+  auto t = NewContinuousVariables(X_rows);
+  // Introduce the constraint log(Z(i, i)) >= t(i).
+  for (int i = 0; i < X_rows; ++i) {
+    AddExponentialConeConstraint(
+        Vector3<symbolic::Expression>(Z(i, i), 1, t(i)));
+  }
+
+  AddLinearCost(-t.cast<symbolic::Expression>().sum());
+}
+
+void MathematicalProgram::AddMaximizeGeometricMeanCost(
+    const Eigen::Ref<const Eigen::MatrixXd>& A,
+    const Eigen::Ref<const Eigen::VectorXd>& b,
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x) {
+  if (A.rows() != b.rows() || A.cols() != x.rows()) {
+    throw std::invalid_argument(
+        "MathematicalProgram::AddMaximizeGeometricMeanCost: the argument A, b "
+        "and x don't have consistent size.");
+  }
+  if (A.rows() <= 1) {
+    throw std::runtime_error(
+        "MathematicalProgram::AddMaximizeGeometricMeanCost: the size of A*x+b "
+        "should be at least 2.");
+  }
+  // We will impose the constraint w(i)² ≤ (A.row(2i) * x + b(2i)) *
+  // (A.row(2i+1) * x + b(2i+1)). This could be reformulated as the vector
+  // C * [x;w(i)] + d is in the rotated Lorentz cone, where
+  // C = [A.row(2i)   0]
+  //     [A.row(2i+1) 0]
+  //     [0, 0, ...,0 1]
+  // d = [b(2i)  ]
+  //     [b(2i+1)]
+  //     [0      ]
+  // The special case is that if A.rows() is an odd number, then for the last
+  // entry of w, we will impose (w((A.rows() - 1)/2)² ≤ A.row(A.rows() - 1) * x
+  // + b(b.rows() - 1)
+  auto w = NewContinuousVariables((A.rows() + 1) / 2);
+  DRAKE_ASSERT(w.rows() >= 1);
+
+  VectorX<symbolic::Variable> xw(x.rows() + 1);
+  xw.head(x.rows()) = x;
+  Eigen::Matrix3Xd C(3, x.rows() + 1);
+  for (int i = 0; i < w.size(); ++i) {
+    C.setZero();
+    C.row(0) << A.row(2 * i), 0;
+    Eigen::Vector3d d;
+    d(0) = b(2 * i);
+    if (2 * i + 1 == A.rows()) {
+      // The special case, C.row(1) * x + d(1) = 1.
+      C.row(1).setZero();
+      d(1) = 1;
+    } else {
+      // The normal case, C.row(1) * x + d(1) = A.row(2i+1) * x + b(2i+1)
+      C.row(1) << A.row(2 * i + 1), 0;
+      d(1) = b(2 * i + 1);
+    }
+    C.row(2).setZero();
+    C(2, C.cols() - 1) = 1;
+    d(2) = 0;
+    xw(x.rows()) = w(i);
+    AddRotatedLorentzConeConstraint(C, d, xw);
+  }
+  if (w.rows() == 1) {
+    AddLinearCost(-w(0));
+    return;
+  }
+  AddMaximizeGeometricMeanCost(w, 1);
+}
+
+void MathematicalProgram::AddMaximizeGeometricMeanCost(
+    const Eigen::Ref<const VectorX<symbolic::Variable>>& x, double c) {
+  if (c <= 0) {
+    throw std::invalid_argument(
+        "MathematicalProgram::AddMaximizeGeometricMeanCost(): c should be "
+        "positive.");
+  }
+  // We maximize the geometric mean through a recursive procedure. If we assume
+  // that the size of x is 2ᵏ, then in each iteration, we introduce new slack
+  // variables w of size 2ᵏ⁻¹, with the constraint
+  // w(i)² ≤ x(2i) * x(2i+1)
+  // we then call AddMaximizeGeometricMeanCost(w). This recusion ends until
+  // w.size() == 2. We then add the constraint z(0)² ≤ w(0) * w(1), and maximize
+  // the cost z(0).
+  if (x.rows() <= 1) {
+    throw std::invalid_argument(
+        "MathematicalProgram::AddMaximizeGeometricMeanCost(): x should have "
+        "more than one entry.");
+  }
+  // We will impose the constraint w(i)² ≤ x(2i) * x(2i+1). Namely the vector
+  // [x(2i); x(2i+1); w(i)] is in the rotated Lorentz cone.
+  // The special case is when x.rows() = 2n+1, then for the last
+  // entry of w, we impose the constraint w(n)² ≤ x(2n), namely the vector
+  // [x(2n); 1; w(n)] is in the rotated Lorentz cone.
+  auto w = NewContinuousVariables((x.rows() + 1) / 2);
+  DRAKE_ASSERT(w.rows() >= 1);
+  for (int i = 0; i < w.rows() - 1; ++i) {
+    AddRotatedLorentzConeConstraint(
+        Vector3<symbolic::Variable>(x(2 * i), x(2 * i + 1), w(i)));
+  }
+  if (2 * w.rows() == x.rows()) {
+    // x has even number of rows.
+    AddRotatedLorentzConeConstraint(Vector3<symbolic::Variable>(
+        x(x.rows() - 2), x(x.rows() - 1), w(w.rows() - 1)));
+  } else {
+    // x has odd number of rows.
+    // C * xw + d = [x(2n); 1; w(n)], where xw = [x(2n); w(n)].
+    Eigen::Matrix<double, 3, 2> C;
+    C << 1, 0, 0, 0, 0, 1;
+    const Eigen::Vector3d d(0, 1, 0);
+    AddRotatedLorentzConeConstraint(
+        C, d, Vector2<symbolic::Variable>(x(x.rows() - 1), w(w.rows() - 1)));
+  }
+  if (x.rows() == 2) {
+    AddLinearCost(-c * w(0));
+    return;
+  }
+  AddMaximizeGeometricMeanCost(w);
+}
+
 Binding<Constraint> MathematicalProgram::AddConstraint(
     const Binding<Constraint>& binding) {
   // TODO(eric.cousineau): Use alternative to RTTI.
@@ -448,7 +574,7 @@ Binding<Constraint> MathematicalProgram::AddConstraint(
         internal::BindingDynamicCast<LinearConstraint>(binding));
   } else {
     CheckBinding(binding);
-    required_capabilities_ |= kGenericConstraint;
+    required_capabilities_.insert(ProgramAttribute::kGenericConstraint);
     generic_constraints_.push_back(binding);
     return generic_constraints_.back();
   }
@@ -538,7 +664,7 @@ Binding<LinearConstraint> MathematicalProgram::AddConstraint(
     DRAKE_ASSERT(binding.evaluator()->A().cols() ==
                  static_cast<int>(binding.GetNumElements()));
     CheckBinding(binding);
-    required_capabilities_ |= kLinearConstraint;
+    required_capabilities_.insert(ProgramAttribute::kLinearConstraint);
     linear_constraints_.push_back(binding);
     return linear_constraints_.back();
   }
@@ -557,7 +683,7 @@ Binding<LinearEqualityConstraint> MathematicalProgram::AddConstraint(
   DRAKE_ASSERT(binding.evaluator()->A().cols() ==
                static_cast<int>(binding.GetNumElements()));
   CheckBinding(binding);
-  required_capabilities_ |= kLinearEqualityConstraint;
+  required_capabilities_.insert(ProgramAttribute::kLinearEqualityConstraint);
   linear_equality_constraints_.push_back(binding);
   return linear_equality_constraints_.back();
 }
@@ -591,7 +717,7 @@ Binding<BoundingBoxConstraint> MathematicalProgram::AddConstraint(
   CheckBinding(binding);
   DRAKE_ASSERT(binding.evaluator()->num_outputs() ==
                static_cast<int>(binding.GetNumElements()));
-  required_capabilities_ |= kLinearConstraint;
+  required_capabilities_.insert(ProgramAttribute::kLinearConstraint);
   bbox_constraints_.push_back(binding);
   return bbox_constraints_.back();
 }
@@ -599,7 +725,7 @@ Binding<BoundingBoxConstraint> MathematicalProgram::AddConstraint(
 Binding<LorentzConeConstraint> MathematicalProgram::AddConstraint(
     const Binding<LorentzConeConstraint>& binding) {
   CheckBinding(binding);
-  required_capabilities_ |= kLorentzConeConstraint;
+  required_capabilities_.insert(ProgramAttribute::kLorentzConeConstraint);
   lorentz_cone_constraint_.push_back(binding);
   return lorentz_cone_constraint_.back();
 }
@@ -628,7 +754,8 @@ Binding<LorentzConeConstraint> MathematicalProgram::AddLorentzConeConstraint(
 Binding<RotatedLorentzConeConstraint> MathematicalProgram::AddConstraint(
     const Binding<RotatedLorentzConeConstraint>& binding) {
   CheckBinding(binding);
-  required_capabilities_ |= kRotatedLorentzConeConstraint;
+  required_capabilities_.insert(
+      ProgramAttribute::kRotatedLorentzConeConstraint);
   rotated_lorentz_cone_constraint_.push_back(binding);
   return rotated_lorentz_cone_constraint_.back();
 }
@@ -675,7 +802,8 @@ Binding<LinearComplementarityConstraint> MathematicalProgram::AddConstraint(
     const Binding<LinearComplementarityConstraint>& binding) {
   CheckBinding(binding);
 
-  required_capabilities_ |= kLinearComplementarityConstraint;
+  required_capabilities_.insert(
+      ProgramAttribute::kLinearComplementarityConstraint);
 
   linear_complementarity_constraints_.push_back(binding);
   return linear_complementarity_constraints_.back();
@@ -707,7 +835,8 @@ Binding<PositiveSemidefiniteConstraint> MathematicalProgram::AddConstraint(
   DRAKE_ASSERT(math::IsSymmetric(Eigen::Map<const MatrixXDecisionVariable>(
       binding.variables().data(), binding.evaluator()->matrix_rows(),
       binding.evaluator()->matrix_rows())));
-  required_capabilities_ |= kPositiveSemidefiniteConstraint;
+  required_capabilities_.insert(
+      ProgramAttribute::kPositiveSemidefiniteConstraint);
   positive_semidefinite_constraint_.push_back(binding);
   return positive_semidefinite_constraint_.back();
 }
@@ -740,7 +869,8 @@ Binding<LinearMatrixInequalityConstraint> MathematicalProgram::AddConstraint(
   CheckBinding(binding);
   DRAKE_ASSERT(static_cast<int>(binding.evaluator()->F().size()) ==
                static_cast<int>(binding.GetNumElements()) + 1);
-  required_capabilities_ |= kPositiveSemidefiniteConstraint;
+  required_capabilities_.insert(
+      ProgramAttribute::kPositiveSemidefiniteConstraint);
   linear_matrix_inequality_constraint_.push_back(binding);
   return linear_matrix_inequality_constraint_.back();
 }
@@ -796,31 +926,241 @@ MathematicalProgram::AddPositiveDiagonallyDominantMatrixConstraint(
   return Y;
 }
 
-// Note that FindDecisionVariableIndex is implemented in
-// mathematical_program_api.cc instead of this file.
+namespace {
+// Add the slack variable for scaled diagonally dominant matrix constraint. In
+// AddScaledDiagonallyDominantMatrixConstraint, we should add the constraint
+// that the diagonal terms in the sdd matrix should match the summation of
+// the diagonally terms in the slack variable, and the upper diagonal corner
+// in M[i][j] should satisfy the rotated Lorentz cone constraint.
+template <typename T>
+void AddSlackVariableForScaledDiagonallyDominantMatrixConstraint(
+    const Eigen::Ref<const MatrixX<T>>& X, MathematicalProgram* prog,
+    Eigen::Matrix<symbolic::Variable, 2, Eigen::Dynamic>* M_ij_diagonal,
+    std::vector<std::vector<Matrix2<T>>>* M) {
+  const int n = X.rows();
+  DRAKE_DEMAND(X.cols() == n);
+  // The diagonal terms of M[i][j] are new variables.
+  // M[i][j](0, 0) = M_ij_diagonal(0, k)
+  // M[i][j](1, 1) = M_ij_diagonal(1, k)
+  // where k = (2n - 1) * i / 2 + j - i - 1, namely k is the index of X(i, j)
+  // in the vector X_upper_diagonal, where X_upper_diagonal is obtained by
+  // stacking each row of the upper diagonal part (not including the diagonal
+  // entries) in X to a row vector.
+  *M_ij_diagonal = prog->NewContinuousVariables<2, Eigen::Dynamic>(
+      2, (n - 1) * n / 2, "sdd_slack_M");
+  int k = 0;
+  M->resize(n);
+  for (int i = 0; i < n; ++i) {
+    (*M)[i].resize(n);
+    for (int j = i + 1; j < n; ++j) {
+      (*M)[i][j](0, 0) = (*M_ij_diagonal)(0, k);
+      (*M)[i][j](1, 1) = (*M_ij_diagonal)(1, k);
+      (*M)[i][j](0, 1) = X(i, j);
+      (*M)[i][j](1, 0) = X(j, i);
+      ++k;
+    }
+  }
+}
+}  // namespace
 
-// Note that FindIndeterminateIndex is implemented in
-// mathematical_program_api.cc instead of this file.
+std::vector<std::vector<Matrix2<symbolic::Expression>>>
+MathematicalProgram::AddScaledDiagonallyDominantMatrixConstraint(
+    const Eigen::Ref<const MatrixX<symbolic::Expression>>& X) {
+  const int n = X.rows();
+  std::vector<std::vector<Matrix2<symbolic::Expression>>> M(n);
+  Matrix2X<symbolic::Variable> M_ij_diagonal;
+  AddSlackVariableForScaledDiagonallyDominantMatrixConstraint<
+      symbolic::Expression>(X, this, &M_ij_diagonal, &M);
+  for (int i = 0; i < n; ++i) {
+    symbolic::Expression diagonal_sum = 0;
+    for (int j = 0; j < i; ++j) {
+      diagonal_sum += M[j][i](1, 1);
+    }
+    for (int j = i + 1; j < n; ++j) {
+      diagonal_sum += M[i][j](0, 0);
+      AddRotatedLorentzConeConstraint(Vector3<symbolic::Expression>(
+          M[i][j](0, 0), M[i][j](1, 1), M[i][j](0, 1)));
+    }
+    AddLinearEqualityConstraint(X(i, i) - diagonal_sum, 0);
+  }
+  return M;
+}
 
-pair<Binding<PositiveSemidefiniteConstraint>, Binding<LinearEqualityConstraint>>
-MathematicalProgram::AddSosConstraint(
+std::vector<std::vector<Matrix2<symbolic::Variable>>>
+MathematicalProgram::AddScaledDiagonallyDominantMatrixConstraint(
+    const Eigen::Ref<const MatrixX<symbolic::Variable>>& X) {
+  const int n = X.rows();
+  std::vector<std::vector<Matrix2<symbolic::Variable>>> M(n);
+  Matrix2X<symbolic::Variable> M_ij_diagonal;
+  AddSlackVariableForScaledDiagonallyDominantMatrixConstraint<
+      symbolic::Variable>(X, this, &M_ij_diagonal, &M);
+
+  // k is the index of X(i, j) in the vector X_upper_diagonal, where
+  // X_upper_diagonal is obtained by stacking each row of the upper diagonal
+  // part in X to a row vector.
+  auto ij_to_k = [&n](int i, int j) {
+    return (2 * n - 1 - i) * i / 2 + j - i - 1;
+  };
+  // diagonal_sum_var = [M_ij_diagonal(:); X(0, 0); X(1, 1); ...; X(n-1, n-1)]
+  const int n_square = n * n;
+  VectorXDecisionVariable diagonal_sum_var(n_square);
+  for (int i = 0; i < (n_square - n) / 2; ++i) {
+    diagonal_sum_var.segment<2>(2 * i) = M_ij_diagonal.col(i);
+  }
+  for (int i = 0; i < n; ++i) {
+    diagonal_sum_var(n_square - n + i) = X(i, i);
+  }
+
+  // Create a RotatedLorentzConeConstraint
+  auto rotated_lorentz_cone_constraint =
+      std::make_shared<RotatedLorentzConeConstraint>(
+          Eigen::Matrix3d::Identity(), Eigen::Vector3d::Zero());
+  // A_diagonal_sum.row(i) * diagonal_sum_var = M[0][i](1, 1) + M[1][i](1, 1) +
+  // ... + M[i-1][i](1, 1) - X(i, i) + M[i][i+1](0, 0) + M[i][i+2](0, 0) + ... +
+  // M[i][n-1](0, 0);
+  Eigen::MatrixXd A_diagonal_sum(n, n_square);
+  A_diagonal_sum.setZero();
+  for (int i = 0; i < n; ++i) {
+    // The coefficient for X(i, i)
+    A_diagonal_sum(i, n_square - n + i) = -1;
+    for (int j = 0; j < i; ++j) {
+      // The coefficient for M[j][i](1, 1)
+      A_diagonal_sum(i, 2 * ij_to_k(j, i) + 1) = 1;
+    }
+    for (int j = i + 1; j < n; ++j) {
+      // The coefficient for M[i][j](0, 0)
+      A_diagonal_sum(i, 2 * ij_to_k(i, j)) = 1;
+      // Bind the rotated Lorentz cone constraint to (M[i][j](0, 0); M[i][j](1,
+      // 1); M[i][j](0, 1))
+      AddConstraint(rotated_lorentz_cone_constraint,
+                    Vector3<symbolic::Variable>(M[i][j](0, 0), M[i][j](1, 1),
+                                                M[i][j](0, 1)));
+    }
+  }
+  AddLinearEqualityConstraint(A_diagonal_sum, Eigen::VectorXd::Zero(n),
+                              diagonal_sum_var);
+  return M;
+}
+
+Binding<ExponentialConeConstraint> MathematicalProgram::AddConstraint(
+    const Binding<ExponentialConeConstraint>& binding) {
+  CheckBinding(binding);
+  required_capabilities_.insert(ProgramAttribute::kExponentialConeConstraint);
+  exponential_cone_constraints_.push_back(binding);
+  return exponential_cone_constraints_.back();
+}
+
+Binding<ExponentialConeConstraint>
+MathematicalProgram::AddExponentialConeConstraint(
+    const Eigen::Ref<const Eigen::SparseMatrix<double>>& A,
+    const Eigen::Ref<const Eigen::Vector3d>& b,
+    const Eigen::Ref<const VectorXDecisionVariable>& vars) {
+  auto constraint = std::make_shared<ExponentialConeConstraint>(A, b);
+  return AddConstraint(constraint, vars);
+}
+
+Binding<ExponentialConeConstraint>
+MathematicalProgram::AddExponentialConeConstraint(
+    const Eigen::Ref<const Vector3<symbolic::Expression>>& z) {
+  Eigen::MatrixXd A{};
+  Eigen::VectorXd b(3);
+  VectorXDecisionVariable vars{};
+  internal::DecomposeLinearExpression(z, &A, &b, &vars);
+  return AddExponentialConeConstraint(A.sparseView(), Eigen::Vector3d(b), vars);
+}
+
+int MathematicalProgram::FindDecisionVariableIndex(const Variable& var) const {
+  auto it = decision_variable_index_.find(var.get_id());
+  if (it == decision_variable_index_.end()) {
+    ostringstream oss;
+    oss << var
+        << " is not a decision variable in the mathematical program, "
+           "when calling FindDecisionVariableIndex.\n";
+    throw runtime_error(oss.str());
+  }
+  return it->second;
+}
+
+std::vector<int> MathematicalProgram::FindDecisionVariableIndices(
+    const Eigen::Ref<const VectorXDecisionVariable>& vars) const {
+  std::vector<int> x_indices(vars.rows());
+  for (int i = 0; i < vars.rows(); ++i) {
+    x_indices[i] = FindDecisionVariableIndex(vars(i));
+  }
+  return x_indices;
+}
+
+size_t MathematicalProgram::FindIndeterminateIndex(const Variable& var) const {
+  auto it = indeterminates_index_.find(var.get_id());
+  if (it == indeterminates_index_.end()) {
+    ostringstream oss;
+    oss << var
+        << " is not an indeterminate in the mathematical program, "
+           "when calling GetSolution.\n";
+    throw runtime_error(oss.str());
+  }
+  return it->second;
+}
+
+namespace {
+// Body of MathematicalProgram::AddSosConstraint(const symbolic::Polynomial&,
+// const Eigen::Ref<const VectorX<symbolic::Monomial>>&).
+MatrixXDecisionVariable DoAddSosConstraint(
+    MathematicalProgram* const prog, const symbolic::Polynomial& p,
+    const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis) {
+  const auto pair = prog->NewSosPolynomial(monomial_basis);
+  const symbolic::Polynomial& sos_poly{pair.first};
+  const MatrixXDecisionVariable& Q{pair.second};
+
+  const symbolic::Polynomial poly_diff = sos_poly - p;
+
+  for (const auto& term : poly_diff.monomial_to_coefficient_map()) {
+    prog->AddLinearEqualityConstraint(term.second, 0);
+  }
+  return Q;
+}
+// Body of MathematicalProgram::AddSosConstraint(const symbolic::Polynomial&).
+pair<MatrixXDecisionVariable, VectorX<symbolic::Monomial>> DoAddSosConstraint(
+    MathematicalProgram* const prog, const symbolic::Polynomial& p) {
+  const VectorX<symbolic::Monomial> m = ConstructMonomialBasis(p);
+  const MatrixXDecisionVariable Q = prog->AddSosConstraint(p, m);
+  return std::make_pair(Q, m);
+}
+
+}  // namespace
+
+MatrixXDecisionVariable MathematicalProgram::AddSosConstraint(
     const symbolic::Polynomial& p,
     const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis) {
-  const auto pair = NewSosPolynomial(monomial_basis);
-  const symbolic::Polynomial& sos_poly{pair.first};
-  const Binding<PositiveSemidefiniteConstraint>& psd_binding{pair.second};
-  const auto leq_binding = AddLinearEqualityConstraint(sos_poly == p);
-  return make_pair(psd_binding, leq_binding);
+  const Variables indeterminates_vars{indeterminates()};
+  if (Variables(p.indeterminates()).IsSubsetOf(indeterminates_vars) &&
+      intersect(indeterminates_vars, Variables(p.decision_variables()))
+          .empty()) {
+    return DoAddSosConstraint(this, p, monomial_basis);
+  } else {
+    // Need to reparse p, we first make a copy of p and reparse that.
+    symbolic::Polynomial p_reparsed{p};
+    Reparse(&p_reparsed);
+    return DoAddSosConstraint(this, p_reparsed, monomial_basis);
+  }
 }
 
-pair<Binding<PositiveSemidefiniteConstraint>, Binding<LinearEqualityConstraint>>
+pair<MatrixXDecisionVariable, VectorX<symbolic::Monomial>>
 MathematicalProgram::AddSosConstraint(const symbolic::Polynomial& p) {
-  return AddSosConstraint(
-      p, ConstructMonomialBasis(p));
+  const Variables indeterminates_vars{indeterminates()};
+  if (Variables(p.indeterminates()).IsSubsetOf(indeterminates_vars) &&
+      intersect(indeterminates_vars, Variables(p.decision_variables()))
+          .empty()) {
+    return DoAddSosConstraint(this, p);
+  } else {
+    // Need to reparse p, we first make a copy of p and reparse that.
+    symbolic::Polynomial p_reparsed{p};
+    Reparse(&p_reparsed);
+    return DoAddSosConstraint(this, p_reparsed);
+  }
 }
 
-pair<Binding<PositiveSemidefiniteConstraint>, Binding<LinearEqualityConstraint>>
-MathematicalProgram::AddSosConstraint(
+MatrixXDecisionVariable MathematicalProgram::AddSosConstraint(
     const symbolic::Expression& e,
     const Eigen::Ref<const VectorX<symbolic::Monomial>>& monomial_basis) {
   return AddSosConstraint(
@@ -828,56 +1168,19 @@ MathematicalProgram::AddSosConstraint(
       monomial_basis);
 }
 
-pair<Binding<PositiveSemidefiniteConstraint>, Binding<LinearEqualityConstraint>>
+pair<MatrixXDecisionVariable, VectorX<symbolic::Monomial>>
 MathematicalProgram::AddSosConstraint(const symbolic::Expression& e) {
   return AddSosConstraint(
       symbolic::Polynomial{e, symbolic::Variables{indeterminates_}});
 }
 
-double MathematicalProgram::GetSolution(const Variable& var) const {
-  return x_values_[FindDecisionVariableIndex(var)];
-}
-
-namespace {
-template <typename T>
-T GetSolutionForExpressionOrPolynomial(const MathematicalProgram& prog,
-                                       const T& p,
-                                       const symbolic::Variables vars) {
-  symbolic::Environment::map map_decision_vars;
-  for (const auto& var : vars) {
-    map_decision_vars.emplace(var, prog.GetSolution(var));
+void MathematicalProgram::AddEqualityConstraintBetweenPolynomials(
+    const symbolic::Polynomial& p1, const symbolic::Polynomial& p2) {
+  symbolic::Polynomial poly_diff = p1 - p2;
+  Reparse(&poly_diff);
+  for (const auto& item : poly_diff.monomial_to_coefficient_map()) {
+    AddLinearEqualityConstraint(item.second, 0);
   }
-  return p.EvaluatePartial(symbolic::Environment(map_decision_vars));
-}
-}  // namespace
-
-symbolic::Expression MathematicalProgram::SubstituteSolution(
-    const symbolic::Expression& e) const {
-  symbolic::Environment::map map_decision_vars;
-  for (const auto& var : e.GetVariables()) {
-    const auto it = decision_variable_index_.find(var.get_id());
-    if (it != decision_variable_index_.end()) {
-      map_decision_vars.emplace(var, x_values_[it->second]);
-    } else if (indeterminates_index_.find(var.get_id()) ==
-               indeterminates_index_.end()) {
-      // var is not a decision variable or an indeterminate in the optimization
-      // program.
-      std::ostringstream oss;
-      oss << var << " is not a decision variable or an indeterminate of the "
-                    "optimization program.\n";
-      throw std::runtime_error(oss.str());
-    }
-  }
-  return e.EvaluatePartial(symbolic::Environment(map_decision_vars));
-}
-
-symbolic::Polynomial MathematicalProgram::SubstituteSolution(
-    const symbolic::Polynomial& p) const {
-  symbolic::Environment::map map_decision_vars;
-  for (const auto& var : p.decision_variables()) {
-    map_decision_vars.emplace(var, GetSolution(var));
-  }
-  return p.EvaluatePartial(symbolic::Environment(map_decision_vars));
 }
 
 double MathematicalProgram::GetInitialGuess(
@@ -890,59 +1193,32 @@ void MathematicalProgram::SetInitialGuess(
   x_initial_guess_(FindDecisionVariableIndex(decision_variable)) =
       variable_guess_value;
 }
-// Note that SetDecisionVariableValue and SetDecisionVariableValues are
-// implemented in mathematical_program_api.cc instead of this file.
 
-SolutionResult MathematicalProgram::Solve() {
-  // This implementation is simply copypasta for now; in the future we will
-  // want to tweak the order of preference of solvers based on the types of
-  // constraints present.
+void MathematicalProgram::SetDecisionVariableValueInVector(
+    const symbolic::Variable& decision_variable,
+    double decision_variable_new_value,
+    EigenPtr<Eigen::VectorXd> values) const {
+  DRAKE_THROW_UNLESS(values != nullptr);
+  DRAKE_THROW_UNLESS(values->size() == num_vars());
+  const int index = FindDecisionVariableIndex(decision_variable);
+  (*values)(index) = decision_variable_new_value;
+}
 
-  if (is_satisfied(required_capabilities_, kLinearSystemSolverCapabilities) &&
-      linear_system_solver_->available()) {
-    // TODO(ggould-tri) Also allow quadratic objectives whose matrix is
-    // Identity: This is the objective function the solver uses anyway when
-    // underconstrainted, and is fairly common in real-world problems.
-    return linear_system_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_,
-                          kEqualityConstrainedQPCapabilities) &&
-             equality_constrained_qp_solver_->available()) {
-    return equality_constrained_qp_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kMosekCapabilities) &&
-             mosek_solver_->available()) {
-    // TODO(hongkai.dai@tri.global): based on my limited experience, Mosek is
-    // faster than Gurobi for convex optimization problem. But we should run
-    // a more thorough comparison.
-    return mosek_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kGurobiCapabilities) &&
-             gurobi_solver_->available()) {
-    return gurobi_solver_->Solve(*this);
-  } else if ((required_capabilities_ & kQuadraticCost) &&
-             is_satisfied(required_capabilities_, kOsqpCapabilities) &&
-             osqp_solver_->available()) {
-    return osqp_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kMobyLcpCapabilities) &&
-             moby_lcp_solver_->available()) {
-    return moby_lcp_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kSnoptCapabilities) &&
-             snopt_solver_->available()) {
-    return snopt_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kGenericSolverCapabilities) &&
-             ipopt_solver_->available()) {
-    return ipopt_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kGenericSolverCapabilities) &&
-             nlopt_solver_->available()) {
-    return nlopt_solver_->Solve(*this);
-  } else if (is_satisfied(required_capabilities_, kScsCapabilities) &&
-             scs_solver_->available()) {
-    // Use SCS as the last resort. SCS uses ADMM method, which converges fast to
-    // modest accuracy quite fast, but then slows down significantly if the user
-    // wants high accuracy.
-    return scs_solver_->Solve(*this);
-  } else {
-    throw runtime_error(
-        "MathematicalProgram::Solve: "
-        "No solver available for the given optimization problem!");
+void MathematicalProgram::SetDecisionVariableValueInVector(
+    const Eigen::Ref<const MatrixXDecisionVariable>& decision_variables,
+    const Eigen::Ref<const Eigen::MatrixXd>& decision_variables_new_values,
+    EigenPtr<Eigen::VectorXd> values) const {
+  DRAKE_THROW_UNLESS(values != nullptr);
+  DRAKE_THROW_UNLESS(values->size() == num_vars());
+  DRAKE_THROW_UNLESS(
+      decision_variables.rows() == decision_variables_new_values.rows());
+  DRAKE_THROW_UNLESS(
+      decision_variables.cols() == decision_variables_new_values.cols());
+  for (int i = 0; i < decision_variables.rows(); ++i) {
+    for (int j = 0; j < decision_variables.cols(); ++j) {
+      const int index = FindDecisionVariableIndex(decision_variables(i, j));
+      (*values)(index) = decision_variables_new_values(i, j);
+    }
   }
 }
 
@@ -950,5 +1226,19 @@ void MathematicalProgram::AppendNanToEnd(int new_var_size, Eigen::VectorXd* v) {
   v->conservativeResize(v->rows() + new_var_size);
   v->tail(new_var_size).fill(std::numeric_limits<double>::quiet_NaN());
 }
+
+void MathematicalProgram::SetVariableScaling(const symbolic::Variable& var,
+                                             double s) {
+  DRAKE_DEMAND(0 < s);
+  int idx = FindDecisionVariableIndex(var);
+  if (var_scaling_map_.find(idx) != var_scaling_map_.end()) {
+    // Update the scaling factor
+    var_scaling_map_[idx] = s;
+  } else {
+    // Add a new scaling factor
+    var_scaling_map_.insert(std::pair<int, double>(idx, s));
+  }
+}
+
 }  // namespace solvers
 }  // namespace drake

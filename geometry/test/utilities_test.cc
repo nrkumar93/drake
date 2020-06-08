@@ -4,10 +4,17 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/math/rigid_transform.h"
+#include "drake/math/roll_pitch_yaw.h"
+
 namespace drake {
 namespace geometry {
-namespace detail {
+namespace internal {
 namespace {
+
+using math::RigidTransform;
+using math::RollPitchYaw;
 
 GTEST_TEST(GeometryUtilities, CanonicalizeGeometryName) {
   // Confirms that the canonical version of the given name is unchanged.
@@ -52,7 +59,37 @@ GTEST_TEST(GeometryUtilities, CanonicalizeGeometryName) {
   }
 }
 
+GTEST_TEST(GeometryUtilities, RigidTransformConversion) {
+  RigidTransform<double> X_AB{
+      RollPitchYaw<double>{M_PI / 3, M_PI / 6, M_PI / 7},
+      Vector3<double>{1, 2, 3}};
+
+  // Double to double conversion is just a pass through without copying.
+  const RigidTransform<double>& X_AB_converted_ref = convert_to_double(X_AB);
+  EXPECT_EQ(&X_AB, &X_AB_converted_ref);
+
+  RigidTransform<AutoDiffXd> X_AB_ad(X_AB.cast<AutoDiffXd>());
+  RigidTransform<double> X_AB_ad_converted = convert_to_double(X_AB_ad);
+  EXPECT_TRUE(
+      CompareMatrices(X_AB.GetAsMatrix34(), X_AB_ad_converted.GetAsMatrix34()));
+}
+
+GTEST_TEST(GeometryUtilities, Vector3Conversion) {
+  Vector3<double> p_AB{1, 2, 3};
+
+  Vector3<double> p_AB_converted = convert_to_double(p_AB);
+  EXPECT_TRUE(CompareMatrices(p_AB, p_AB_converted));
+  // Double to double conversion is just a pass through without copying, so
+  // we'll compare addresses.
+  const Vector3<double>& p_AB_converted_ref = convert_to_double(p_AB);
+  EXPECT_EQ(&p_AB, &p_AB_converted_ref);
+
+  Vector3<AutoDiffXd> p_AB_ad(p_AB);
+  Vector3<double> X_AB_ad_converted = convert_to_double(p_AB_ad);
+  EXPECT_TRUE(CompareMatrices(p_AB, X_AB_ad_converted));
+}
+
 }  // namespace
-}  // namespace detail
+}  // namespace internal
 }  // namespace geometry
 }  // namespace drake

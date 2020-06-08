@@ -4,18 +4,29 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Dense>
 
+#include "drake/attic_warning.h"
 #include "drake/common/drake_assert.h"
-#include "drake/common/drake_deprecated.h"
 #include "drake/common/drake_throw.h"
 #include "drake/common/eigen_types.h"
 #include "drake/multibody/collision/drake_collision.h"
 #include "drake/multibody/joints/drake_joint.h"
+
+#ifndef DRAKE_DOXYGEN_CXX
+namespace drake {
+namespace internal {
+
+class RigidBodyAttorney;
+
+}  // namespace internal
+}  // namespace drake
+#endif  // DRAKE_DOXYGEN_CXX
 
 template <typename T>
 class RigidBody {
@@ -25,7 +36,8 @@ class RigidBody {
   /**
    * Returns a clone of this RigidBody.
    *
-   * *Important note!* The following are not cloned:
+   * @attention The following are not cloned:
+   *
    *    - the joint
    *    - the parent %RigidBody
    *    - the visual elements
@@ -102,7 +114,7 @@ class RigidBody {
   template<typename JointType>
   JointType* add_joint(RigidBody* parent, std::unique_ptr<JointType> joint) {
     if (joint_ != nullptr) {
-      DRAKE_ABORT_MSG(
+      throw std::logic_error(
           "Attempting to assign a new joint to a body that already has one");
     }
     set_parent(parent);
@@ -162,10 +174,6 @@ class RigidBody {
    * parent RigidBody except for the RigidBodyTree's root, which is the world.
    */
   bool has_parent_body() const { return parent_ != nullptr; }
-
-  // TODO(liang.fok): Remove this deprecated method prior to Release 1.0.
-  DRAKE_DEPRECATED("Please use has_parent_body().")
-  bool hasParent() const;
 
   /**
    * Checks if a particular rigid body is the parent of this rigid body.
@@ -237,6 +245,7 @@ class RigidBody {
    * Adds the given collision @p element to the body with the given group name.
    * @param[in] group_name The collision element's group name.
    * @param[in] element The element to associate with the rigid body.
+   * @pre `element` has not already been added to this body.
    */
   void AddCollisionElement(const std::string& group_name,
                            drake::multibody::collision::Element* element);
@@ -297,6 +306,7 @@ class RigidBody {
    * single inboard joint. This joint defines several frames, discussed in
    * @ref rigid_body_tree_frames, including its parent frame: `Pₖ ≡ Bₖ₋₁`. This
    * allows us to compute `X_Bₖ₋₁Bₖ` as follows:
+   *
    * - `X_Bₖ₋₁Bₖ = X_PₖBₖ` because `Pₖ ≡ Bₖ₋₁`
    * - `X_PₖBₖ ≡ X_PₖFₖ * X_FₖMₖ(q) * X_MₖBₖ`, where:
    *    - `X_MₖBₖ = I` in Drake's implementation.
@@ -438,6 +448,19 @@ class RigidBody {
   }
 
  private:
+#ifndef DRAKE_DOXYGEN_CXX
+  friend class drake::internal::RigidBodyAttorney;
+#endif  // DRAKE_DOXYGEN_CXX
+
+  // Assumes that elements have only been added via `AddCollisionElement`,
+  // which should uphold the following:
+  // - collision_element_ids_ has no duplicates
+  // - collision_elements_ has exactly one entry per collision_element_ids item,
+  // with a matching id
+  // - collision_element_group_ ids have no duplicates, not even under
+  // different group names
+  void RemoveCollisionGroupAndElements(const std::string& group_name);
+
   // TODO(tkoolen): It's very ugly, but parent, dofnum, and pitch also exist
   // currently (independently) at the RigidBodyTree level to represent the
   // featherstone structure. This version is for the kinematics.
@@ -501,3 +524,30 @@ class RigidBody {
   // class only has runtime data.
   CollisionElementsVector collision_elements_;
 };
+
+// Forward declaration for attorney-client.
+template <typename T>
+class RigidBodyTree;
+
+#ifndef DRAKE_DOXYGEN_CXX
+namespace drake {
+namespace internal {
+
+class RigidBodyAttorney {
+ private:
+  template <typename T>
+  friend class ::RigidBodyTree;
+
+  // Removes collision element group, but does NOT make the
+  // necessary calls to `collision::Model::RemoveElement`.
+  // To be used by `RigidBodyTree::removeCollisionGroupsIf`.
+  template <typename T>
+  static void RemoveCollisionGroupAndElements(
+      RigidBody<T>* body, const std::string& group_name) {
+    body->RemoveCollisionGroupAndElements(group_name);
+  }
+};
+
+}  // namespace internal
+}  // namespace drake
+#endif  // DRAKE_DOXYGEN_CXX

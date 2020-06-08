@@ -1,17 +1,22 @@
 # -*- python -*-
 
-load("//tools/workspace:bitbucket.bzl", "bitbucket_archive")
+load("//tools/workspace:github.bzl", "github_archive")
 
 def sdformat_repository(
         name,
         mirrors = None):
-    commit = "8db558193cb3"
-    bitbucket_archive(
+    github_archive(
         name = name,
         repository = "osrf/sdformat",
-        commit = commit,
-        sha256 = "eddd4bbddf2ebee1e832efa95ff00140b5ddff90a253653397a5f299169db74e",  # noqa
-        strip_prefix = "osrf-sdformat-%s" % (commit),
+        commit = "sdformat9_9.2.0",
+        sha256 = "0e42001d92aa2c089c7d0c4ea6a30db2beeff0af3a9a357e7ccd0a4e1131cae7",  # noqa
         build_file = "@drake//tools/workspace/sdformat:package.BUILD.bazel",
+        patches = [
+            # TODO(jwnimmer-tri) This patch is cherry-picked from upstream; we
+            # should remove it once we reach a new enough version, probably for
+            # sdformat10 or so.
+            "@drake//tools/workspace/sdformat:3bbd303.patch",
+        ],
+        patch_args = ["-p1"],
         mirrors = mirrors,
     )

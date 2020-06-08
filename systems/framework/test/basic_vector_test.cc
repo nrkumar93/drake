@@ -10,6 +10,7 @@
 #include "drake/common/eigen_types.h"
 #include "drake/common/symbolic.h"
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/systems/framework/test_utilities/my_vector.h"
 
 namespace drake {
 namespace systems {
@@ -58,9 +59,9 @@ GTEST_TEST(BasicVectorTest, DoubleInitiallyNaN) {
 // Tests that the BasicVector<AutoDiffXd> is initialized to NaN.
 GTEST_TEST(BasicVectorTest, AutodiffInitiallyNaN) {
   BasicVector<AutoDiffXd> vec(3);
-  EXPECT_TRUE(std::isnan(vec.GetAtIndex(0).value()));
-  EXPECT_TRUE(std::isnan(vec.GetAtIndex(1).value()));
-  EXPECT_TRUE(std::isnan(vec.GetAtIndex(2).value()));
+  EXPECT_TRUE(std::isnan(vec[0].value()));
+  EXPECT_TRUE(std::isnan(vec[1].value()));
+  EXPECT_TRUE(std::isnan(vec[2].value()));
 }
 
 // Tests that the BasicVector<symbolic::Expression> is initialized to NaN.
@@ -148,46 +149,6 @@ GTEST_TEST(BasicVectorTest, ReinitializeInvalid) {
   EXPECT_THROW(vec.set_value(next_value), std::out_of_range);
 }
 
-// Tests the infinity norm computation
-GTEST_TEST(BasicVectorTest, NormInf) {
-  BasicVector<double> vec(2);
-  vec.get_mutable_value() << 3, -4;
-  EXPECT_EQ(vec.NormInf(), 4);
-}
-
-// Tests the infinity norm for an autodiff type.
-GTEST_TEST(BasicVectorTest, NormInfAutodiff) {
-  // Set up the device under test ("dut").
-  // The DUT is a vector with two values [-11.5, 22.5].
-  // The ∂/∂t of DUT is [1.5, 3.5] (where t is some arbitrary variable).
-  AutoDiffXd element0;
-  element0.value() = -11.5;
-  element0.derivatives() = Vector1d(1.5);
-  AutoDiffXd element1;
-  element1.value() = 22.5;
-  element1.derivatives() = Vector1d(3.5);
-  BasicVector<AutoDiffXd> dut{element0, element1};
-
-  // The norminf(DUT) is 22.5 and the ∂/∂t of norminf(DUT) is 3.5.
-  // The element1 has the max absolute value of the AutoDiffScalar's scalar.
-  // It is positive, so the sign of its derivatives remains unchanged.
-  AutoDiffXd expected_norminf;
-  expected_norminf.value() = 22.5;
-  expected_norminf.derivatives() = Vector1d(3.5);
-  EXPECT_EQ(dut.NormInf().value(), expected_norminf.value());
-  EXPECT_EQ(dut.NormInf().derivatives(), expected_norminf.derivatives());
-
-  // We change the DUT to two values [-11.5, -33.5] with ∂/∂t of [1.5, 3.5].
-  // The norminf(DUT) is now 33.5 and the ∂/∂t of norminf(DUT) is -3.5.
-  // The element0 has the max absolute value of the AutoDiffScalar's scalar.
-  // It is negative, so the sign of its derivatives gets flipped.
-  dut.GetAtIndex(0).value() = -33.5;
-  expected_norminf.value() = 33.5;
-  expected_norminf.derivatives() = Vector1d(-1.5);
-  EXPECT_EQ(dut.NormInf().value(), expected_norminf.value());
-  EXPECT_EQ(dut.NormInf().derivatives(), expected_norminf.derivatives());
-}
-
 // Tests all += * operations for BasicVector.
 GTEST_TEST(BasicVectorTest, PlusEqScaled) {
   BasicVector<double> ogvec(2), vec1(2), vec2(2), vec3(2), vec4(2), vec5(2);
@@ -228,32 +189,67 @@ GTEST_TEST(BasicVectorTest, PlusEqScaled) {
   EXPECT_EQ(ans5, ogvec.get_value());
 }
 
+template <typename T>
+class TypedBasicVectorTest : public ::testing::Test {};
+
+using DefaultScalars =
+    ::testing::Types<double, AutoDiffXd, symbolic::Expression>;
+TYPED_TEST_SUITE(TypedBasicVectorTest, DefaultScalars);
+
 // Tests ability to stream a BasicVector into a string.
-GTEST_TEST(BasicVectorTest, StringStream) {
-  BasicVector<double> vec(3);
+TYPED_TEST(TypedBasicVectorTest, StringStream) {
+  using T = TypeParam;
+  BasicVector<T> vec(3);
   vec.get_mutable_value() << 1.0, 2.2, 3.3;
   std::stringstream s;
   s << "hello " << vec << " world";
-  EXPECT_EQ(s.str(), "hello [1, 2.2, 3.3] world");
+  std::stringstream s_expected;
+  s_expected << "hello " << vec.get_value().transpose() << " world";
+  EXPECT_EQ(s.str(), s_expected.str());
 }
 
 // Tests ability to stream a BasicVector of size zero into a string.
-GTEST_TEST(BasicVectorTest, ZeroLengthStringStream) {
-  BasicVector<double> vec(0);
+TYPED_TEST(TypedBasicVectorTest, ZeroLengthStringStream) {
+  using T = TypeParam;
+  BasicVector<T> vec(0);
   std::stringstream s;
-  s << "foo " << vec << " bar";
-  EXPECT_EQ(s.str(), "foo [] bar");
+  s << "foo [" << vec << "] bar";
+  std::stringstream s_expected;
+  s_expected << "foo [" << vec.get_value().transpose() << "] bar";
+  EXPECT_EQ(s.str(), s_expected.str());
 }
 
-
-// Tests the default set of inequality constraints (empty).
+// Tests the default set of bounds (empty).
 GTEST_TEST(BasicVectorTest, DefaultCalcInequalityConstraint) {
   VectorX<double> value = VectorX<double>::Ones(22);
   BasicVector<double> vec(1);
-  vec.CalcInequalityConstraint(&value);
-  EXPECT_EQ(value.size(), 0);
+  Eigen::VectorXd lower, upper;
+  // Deliberately set lower/upper to size 2, to check if GetElementBounds will
+  // resize the bounds to empty size.
+  lower.resize(2);
+  upper.resize(2);
+  vec.GetElementBounds(&lower, &upper);
+  EXPECT_EQ(lower.size(), 0);
+  EXPECT_EQ(upper.size(), 0);
 }
 
+// Tests the protected `::values()` methods.
+GTEST_TEST(BasicVectorTest, ValuesAccess) {
+  MyVector2d dut;
+  dut[0] = 11.0;
+  dut[1] = 22.0;
+
+  // Values are as expected.
+  ASSERT_EQ(dut.values().size(), 2);
+  EXPECT_EQ(dut.values()[0], 11.0);
+  EXPECT_EQ(dut.values()[1], 22.0);
+  dut.values()[0] = 33.0;
+
+  // The const overload is the same.
+  const auto& const_dut = dut;
+  EXPECT_EQ(&dut.values(), &const_dut.values());
+  EXPECT_EQ(const_dut.values()[0], 33.0);
+}
 
 }  // namespace
 }  // namespace systems

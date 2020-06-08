@@ -2,9 +2,13 @@
 
 package(default_visibility = ["//visibility:public"])
 
-load("@drake//tools/install:install.bzl", "install")
+load(
+    "@drake//tools/install:install.bzl",
+    "install",
+)
 load(
     "@drake//tools/skylark:drake_cc.bzl",
+    "drake_cc_library",
     "drake_transitive_installed_hdrs_filegroup",
 )
 load(
@@ -16,7 +20,7 @@ load(
     "drake_py_test",
 )
 load(
-    "//tools/skylark:drake_lcm.bzl",
+    "@drake//tools/skylark:drake_lcm.bzl",
     "drake_lcm_cc_library",
     "drake_lcm_java_library",
     "drake_lcm_py_library",
@@ -57,22 +61,28 @@ drake_lcm_cc_library(
 )
 
 drake_lcm_cc_library(
+    name = "call_python",
+    lcm_package = "drake",
+    lcm_srcs = [
+        "lcmt_call_python.lcm",
+        "lcmt_call_python_data.lcm",
+    ],
+)
+
+drake_lcm_cc_library(
     name = "constrained_values",
     lcm_package = "drake",
     lcm_srcs = ["lcmt_constrained_values.lcm"],
 )
 
 drake_lcm_cc_library(
-    name = "contact_info_for_viz",
-    lcm_package = "drake",
-    lcm_srcs = ["lcmt_contact_info_for_viz.lcm"],
-)
-
-drake_lcm_cc_library(
     name = "contact_results_for_viz",
     lcm_package = "drake",
     lcm_srcs = ["lcmt_contact_results_for_viz.lcm"],
-    deps = [":contact_info_for_viz"],
+    deps = [
+        ":hydroelastic_contact_surface_for_viz",
+        ":point_pair_contact_info_for_viz",
+    ],
 )
 
 drake_lcm_cc_library(
@@ -103,6 +113,28 @@ drake_lcm_cc_library(
 )
 
 drake_lcm_cc_library(
+    name = "hydroelastic_contact_surface_for_viz",
+    lcm_package = "drake",
+    lcm_srcs = ["lcmt_hydroelastic_contact_surface_for_viz.lcm"],
+    deps = [
+        ":hydroelastic_contact_surface_tri_for_viz",
+        ":hydroelastic_quadrature_per_point_data_for_viz",
+    ],
+)
+
+drake_lcm_cc_library(
+    name = "hydroelastic_contact_surface_tri_for_viz",
+    lcm_package = "drake",
+    lcm_srcs = ["lcmt_hydroelastic_contact_surface_tri_for_viz.lcm"],
+)
+
+drake_lcm_cc_library(
+    name = "hydroelastic_quadrature_per_point_data_for_viz",
+    lcm_package = "drake",
+    lcm_srcs = ["lcmt_hydroelastic_quadrature_per_point_data_for_viz.lcm"],
+)
+
+drake_lcm_cc_library(
     name = "inverse_dynamics_debug_info",
     lcm_package = "drake",
     lcm_srcs = ["lcmt_inverse_dynamics_debug_info.lcm"],
@@ -126,6 +158,12 @@ drake_lcm_cc_library(
     lcm_package = "drake",
     lcm_srcs = ["lcmt_piecewise_polynomial.lcm"],
     deps = [":polynomial_matrix"],
+)
+
+drake_lcm_cc_library(
+    name = "point_pair_contact_info_for_viz",
+    lcm_package = "drake",
+    lcm_srcs = ["lcmt_point_pair_contact_info_for_viz.lcm"],
 )
 
 drake_lcm_cc_library(
@@ -170,6 +208,24 @@ drake_lcm_cc_library(
         ":desired_body_motion",
         ":desired_centroidal_momentum_dot",
         ":desired_dof_motions",
+    ],
+)
+
+drake_lcm_cc_library(
+    name = "planar_manipuland_status",
+    lcm_package = "drake",
+    lcm_srcs = ["lcmt_planar_manipuland_status.lcm"],
+)
+
+drake_lcm_cc_library(
+    name = "planar_gripper",
+    lcm_package = "drake",
+    lcm_srcs = [
+        "lcmt_planar_gripper_command.lcm",
+        "lcmt_planar_gripper_status.lcm",
+        "lcmt_planar_gripper_finger_command.lcm",
+        "lcmt_planar_gripper_finger_status.lcm",
+        "lcmt_force_torque.lcm",
     ],
 )
 
@@ -221,33 +277,13 @@ drake_lcm_cc_library(
     ],
 )
 
-# Keep this list in sync with the list of _LCM_ENABLED_NAMED_VECTORS within
-# ../automotive/BUILD.bazel. TODO(jwnimmer-tri) De-duplicate the two lists,
-# likely by moving the automotive lcmtypes into their own package.
-_AUTOMOTIVE_LCM_SRCS = [
-    "lcmt_bicycle_car_state_t.lcm",
-    "lcmt_driving_command_t.lcm",
-    "lcmt_maliput_railcar_state_t.lcm",
-    "lcmt_simple_car_state_t.lcm",
-    "lcmt_trajectory_car_state_t.lcm",
-]
-
-# Generate *.lcm sources from *.named_vector files.
-drake_vector_gen_lcm_sources(
-    name = "automotive_sources",
-    srcs = [
-        "//automotive:{}.named_vector".format(
-            x[len("lcmt_"):-len("_t.lcm")],
-        )
-        for x in _AUTOMOTIVE_LCM_SRCS
-    ],
-)
-
-# Generate C++ sources and a library from *.lcm sources.
 drake_lcm_cc_library(
-    name = "automotive",
+    name = "allegro",
     lcm_package = "drake",
-    lcm_srcs = _AUTOMOTIVE_LCM_SRCS,
+    lcm_srcs = [
+        "lcmt_allegro_command.lcm",
+        "lcmt_allegro_status.lcm",
+    ],
 )
 
 drake_lcm_cc_library(
@@ -256,6 +292,7 @@ drake_lcm_cc_library(
     lcm_srcs = [
         "lcmt_iiwa_command.lcm",
         "lcmt_iiwa_status.lcm",
+        "lcmt_iiwa_status_telemetry.lcm",
     ],
 )
 
@@ -278,6 +315,15 @@ drake_lcm_cc_library(
 )
 
 drake_lcm_cc_library(
+    name = "panda",
+    lcm_package = "drake",
+    lcm_srcs = [
+        "lcmt_panda_command.lcm",
+        "lcmt_panda_status.lcm",
+    ],
+)
+
+drake_lcm_cc_library(
     name = "viewer2_comms",
     lcm_package = "drake",
     lcm_srcs = [
@@ -288,11 +334,11 @@ drake_lcm_cc_library(
 # TODO(jwnimmer-tri) Many more C++ messages are missing ...
 
 drake_lcm_py_library(
-    name = "lcmtypes_py",
+    name = "lcmtypes_drake_py",
     add_current_package_to_imports = False,  # Use //:module_py instead.
     extra_srcs = ["__init__.py"],
     lcm_package = "drake",
-    lcm_srcs = glob(["*.lcm"]) + _AUTOMOTIVE_LCM_SRCS,
+    lcm_srcs = glob(["*.lcm"]),
     deps = [
         "//:module_py",
         "@lcmtypes_bot2_core//:lcmtypes_bot2_core_py",
@@ -302,32 +348,37 @@ drake_lcm_py_library(
 drake_lcm_java_library(
     name = "lcmtypes_drake_java",
     lcm_package = "drake",
-    lcm_srcs = glob(["*.lcm"]) + _AUTOMOTIVE_LCM_SRCS,
+    lcm_srcs = glob(["*.lcm"]),
     deps = ["@lcmtypes_bot2_core//:lcmtypes_bot2_core_java"],
 )
 
 # This should list every LCM type that is known to Drake.
-DRAKE_LCMTYPES = [
+LCMTYPES_CC = [
     ":acrobot",
-    ":automotive",
     ":body_acceleration",
     ":body_motion_data",
     ":body_wrench_data",
+    ":call_python",
     ":constrained_values",
-    ":contact_info_for_viz",
     ":contact_information",
     ":contact_results_for_viz",
     ":desired_body_motion",
     ":desired_centroidal_momentum_dot",
     ":desired_dof_motions",
     ":drake_signal",
+    ":hydroelastic_contact_surface_for_viz",
+    ":hydroelastic_contact_surface_tri_for_viz",
     ":iiwa",
     ":inverse_dynamics_debug_info",
     ":jaco",
     ":joint_pd_override",
     ":manipulator_plan_move_end_effector",
+    ":panda",
     ":piecewise_polynomial",
+    ":planar_manipuland_status",
+    ":planar_gripper",
     ":plan_eval_debug_info",
+    ":point_pair_contact_info_for_viz",
     ":polynomial",
     ":polynomial_matrix",
     ":qp_controller_input",
@@ -356,9 +407,15 @@ drake_java_binary(
     ],
 )
 
+drake_cc_library(
+    name = "lcmtypes_drake_cc",
+    deps = LCMTYPES_CC,
+)
+
 drake_transitive_installed_hdrs_filegroup(
-    name = "drake_lcmtypes_headers",
-    deps = DRAKE_LCMTYPES,
+    name = "lcmtypes_drake_cc_headers",
+    visibility = ["//visibility:private"],
+    deps = LCMTYPES_CC,
 )
 
 # The drake-lcmtypes-cpp library is distinct from (but required by) the drake
@@ -369,8 +426,8 @@ drake_transitive_installed_hdrs_filegroup(
 # `include/drake_lcmtypes` is provided to downstream code via `drake.cps` and
 # its generated cmake config `lib/cmake/drake/drake-config.cmake.
 install(
-    name = "install_cc_headers",
-    hdrs = [":drake_lcmtypes_headers"],
+    name = "install_drake_cc_headers",
+    hdrs = [":lcmtypes_drake_cc_headers"],
     hdr_dest = "include/drake_lcmtypes",
     visibility = ["//visibility:private"],
 )
@@ -379,17 +436,17 @@ install(
     name = "install",
     install_tests = [":test/drake-lcm-spy_install_test.py"],
     targets = [
-        ":drake-lcm-spy-launcher",
         ":drake-lcm-spy",
+        ":drake-lcm-spy-launcher",
         ":lcmtypes_drake_java",
-        ":lcmtypes_py",
+        ":lcmtypes_drake_py",
     ],
     rename = {
         "share/java/liblcmtypes_drake_java.jar": "lcmtypes_drake.jar",
         "bin/drake-lcm-spy-launcher.sh": "drake-lcm-spy",
     },
     deps = [
-        ":install_cc_headers",
+        ":install_drake_cc_headers",
         "//tools/workspace/optitrack_driver:install",
         "@lcm//:install",
         "@lcmtypes_bot2_core//:install",
@@ -401,7 +458,7 @@ install(
 drake_py_test(
     name = "polynomial_matrix_test",
     deps = [
-        ":lcmtypes_py",
+        ":lcmtypes_drake_py",
     ],
 )
 

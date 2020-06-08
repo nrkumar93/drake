@@ -13,7 +13,7 @@ namespace drake {
 namespace systems {
 namespace rendering {
 
-namespace pose_aggregator_detail { struct InputRecord; }
+namespace internal { struct PoseAggregatorInputRecord; }
 
 /// A container with references to the input port for the pose input, and a
 /// reference to the input port for the velocity input.
@@ -33,6 +33,7 @@ struct PoseVelocityInputPorts {
 /// PoseAggregator is a multiplexer for heterogeneous sources of poses and the
 /// velocities of those poses.
 /// Supported sources are:
+///
 /// - A PoseVector input, which is a single pose {R, p}, and is vector-valued.
 /// - A FrameVelocity input, which corresponds to a PoseVector input, and
 ///   contains a single velocity {ω, v}, and is vector-valued.
@@ -47,6 +48,7 @@ struct PoseVelocityInputPorts {
 /// of reference.
 ///
 /// The output poses are named in the form `<source>` or `<source>::<pose>`.
+///
 /// - For poses derived from a PoseVector input, <source> is the bundle name
 ///   provided at construction time, and "::<pose>" is omitted.
 /// - For poses derived from a PoseBundle input, <source> is the bundle name
@@ -59,6 +61,7 @@ struct PoseVelocityInputPorts {
 /// an integer that is greater than or equal to zero. All poses with the same
 /// model instance ID must have unique names. This enables PoseAggregator to
 /// aggregate multiple instances of the same model.
+///
 /// - For poses derived from a PoseVector input, the instance ID is specified
 ///   when the input is declared.
 /// - For poses derived from a PoseBundle input, the instance ID is obtained
@@ -69,19 +72,13 @@ struct PoseVelocityInputPorts {
 /// Systems that need to ingest every pose in the universe, such as renderers
 /// or sensor models, can simply depend on the output.
 ///
-/// This class is explicitly instantiated for the following scalar types. No
-/// other scalar types are supported.
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
-///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///           Only double and AutoDiffXd are supported.
+/// @tparam_default_scalar
 template <typename T>
 class PoseAggregator : public LeafSystem<T> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(PoseAggregator)
 
+  /// Constructs a default aggregator (with no inputs).
   PoseAggregator();
 
   /// Scalar-converting copy constructor.  See @ref system_scalar_conversion.
@@ -121,7 +118,7 @@ class PoseAggregator : public LeafSystem<T> {
   // This is the method used by the allocator for the output port.
   PoseBundle<T> MakePoseBundle() const;
 
-  using InputRecord = pose_aggregator_detail::InputRecord;
+  using InputRecord = internal::PoseAggregatorInputRecord;
 
   // Returns an InputRecord for a generic single pose input.
   static InputRecord MakeSinglePoseInputRecord(const std::string& name,
@@ -146,20 +143,19 @@ class PoseAggregator : public LeafSystem<T> {
 };
 
 /** @cond */
-namespace pose_aggregator_detail {
+namespace internal {
 
 // A private data structure of PoseAggregator.  It is not nested within
 // PoseAggregator because it does not (and should not) depend on the type
 // parameter @p T.
-struct InputRecord {
+struct PoseAggregatorInputRecord {
   enum PoseInputType {
-    kUnknown = 0,
     kSinglePose = 1,
     kSingleVelocity = 2,
     kBundle = 3,
   };
 
-  PoseInputType type{kUnknown};
+  PoseInputType type{kSinglePose};
   int num_poses{0};
   // name is only valid if type is kSingle{Pose, Velocity} or kBundle.
   std::string name{};
@@ -167,7 +163,7 @@ struct InputRecord {
   int model_instance_id{-1};
 };
 
-}  // namespace pose_aggregator_detail
+}  // namespace internal
 /** @endcond */
 
 }  // namespace rendering

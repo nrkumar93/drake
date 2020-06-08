@@ -1,25 +1,33 @@
-from __future__ import print_function
-
 import math
-import numpy as np
 import unittest
+
+import numpy as np
 
 from pydrake.common import FindResourceOrThrow
 from pydrake.examples.pendulum import PendulumPlant
-from pydrake.multibody.multibody_tree import MultibodyForces
-from pydrake.multibody.multibody_tree.multibody_plant import MultibodyPlant
-from pydrake.multibody.multibody_tree.parsing import AddModelFromSdfFile
-from pydrake.multibody.rigid_body_tree import (FloatingBaseType, RigidBodyTree)
+from pydrake.multibody.tree import MultibodyForces
+from pydrake.multibody.plant import MultibodyPlant
+from pydrake.multibody.parsing import Parser
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.controllers import (
-    DiscreteTimeLinearQuadraticRegulator, DynamicProgrammingOptions,
-    FittedValueIteration, InverseDynamicsController, InverseDynamics,
+    DiscreteTimeLinearQuadraticRegulator,
+    DynamicProgrammingOptions,
+    FiniteHorizonLinearQuadraticRegulator,
+    FiniteHorizonLinearQuadraticRegulatorOptions,
+    FiniteHorizonLinearQuadraticRegulatorResult,
+    FittedValueIteration,
+    InverseDynamicsController,
+    InverseDynamics,
     LinearQuadraticRegulator,
     LinearProgrammingApproximateDynamicProgramming,
-    PeriodicBoundaryCondition
+    MakeFiniteHorizonLinearQuadraticRegulator,
+    PeriodicBoundaryCondition,
+    PidControlledSystem,
+    PidController,
 )
-from pydrake.systems.framework import BasicVector
-from pydrake.systems.primitives import (Integrator, LinearSystem)
+from pydrake.systems.framework import InputPortSelection
+from pydrake.systems.primitives import Integrator, LinearSystem
+from pydrake.trajectories import Trajectory
 
 
 class TestControllers(unittest.TestCase):
@@ -54,6 +62,8 @@ class TestControllers(unittest.TestCase):
             PeriodicBoundaryCondition(0, 0., 2.*math.pi)
         ]
         options.visualization_callback = callback
+        options.input_port_index = InputPortSelection.kUseFirstInputIfItExists
+        options.assume_non_continuous_states_are_fixed = False
 
         policy, cost_to_go = FittedValueIteration(simulator,
                                                   quadratic_regulator_cost,
@@ -91,128 +101,31 @@ class TestControllers(unittest.TestCase):
         self.assertAlmostEqual(J[0], 1., delta=1e-6)
 
     def test_inverse_dynamics(self):
-        urdf_path = FindResourceOrThrow(
-            "drake/manipulation/models/" +
-            "iiwa_description/urdf/iiwa14_primitive_collision.urdf")
-        tree = RigidBodyTree(urdf_path,
-                             floating_base_type=FloatingBaseType.kFixed)
-        num_v = tree.get_num_velocities()
-
-        def compute_torque(tree, q, v, v_dot):
-            cache = tree.doKinematics(q, v)
-            return tree.massMatrix(cache).dot(v_dot) + \
-                tree.dynamicsBiasTerm(cache, {})
-
-        estimated_state_port = 0
-        desired_acceleration_port = 1
-
-        def check_torque_example(controller, q, v, v_dot_desired=None):
-            if controller.is_pure_gravity_compensation():
-                v_dot_desired = np.zeros(num_v)
-
-            context = controller.CreateDefaultContext()
-
-            x = np.concatenate([q, v])
-            context.FixInputPort(estimated_state_port, BasicVector(x))
-            if not controller.is_pure_gravity_compensation():
-                context.FixInputPort(desired_acceleration_port,
-                                     BasicVector(v_dot_desired))
-
-            output = controller.AllocateOutput()
-            controller.CalcOutput(context, output)
-            expected_torque = compute_torque(tree, q, v, v_dot_desired)
-
-            self.assertTrue(
-                np.allclose(
-                    output.get_vector_data(0).CopyToVector(), expected_torque))
-
-        # Test with pure gravity compensation.
-        controller = InverseDynamics(
-            tree=tree,
-            mode=InverseDynamics.InverseDynamicsMode.kGravityCompensation)
-        q = np.array([.1, .2, .3, .4, .5, .6, .7])
-        v = np.zeros(num_v)
-        check_torque_example(controller, q, v)
-
-        # Test with desired acceleration.
-        controller = InverseDynamics(
-            tree=tree,
-            mode=InverseDynamics.InverseDynamicsMode.kInverseDynamics)
-        q = np.array([.7, .6, .5, .4, .3, .2, .1])
-        v = np.array([-.1, -.2, -.3, -.4, -.5, -.6, -.7])
-        v_dot_desired = np.array([-.1, .1, -.1, .1, -.1, .1, -.1])
-        check_torque_example(controller, q, v, v_dot_desired)
-
-    def test_inverse_dynamics_controller(self):
-        urdf_path = FindResourceOrThrow(
-            "drake/manipulation/models/" +
-            "iiwa_description/urdf/iiwa14_primitive_collision.urdf")
-        tree = RigidBodyTree(
-                urdf_path, floating_base_type=FloatingBaseType.kFixed)
-        kp = np.array([1., 2., 3., 4., 5., 6., 7.])
-        ki = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-        kd = np.array([.5, 1., 1.5, 2., 2.5, 3., 3.5])
-
-        controller = InverseDynamicsController(robot=tree,
-                                               kp=kp,
-                                               ki=ki,
-                                               kd=kd,
-                                               has_reference_acceleration=True)
-        context = controller.CreateDefaultContext()
-        output = controller.AllocateOutput()
-
-        estimated_state_port = 0
-        desired_state_port = 1
-        desired_acceleration_port = 2
-        control_port = 0
-
-        self.assertEqual(
-            controller.get_input_port(desired_acceleration_port).size(), 7)
-        self.assertEqual(
-            controller.get_input_port(estimated_state_port).size(), 14)
-        self.assertEqual(
-            controller.get_input_port(desired_state_port).size(), 14)
-        self.assertEqual(
-            controller.get_output_port(control_port).size(), 7)
-
-        # current state
-        q = np.array([-0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3])
-        v = np.array([-0.9, -0.6, -0.3, 0.0, 0.3, 0.6, 0.9])
-        x = np.concatenate([q, v])
-
-        # reference state and acceleration
-        q_r = q + 0.1*np.ones_like(q)
-        v_r = v + 0.1*np.ones_like(v)
-        x_r = np.concatenate([q_r, v_r])
-        vd_r = np.array([1., 2., 3., 4., 5., 6., 7.])
-
-        integral_term = np.array([-1., -2., -3., -4., -5., -6., -7.])
-
-        vd_d = vd_r + kp*(q_r-q) + kd*(v_r-v) + ki*integral_term
-
-        context.FixInputPort(estimated_state_port, BasicVector(x))
-        context.FixInputPort(desired_state_port, BasicVector(x_r))
-        context.FixInputPort(desired_acceleration_port, BasicVector(vd_r))
-        controller.set_integral_value(context, integral_term)
-
-        # compute the expected torque
-        cache = tree.doKinematics(q, v)
-        expected_torque = tree.massMatrix(cache).dot(vd_d) + \
-            tree.dynamicsBiasTerm(cache, {})
-
-        controller.CalcOutput(context, output)
-        self.assertTrue(np.allclose(output.get_vector_data(0).CopyToVector(),
-                        expected_torque))
-
-    def test_multibody_plant_inverse_dynamics_controller(self):
         sdf_path = FindResourceOrThrow(
-            "drake/manipulation/models/" +
+            "drake/manipulation/models/"
             "iiwa_description/sdf/iiwa14_no_collision.sdf")
 
         plant = MultibodyPlant(time_step=0.01)
-        AddModelFromSdfFile(file_name=sdf_path, plant=plant)
+        Parser(plant).AddModelFromFile(sdf_path)
         plant.WeldFrames(plant.world_frame(),
                          plant.GetFrameByName("iiwa_link_0"))
+        plant.Finalize()
+
+        # Just test that the constructor doesn't throw.
+        controller = InverseDynamics(
+            plant=plant,
+            mode=InverseDynamics.InverseDynamicsMode.kGravityCompensation)
+
+    def test_inverse_dynamics_controller(self):
+        sdf_path = FindResourceOrThrow(
+            "drake/manipulation/models/"
+            "iiwa_description/sdf/iiwa14_no_collision.sdf")
+
+        plant = MultibodyPlant(time_step=0.01)
+        Parser(plant).AddModelFromFile(sdf_path)
+        plant.WeldFrames(plant.world_frame(),
+                         plant.GetFrameByName("iiwa_link_0"))
+        plant.mutable_gravity_field().set_gravity_vector([0.0, 0.0, 0.0])
         plant.Finalize()
 
         # We verify the (known) size of the model.
@@ -236,20 +149,15 @@ class TestControllers(unittest.TestCase):
         context = controller.CreateDefaultContext()
         output = controller.AllocateOutput()
 
-        estimated_state_port = 0
-        desired_state_port = 1
-        desired_acceleration_port = 2
-        control_port = 0
+        estimated_state_port = controller.get_input_port(0)
+        desired_state_port = controller.get_input_port(1)
+        desired_acceleration_port = controller.get_input_port(2)
+        control_port = controller.get_output_port(0)
 
-        self.assertEqual(
-            controller.get_input_port(desired_acceleration_port).size(),
-            kNumVelocities)
-        self.assertEqual(
-            controller.get_input_port(estimated_state_port).size(), kStateSize)
-        self.assertEqual(
-            controller.get_input_port(desired_state_port).size(), kStateSize)
-        self.assertEqual(
-            controller.get_output_port(control_port).size(), kNumVelocities)
+        self.assertEqual(desired_acceleration_port.size(), kNumVelocities)
+        self.assertEqual(estimated_state_port.size(), kStateSize)
+        self.assertEqual(desired_state_port.size(), kStateSize)
+        self.assertEqual(control_port.size(), kNumVelocities)
 
         # Current state.
         q = np.array([-0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3])
@@ -266,26 +174,68 @@ class TestControllers(unittest.TestCase):
 
         vd_d = vd_r + kp*(q_r-q) + kd*(v_r-v) + ki*integral_term
 
-        context.FixInputPort(estimated_state_port, BasicVector(x))
-        context.FixInputPort(desired_state_port, BasicVector(x_r))
-        context.FixInputPort(desired_acceleration_port, BasicVector(vd_r))
+        estimated_state_port.FixValue(context, x)
+        desired_state_port.FixValue(context, x_r)
+        desired_acceleration_port.FixValue(context, vd_r)
         controller.set_integral_value(context, integral_term)
 
         # Set the plant's context.
         plant_context = plant.CreateDefaultContext()
-        x_plant = plant.tree().get_mutable_multibody_state_vector(
-            plant_context)
+        x_plant = plant.GetMutablePositionsAndVelocities(plant_context)
         x_plant[:] = x
 
         # Compute the expected value of the generalized forces using
         # inverse dynamics.
-        tau_id = plant.tree().CalcInverseDynamics(
-            plant_context, vd_d, MultibodyForces(plant.tree()))
+        tau_id = plant.CalcInverseDynamics(
+            plant_context, vd_d, MultibodyForces(plant))
 
         # Verify the result.
         controller.CalcOutput(context, output)
         self.assertTrue(np.allclose(output.get_vector_data(0).CopyToVector(),
                                     tau_id))
+
+    def test_pid_controlled_system(self):
+        controllers = [
+            PidControlledSystem(plant=PendulumPlant(), kp=1., ki=0.,
+                                kd=2., state_output_port_index=0),
+            PidControlledSystem(plant=PendulumPlant(), kp=[0], ki=[1],
+                                kd=[2], state_output_port_index=0),
+            PidControlledSystem(plant=PendulumPlant(),
+                                feedback_selector=np.eye(2), kp=1.,
+                                ki=0., kd=2.,
+                                state_output_port_index=0),
+            PidControlledSystem(plant=PendulumPlant(),
+                                feedback_selector=np.eye(2),
+                                kp=[0], ki=[1], kd=[2],
+                                state_output_port_index=0),
+        ]
+
+        for controller in controllers:
+            self.assertIsNotNone(controller.get_control_input_port())
+            self.assertIsNotNone(controller.get_state_input_port())
+            self.assertIsNotNone(controller.get_state_output_port())
+
+    def test_pid_controller(self):
+        controllers = [
+            PidController(kp=np.ones(3), ki=np.zeros(3),
+                          kd=[1, 2, 3]),
+            PidController(state_projection=np.ones((6, 4)),
+                          kp=np.ones(3), ki=np.zeros(3),
+                          kd=[1, 2, 3]),
+            PidController(state_projection=np.ones((6, 4)),
+                          output_projection=np.ones((4, 3)),
+                          kp=np.ones(3), ki=np.zeros(3),
+                          kd=[1, 2, 3]),
+        ]
+
+        for controller in controllers:
+            self.assertEqual(controller.num_input_ports(), 2)
+            self.assertEqual(len(controller.get_Kp_vector()), 3)
+            self.assertEqual(len(controller.get_Ki_vector()), 3)
+            self.assertEqual(len(controller.get_Kd_vector()), 3)
+            self.assertIsNotNone(controller.get_input_port_estimated_state())
+            self.assertIsNotNone(controller.get_input_port_desired_state())
+            self.assertIsNotNone(controller.get_output_port_control())
 
     def test_linear_quadratic_regulator(self):
         A = np.array([[0, 1], [0, 0]])
@@ -307,7 +257,7 @@ class TestControllers(unittest.TestCase):
         np.testing.assert_almost_equal(controller.D(), -K_expected)
 
         context = double_integrator.CreateDefaultContext()
-        context.FixInputPort(0, BasicVector([0]))
+        double_integrator.get_input_port(0).FixValue(context, [0])
         controller = LinearQuadraticRegulator(double_integrator, context, Q, R)
         np.testing.assert_almost_equal(controller.D(), -K_expected)
 
@@ -319,3 +269,64 @@ class TestControllers(unittest.TestCase):
         (K, S) = DiscreteTimeLinearQuadraticRegulator(A, B, Q, R)
         self.assertEqual(K.shape, (1, 2))
         self.assertEqual(S.shape, (2, 2))
+
+    def test_finite_horizon_linear_quadratic_regulator(self):
+        A = np.array([[0, 1], [0, 0]])
+        B = np.array([[0], [1]])
+        C = np.identity(2)
+        D = np.array([[0], [0]])
+        double_integrator = LinearSystem(A, B, C, D)
+
+        Q = np.identity(2)
+        R = np.identity(1)
+
+        options = FiniteHorizonLinearQuadraticRegulatorOptions()
+        options.Qf = Q
+        self.assertIsNone(options.N)
+        self.assertIsNone(options.x0)
+        self.assertIsNone(options.u0)
+        self.assertIsNone(options.xd)
+        self.assertIsNone(options.ud)
+        self.assertEqual(options.input_port_index,
+                         InputPortSelection.kUseFirstInputIfItExists)
+
+        context = double_integrator.CreateDefaultContext()
+        context.FixInputPort(0, [0.0])
+
+        result = FiniteHorizonLinearQuadraticRegulator(
+            system=double_integrator,
+            context=context,
+            t0=0,
+            tf=0.1,
+            Q=Q,
+            R=R,
+            options=options)
+
+        self.assertIsInstance(result,
+                              FiniteHorizonLinearQuadraticRegulatorResult)
+
+        self.assertIsInstance(result.x0, Trajectory)
+        self.assertEqual(result.x0.value(0).shape, (2, 1))
+        self.assertIsInstance(result.u0, Trajectory)
+        self.assertEqual(result.u0.value(0).shape, (1, 1))
+        self.assertIsInstance(result.K, Trajectory)
+        self.assertEqual(result.K.value(0).shape, (1, 2))
+        self.assertIsInstance(result.S, Trajectory)
+        self.assertEqual(result.S.value(0).shape, (2, 2))
+        self.assertIsInstance(result.k0, Trajectory)
+        self.assertEqual(result.k0.value(0).shape, (1, 1))
+        self.assertIsInstance(result.sx, Trajectory)
+        self.assertEqual(result.sx.value(0).shape, (2, 1))
+        self.assertIsInstance(result.s0, Trajectory)
+        self.assertEqual(result.s0.value(0).shape, (1, 1))
+
+        regulator = MakeFiniteHorizonLinearQuadraticRegulator(
+            system=double_integrator,
+            context=context,
+            t0=0,
+            tf=0.1,
+            Q=Q,
+            R=R,
+            options=options)
+        self.assertEqual(regulator.get_input_port(0).size(), 2)
+        self.assertEqual(regulator.get_output_port(0).size(), 1)

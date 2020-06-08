@@ -10,9 +10,9 @@
 #include "drake/common/drake_copyable.h"
 #include "drake/common/drake_deprecated.h"
 #include "drake/common/reset_on_copy.h"
+#include "drake/common/value.h"
 #include "drake/systems/framework/basic_vector.h"
 #include "drake/systems/framework/framework_common.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace systems {
@@ -20,10 +20,10 @@ namespace systems {
 class ContextBase;
 
 #ifndef DRAKE_DOXYGEN_CXX
-namespace detail {
+namespace internal {
 // This provides ContextBase limited "friend" access to FixedInputPortValue.
 class ContextBaseFixedInputAttorney;
-}  // namespace detail
+}  // namespace internal
 #endif
 
 /** A %FixedInputPortValue encapsulates a vector or abstract value for
@@ -56,7 +56,7 @@ class FixedInputPortValue {
   exception if this doesn't contain an object of that type. */
   template <typename T>
   const BasicVector<T>& get_vector_value() const {
-    return get_value().GetValueOrThrow<BasicVector<T>>();
+    return get_value().get_value<BasicVector<T>>();
   }
 
   /** Returns a pointer to the data inside this %FixedInputPortValue, and
@@ -72,7 +72,8 @@ class FixedInputPortValue {
 
   /** Returns a pointer to the data inside this %FixedInputPortValue, and
   notifies the dependent input port that the value has changed, invalidating
-  downstream computations. Throws std::bad_cast if the data is not vector data.
+  downstream computations.
+  @throws std::bad_cast if the data is not vector data.
 
   To ensure invalidation notifications are delivered, callers should call this
   method every time they wish to update the stored value. In particular, callers
@@ -80,11 +81,11 @@ class FixedInputPortValue {
   %FixedInputPortValue has been accessed since the last time this method
   was called.
 
-  @tparam T Element type of the input port's vector value. Must be a valid
-            Eigen scalar. */
+  @tparam T Scalar type of the input port's vector value. Must match the type
+            associated with this port. */
   template <typename T>
   BasicVector<T>* GetMutableVectorData() {
-    return &GetMutableData()->GetMutableValueOrThrow<BasicVector<T>>();
+    return &GetMutableData()->get_mutable_value<BasicVector<T>>();
   }
 
   /** Returns the serial number of the contained value. This counts up every
@@ -104,7 +105,7 @@ class FixedInputPortValue {
   }
 
  private:
-  friend class detail::ContextBaseFixedInputAttorney;
+  friend class internal::ContextBaseFixedInputAttorney;
 
   // Allow this adapter access to our private copy constructor. This is intended
   // only for use by ContextBase.
@@ -155,12 +156,8 @@ class FixedInputPortValue {
   DependencyTicket ticket_;
 };
 
-// TODO(sherm1) Get rid of this after 8/7/2018 (three months).
-DRAKE_DEPRECATED("Please use FixedInputPortValue instead.")
-typedef FixedInputPortValue FreestandingInputPortValue;
-
 #ifndef DRAKE_DOXYGEN_CXX
-namespace detail {
+namespace internal {
 
 class ContextBaseFixedInputAttorney {
  public:
@@ -194,7 +191,7 @@ class ContextBaseFixedInputAttorney {
   }
 };
 
-}  // namespace detail
+}  // namespace internal
 #endif
 
 }  // namespace systems

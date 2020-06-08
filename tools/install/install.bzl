@@ -1,13 +1,15 @@
 # -*- python -*-
 
+load("//tools/skylark:py.bzl", "py_binary")
 load("@drake//tools/skylark:drake_java.bzl", "MainClassInfo")
-load("@drake//tools/skylark:drake_py.bzl", "drake_py_unittest")
+load("@drake//tools/skylark:drake_py.bzl", "drake_py_test")
 load(
     "@drake//tools/skylark:pathutils.bzl",
     "dirname",
     "join_paths",
     "output_path",
 )
+load("@python//:version.bzl", "PYTHON_SITE_PACKAGES_RELPATH", "PYTHON_VERSION")
 
 InstallInfo = provider()
 
@@ -40,9 +42,9 @@ def _rename(file_dest, rename):
         return join_paths(dirname(file_dest), renamed)
     return file_dest
 
-def _depset_to_list(l):
+def _depset_to_list(x):
     """Helper function to convert depset to list."""
-    iter_list = l.to_list() if type(l) == "depset" else l
+    iter_list = x.to_list() if type(x) == "depset" else x
     return iter_list
 
 #------------------------------------------------------------------------------
@@ -119,8 +121,13 @@ def _install_action(
     else:
         dest = dests
 
-    if "@WORKSPACE@" in dest:
-        dest = dest.replace("@WORKSPACE@", _workspace(ctx))
+    dest_replacements = (
+        ("@WORKSPACE@", _workspace(ctx)),
+        ("@PYTHON_SITE_PACKAGES@", PYTHON_SITE_PACKAGES_RELPATH),
+    )
+    for old, new in dest_replacements:
+        if old in dest:
+            dest = dest.replace(old, new)
 
     if type(strip_prefixes) == "dict":
         strip_prefix = strip_prefixes.get(
@@ -136,7 +143,7 @@ def _install_action(
     )
     file_dest = _rename(file_dest, rename)
 
-    if "/attic/" in file_dest:
+    if "/attic/" in file_dest and not file_dest.startswith("lib/python"):
         fail("Do not expose attic paths to the install tree ({})".format(
             file_dest,
         ))
@@ -246,7 +253,7 @@ def _install_cc_actions(ctx, target):
     if ctx.attr.guess_hdrs != "NONE":
         hdrs = _guess_files(
             target,
-            target.cc.transitive_headers,
+            target[CcInfo].compilation_context.headers,
             ctx.attr.guess_hdrs,
             "guess_hdrs",
         )
@@ -440,11 +447,11 @@ def _install_impl(ctx):
 
     for t in ctx.attr.targets:
         # TODO(jwnimmer-tri): Raise an error if a target has testonly=1.
-        if hasattr(t, "cc"):
+        if CcInfo in t:
             actions += _install_cc_actions(ctx, t)
-        elif hasattr(t, "java"):
+        elif JavaInfo in t:
             actions += _install_java_actions(ctx, t)
-        elif hasattr(t, "py"):
+        elif PyInfo in t:
             actions += _install_py_actions(ctx, t)
         elif MainClassInfo in t:
             actions += _install_java_launcher_actions(
@@ -483,7 +490,7 @@ def _install_impl(ctx):
 
     # Generate install script.
     # TODO(mwoehlke-kitware): Figure out a better way to generate this and run
-    # it via Python than `#!/usr/bin/env python2`?
+    # it via Python than `#!/usr/bin/env python3`?
     ctx.actions.expand_template(
         template = ctx.executable.install_script_template,
         output = ctx.outputs.executable,
@@ -512,7 +519,11 @@ def _install_impl(ctx):
                 [i.src for i in installed_tests],
     )
     return [
-        InstallInfo(install_actions = actions, rename = rename),
+        InstallInfo(
+            install_actions = actions,
+            rename = rename,
+            installed_files = installed_files,
+        ),
         InstalledTestInfo(tests = installed_tests),
         DefaultInfo(runfiles = files),
     ]
@@ -545,7 +556,7 @@ _install_rule = rule(
         "runtime_strip_prefix": attr.string_list(),
         "java_dest": attr.string(default = "share/java"),
         "java_strip_prefix": attr.string_list(),
-        "py_dest": attr.string(default = "lib/python2.7/site-packages"),
+        "py_dest": attr.string(default = "@PYTHON_SITE_PACKAGES@"),
         "py_strip_prefix": attr.string_list(),
         "rename": attr.string_dict(),
         "install_tests": attr.label_list(
@@ -587,9 +598,12 @@ bazel, but does not define an install) where this *is* the right thing to do,
 the ``allowed_externals`` argument may be used to specify a list of externals
 whose files it is okay to install, which will suppress the warning.
 
-Destination paths may include the placeholder ``@WORKSPACE@``, which is
-replaced with ``workspace`` (if specified) or the name of the workspace which
-invokes ``install``.
+Destination paths may include the following placeholders:
+
+* ``@WORKSPACE@``, replaced with ``workspace`` (if specified) or the name of
+  the workspace which invokes ``install``.
+* ``@PYTHON_SITE_PACKAGES``, replaced with the Python version-specific path of
+  "site-packages".
 
 Note:
     By default, headers and resource files to be installed must be explicitly
@@ -628,7 +642,7 @@ Note:
     MainClassInfo(
             main_class = Name of main class to run ("name.class.main")
             classpath = List contained in
-                ctx.attr.target.java.compilation_info.runtime_classpath
+                ctx.attr.target[JavaInfo].compilation_info.runtime_classpath
             filename = Java launcher file name
         )
 
@@ -665,7 +679,7 @@ Args:
     java_dest: Destination for Java library targets (default = "share/java").
     java_strip_prefix: List of prefixes to remove from Java library paths.
     py_dest: Destination for Python targets
-        (default = "lib/python2.7/site-packages").
+        (default = "lib/python{MAJOR}.{MINOR}/site-packages").
     py_strip_prefix: List of prefixes to remove from Python paths.
     rename: Mapping of install paths to alternate file names, used to rename
       files upon installation.
@@ -785,7 +799,7 @@ def cmake_config(
         if cps_file_name:
             fail("cps_file_name should not be set if " +
                  "script and version_file are set.")
-        native.py_binary(
+        py_binary(
             name = "create-cps",
             srcs = [script],
             main = script,
@@ -883,16 +897,22 @@ def install_test(
 
     src = "//tools/install:install_test.py"
 
-    drake_py_unittest(
+    # We can't use drake_py_unittest here, because the srcs path is atypical.
+    drake_py_test(
         name = name,
-        # This is an integration test with significant I/O that requires at
-        # least a "long" timeout so that debug builds are successful.
-        # Therefore, the test size is increased to "medium", and the timeout to
-        # "long".
+        # This is an integration test with significant I/O that requires an
+        # "eternal" timeout so that debug builds are successful.  Therefore,
+        # the test size is increased to "medium", and the timeout to "eternal".
+        # TODO(jamiesnape): Try to shorten the duration of this test.
         size = "medium",
         srcs = [src],
-        timeout = "long",
+        timeout = "eternal",
         deps = ["//tools/install:install_test_helper"],
+        # The commands in our "list of commands" use unittest themselves, so we
+        # do the same for our own test rig.  That means that both our rig and
+        # the "list of commands" python programs must have a __main__ clause
+        # (i.e., they must all be binaries, not libraries).
+        allow_import_unittest = True,
         **kwargs
     )
 

@@ -16,37 +16,31 @@ namespace compass_gait {
 
 /// Dynamical representation of the idealized hybrid dynamics of a "compass
 /// gait", as described in
-///   http://underactuated.mit.edu/underactuated.html?chapter=simple_legs
-/// with a few small differences.  The implementation here has no torque input
-/// (yet).  In addition, this implementation has two additional state
-/// variables that are not required in the mathematical model:
-///   - a discrete state for the position of the stance toe along the ramp
-///   - a Boolean indicator for "left support" (true when the stance leg is
-///     the left leg).
+///   http://underactuated.mit.edu/underactuated.html?chapter=simple_legs .
+/// This implementation has two additional state variables that are not
+/// required in the mathematical model:
+///
+/// - a discrete state for the position of the stance toe along the ramp
+/// - a Boolean indicator for "left support" (true when the stance leg is
+///   the left leg).
+///
 /// These are helpful for outputting the floating-base model coordinate, e.g.
 /// for visualization.
 ///
-/// Note: This model only supports walking downhill on the ramp, because that
+/// @note This model only supports walking downhill on the ramp, because that
 /// restriction enables a clean / numerically robust implementation of the foot
-/// collision witness function that avoids falls detections on the "foot
+/// collision witness function that avoids fall detection on the "foot
 /// scuffing" collision.
 ///
-/// Inputs: None.<br/>
+/// @system{CompassGait,
+///    @input_port{hip_torque},
+///    @output_port{minimal_state, floating_base_state}
+/// }
 /// Continuous States: stance, swing, stancedot, swingdot.<br/>
 /// Discrete State: stance toe position.<br/>
 /// Abstract State: left support indicator.<br/>
-/// Outputs:
-///   <ol start=0>
-///   <li>continuous (minimal coordinates) state output</li>
-///   <li>floating-base state output</li>
-///   </ol>
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following scalar types @p T are provided:
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
+/// @tparam_default_scalar
 template <typename T>
 class CompassGait final : public systems::LeafSystem<T> {
  public:
@@ -65,9 +59,9 @@ class CompassGait final : public systems::LeafSystem<T> {
     return this->get_output_port(0);
   }
 
-  /// Returns reference to the output port that provides the state required by
-  /// a RigidBodyTree loaded from CompassGait.urdf (as instantiated with
-  /// FloatingBaseType::kRollPitchYaw).
+  /// Returns reference to the output port that provides the state in the
+  /// floating-base coordinates (described via left leg xyz & rpy + hip angle +
+  /// derivatives).
   const systems::OutputPort<T>& get_floating_base_state_output_port() const {
     return this->get_output_port(1);
   }
@@ -110,9 +104,10 @@ class CompassGait final : public systems::LeafSystem<T> {
 
   ///@{
   /// Manipulator equation of CompassGait: M(q)v̇ + bias(q,v) = 0.
+  ///
   /// - M is the 2x2 mass matrix.
   /// - bias is a 2x1 vector that includes the Coriolis term and gravity term,
-  ///     i.e. bias = C(q,v)*v - τ_g(q).
+  ///   i.e. bias = C(q,v)*v - τ_g(q).
   Vector2<T> DynamicsBiasTerm(const systems::Context<T> &context) const;
   Matrix2<T> MassMatrix(const systems::Context<T> &context) const;
   ///@}

@@ -9,15 +9,16 @@
 #include <fmt/format.h>
 
 #include "drake/common/autodiff.h"
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_assert.h"
+#include "drake/common/drake_deprecated.h"
 #include "drake/common/nice_type_name.h"
 #include "drake/common/type_safe_index.h"
+#include "drake/common/value.h"
 #include "drake/systems/framework/basic_vector.h"
 #include "drake/systems/framework/context.h"
 #include "drake/systems/framework/framework_common.h"
 #include "drake/systems/framework/output_port_base.h"
-#include "drake/systems/framework/system_base.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace systems {
@@ -28,6 +29,8 @@ namespace systems {
 template <typename T>
 class System;
 
+// TODO(sherm1) Implement caching for output ports and update the above
+// documentation to explain in more detail.
 /** An %OutputPort belongs to a System and represents the properties of one of
 that System's output ports. %OutputPort objects are assigned OutputPortIndex
 values in the order they are declared; these are unique within a single System.
@@ -52,21 +55,13 @@ Vector-valued ports may specify a particular vector length, or may leave that
 to be determined at runtime.
 
 %OutputPort objects support three important operations:
+
 - Allocate() returns an object that can hold the port's value.
 - Calc() unconditionally computes the port's value.
 - Eval() updates a cached value if necessary.
 
-@tparam T The vector element type, which must be a valid Eigen scalar.
-
-Instantiated templates for the following kinds of T's are provided:
-- double
-- AutoDiffXd
-- symbolic::Expression
-
-They are already available to link against in the containing library.
-No other values for T are currently supported. */
-// TODO(sherm1) Implement caching for output ports and update the above
-// documentation to explain in more detail.
+@tparam_default_scalar
+*/
 template <typename T>
 class OutputPort : public OutputPortBase {
  public:
@@ -76,16 +71,61 @@ class OutputPort : public OutputPortBase {
 
   /** Returns a reference to the up-to-date value of this output port contained
   in the given Context. This is the preferred way to obtain an output port's
-  value since it will not be recalculated once up to date. If the value is not
-  already up to date with respect to its prerequisites, this port's Calc()
-  method is used first to update the value before the reference is returned. The
-  Calc() method may be arbitrarily expensive, but Eval() is constant time and
-  _very_ fast if the value is already up to date. */
-  template <typename ValueType>
-  const ValueType& Eval(const Context<T>& context) const {
-    const AbstractValue& abstract_value = EvalAbstract(context);
-    return ExtractValueOrThrow<ValueType>(__func__, abstract_value);
+  value since it will not be recalculated once up to date.
+
+  If the value is not already up to date with respect to its prerequisites, it
+  will recalculate an up-to-date value before the reference is returned. The
+  recalculation may be arbitrarily expensive, but Eval() is constant time and
+  _very_ fast if the value is already up to date.
+
+  @tparam ValueType The type of the const-reference returned by this method.
+  When omitted, the return type is an `Eigen::VectorBlock` (this is only valid
+  when this is a vector-valued port).  For abstract ports, the `ValueType`
+  either can be the declared type of the port (e.g., `lcmt_iiwa_status`), or
+  else in advanced use cases can be `AbstractValue` to get the type-erased
+  value.
+
+  @return reference to the up-to-date value; if a ValueType is provided, the
+  return type is `const ValueType&`; if a ValueType is omitted, the return type
+  is `Eigen::VectorBlock<const VectorX<T>>`.
+
+  @throw std::exception if the port is not connected.
+
+  @pre The output port is vector-valued (when no ValueType is provided).
+  @pre The output port is of type ValueType (when ValueType is provided).
+  */
+#ifdef DRAKE_DOXYGEN_CXX
+  template <typename ValueType = Eigen::VectorBlock<const VectorX<T>>>
+  const ValueType& Eval(const Context<T>& context) const;
+#else
+  // Without a template -- return Eigen.
+  Eigen::VectorBlock<const VectorX<T>> Eval(const Context<T>& context) const {
+    return Eval<BasicVector<T>>(context).get_value();
   }
+  // With ValueType == AbstractValue, we don't need to downcast.
+  template <typename ValueType, typename = std::enable_if_t<
+      std::is_same<AbstractValue, ValueType>::value>>
+  const AbstractValue& Eval(const Context<T>& context) const {
+    DRAKE_ASSERT_VOID(get_system_interface().ValidateContext(context));
+    return DoEval(context);
+  }
+  // With anything but a BasicVector subclass, we can just DoEval then cast.
+  template <typename ValueType, typename = std::enable_if_t<
+      !std::is_same<AbstractValue, ValueType>::value && (
+        !std::is_base_of<BasicVector<T>, ValueType>::value ||
+        std::is_same<BasicVector<T>, ValueType>::value)>>
+  const ValueType& Eval(const Context<T>& context) const {
+    DRAKE_ASSERT_VOID(get_system_interface().ValidateContext(context));
+    return PortEvalCast<ValueType>(DoEval(context));
+  }
+  // With a BasicVector subclass, we need to downcast twice.
+  template <typename ValueType, typename = std::enable_if_t<
+      std::is_base_of<BasicVector<T>, ValueType>::value &&
+      !std::is_same<BasicVector<T>, ValueType>::value>>
+  const ValueType& Eval(const Context<T>& context, int = 0) const {
+    return PortEvalCast<ValueType>(Eval<BasicVector<T>>(context));
+  }
+#endif  // DRAKE_DOXYGEN_CXX
 
   /** Allocates a concrete object suitable for holding the value to be exposed
   by this output port, and returns that as an AbstractValue. The returned object
@@ -100,7 +140,7 @@ class OutputPort : public OutputPortBase {
     if (value == nullptr) {
       throw std::logic_error(fmt::format(
           "OutputPort::Allocate(): allocator returned a nullptr for {}.",
-          GetPortIdString()));
+          GetFullDescription()));
     }
     DRAKE_ASSERT_VOID(CheckValidAllocation(*value));
     return value;
@@ -114,21 +154,10 @@ class OutputPort : public OutputPortBase {
   the Allocate() method. */
   void Calc(const Context<T>& context, AbstractValue* value) const {
     DRAKE_DEMAND(value != nullptr);
-    DRAKE_ASSERT_VOID(
-        get_system_base().ThrowIfContextNotCompatible(context));
+    DRAKE_ASSERT_VOID(get_system_interface().ValidateContext(context));
     DRAKE_ASSERT_VOID(CheckValidOutputType(*value));
 
     DoCalc(context, value);
-  }
-
-  /** Returns a reference to the value of this output port contained in the
-  given Context. If that value is not up to date with respect to its
-  prerequisites, the Calc() method above is used first to update the value
-  before the reference is returned. */
-  const AbstractValue& EvalAbstract(const Context<T>& context) const {
-    DRAKE_ASSERT_VOID(
-        get_system_base().ThrowIfContextNotCompatible(context));
-    return DoEval(context);
   }
 
   /** Returns a reference to the System that owns this output port. Note that
@@ -138,21 +167,34 @@ class OutputPort : public OutputPortBase {
     return system_;
   }
 
+  // A using-declaration adds these methods into our class's Doxygen.
+  // (Placed in an order that makes sense for the class's table of contents.)
+  using PortBase::get_name;
+  using PortBase::GetFullDescription;
+  using OutputPortBase::get_index;
+  using PortBase::get_data_type;
+  using PortBase::size;
+  using PortBase::ticket;
+
  protected:
   /** Provides derived classes the ability to set the base class members at
   construction. See OutputPortBase::OutputPortBase() for the meaning of these
   parameters.
-  @pre The `system` parameter must be the same object as the `system_base`
+  @pre The `name` must not be empty.
+  @pre The `system` parameter must be the same object as the `system_interface`
   parameter. */
-  // The System and SystemBase are provided separately since we don't have
+  // The system and system_interface are provided separately since we don't have
   // access to System's declaration here so can't cast but the caller can.
   OutputPort(const System<T>* system,
-             SystemBase* system_base,
-             OutputPortIndex index,
-             DependencyTicket ticket, PortDataType data_type, int size)
-      : OutputPortBase(system_base, index, ticket, data_type, size),
+             internal::SystemMessageInterface* system_interface,
+             std::string name, OutputPortIndex index, DependencyTicket ticket,
+             PortDataType data_type, int size)
+      : OutputPortBase(system_interface, std::move(name), index, ticket,
+                       data_type, size),
         system_{*system} {
-    DRAKE_DEMAND(static_cast<const void*>(system) == system_base);
+    // Check the precondition on identical parameters; note that comparing as
+    // void* is only valid because we have single inheritance.
+    DRAKE_DEMAND(static_cast<const void*>(system) == system_interface);
   }
 
   /** A concrete %OutputPort must provide a way to allocate a suitable object
@@ -181,16 +223,6 @@ class OutputPort : public OutputPortBase {
                  the System whose output port this is. */
   virtual const AbstractValue& DoEval(const Context<T>& context) const = 0;
 
-  /** This is useful for error messages and produces a human-readable
-  identification of an offending output port. */
-  std::string GetPortIdString() const {
-    return fmt::format("OutputPort[{}] of System {} ({})",
-                       this->get_index(),
-                       this->get_system_base().GetSystemPathname(),
-                       NiceTypeName::RemoveNamespaces(
-                           this->get_system_base().GetSystemType()));
-  }
-
  private:
   // If this is a vector-valued port, we can check that the returned abstract
   // value actually holds a BasicVector-derived object, and for fixed-size ports
@@ -200,17 +232,6 @@ class OutputPort : public OutputPortBase {
   // Check that an AbstractValue provided to Calc() is suitable for this port.
   // (Very expensive; use in Debug only.)
   void CheckValidOutputType(const AbstractValue&) const;
-
-  // User said output port would have a particular concrete type but it doesn't.
-  template <typename ValueType>
-  [[noreturn]] void ThrowBadValueType(const char* func,
-                                      const AbstractValue& abstract) const;
-
-  // Pull a value of a given type from an abstract value or issue a nice
-  // message if the type is not correct.
-  template <typename ValueType>
-  const ValueType& ExtractValueOrThrow(const char* func,
-                                       const AbstractValue& abstract) const;
 
   const System<T>& system_;
 };
@@ -225,7 +246,7 @@ void OutputPort<T>::CheckValidAllocation(const AbstractValue& proposed) const {
     throw std::logic_error(
         fmt::format("OutputPort::Allocate(): expected BasicVector output type "
                     "but got {} for {}.",
-                    proposed.GetNiceTypeName(), GetPortIdString()));
+                    proposed.GetNiceTypeName(), GetFullDescription()));
   }
 
   if (this->size() == kAutoSize) return;  // Any size is acceptable.
@@ -235,7 +256,7 @@ void OutputPort<T>::CheckValidAllocation(const AbstractValue& proposed) const {
     throw std::logic_error(
         fmt::format("OutputPort::Allocate(): expected vector output type of "
                     "size {} but got a vector of size {} for {}.",
-                    this->size(), proposed_size, GetPortIdString()));
+                    this->size(), proposed_size, GetFullDescription()));
   }
 }
 
@@ -252,30 +273,12 @@ void OutputPort<T>::CheckValidOutputType(const AbstractValue& proposed) const {
         fmt::format("OutputPort::Calc(): expected output type {} "
                     "but got {} for {}.",
                     good->GetNiceTypeName(), proposed.GetNiceTypeName(),
-                    GetPortIdString()));
+                    GetFullDescription()));
   }
-}
-
-template <typename T>
-template <typename ValueType>
-void OutputPort<T>::ThrowBadValueType(const char* func_name,
-                                      const AbstractValue& abstract) const {
-  throw std::logic_error(
-      fmt::format("OutputPort::{}(): wrong value type {} "
-                  "specified but actual type was {} for {}.",
-                  func_name, NiceTypeName::Get<ValueType>(),
-                  abstract.GetNiceTypeName(), GetPortIdString()));
-}
-
-template <typename T>
-template <typename ValueType>
-const ValueType& OutputPort<T>::ExtractValueOrThrow(
-    const char* func, const AbstractValue& abstract) const {
-  const ValueType* value = abstract.MaybeGetValue<ValueType>();
-  if (!value)
-    ThrowBadValueType<ValueType>(func, abstract);
-  return *value;
 }
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::OutputPort)

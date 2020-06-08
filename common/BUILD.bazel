@@ -6,6 +6,7 @@ load(
     "drake_cc_googletest",
     "drake_cc_library",
     "drake_cc_package_library",
+    "drake_cc_test",
 )
 load(
     "@drake//tools/skylark:drake_py.bzl",
@@ -32,16 +33,20 @@ drake_cc_package_library(
         ":essential",
         ":extract_double",
         ":find_resource",
+        ":find_runfiles",
         ":hash",
+        ":identifier",
         ":is_approx_equal_abstol",
         ":is_cloneable",
         ":is_less_than_comparable",
+        ":name_value",
         ":nice_type_name",
-        ":number_traits",
         ":pointer_cast",
         ":polynomial",
+        ":random",
         ":reset_after_move",
         ":reset_on_copy",
+        ":scope_exit",
         ":scoped_singleton",
         ":sorted_pair",
         ":sorted_vectors_have_intersection",
@@ -50,6 +55,7 @@ drake_cc_package_library(
         ":temp_directory",
         ":type_safe_index",
         ":unused",
+        ":value",
     ],
 )
 
@@ -67,7 +73,6 @@ drake_cc_library(
         "drake_assertion_error.h",
         "drake_copyable.h",
         "drake_deprecated.h",
-        "drake_optional.h",
         "drake_throw.h",
         "eigen_stl_types.h",
         "eigen_types.h",
@@ -78,7 +83,6 @@ drake_cc_library(
         "@eigen",
         "@fmt",
         "@spdlog",
-        "@stx",
     ],
 )
 
@@ -96,7 +100,6 @@ drake_cc_library(
     name = "drake_bool",
     hdrs = [
         "drake_bool.h",
-        "drake_bool_deprecated.h",
     ],
     deps = [
         ":autodiff",
@@ -108,11 +111,6 @@ drake_cc_library(
 drake_cc_library(
     name = "dummy_value",
     hdrs = ["dummy_value.h"],
-)
-
-drake_cc_library(
-    name = "number_traits",
-    hdrs = ["number_traits.h"],
 )
 
 # Drake's specific ScalarType-providing libraries.
@@ -128,7 +126,6 @@ drake_cc_library(
         "autodiff.h",
         "autodiff_overloads.h",
         "autodiffxd.h",
-        "eigen_autodiff_limits.h",
         "eigen_autodiff_types.h",
     ],
     deps = [
@@ -149,6 +146,7 @@ drake_cc_library(
 
 drake_cc_library(
     name = "hash",
+    srcs = ["hash.cc"],
     hdrs = ["hash.h"],
     deps = [
         ":essential",
@@ -173,7 +171,9 @@ drake_cc_library(
     ],
     deps = [
         ":autodiff",
+        ":default_scalars",
         ":essential",
+        ":symbolic",
     ],
 )
 
@@ -183,6 +183,8 @@ drake_cc_library(
     # rest of the header files by adding them in `srcs` section.
     srcs = [
         "symbolic.cc",
+        "symbolic_codegen.cc",
+        "symbolic_codegen.h",
         "symbolic_environment.cc",
         "symbolic_environment.h",
         "symbolic_expression.cc",
@@ -195,12 +197,16 @@ drake_cc_library(
         "symbolic_formula_cell.cc",
         "symbolic_formula_cell.h",
         "symbolic_formula_visitor.h",
+        "symbolic_ldlt.cc",
+        "symbolic_ldlt.h",
         "symbolic_monomial.cc",
         "symbolic_monomial.h",
         "symbolic_monomial_util.cc",
         "symbolic_monomial_util.h",
         "symbolic_polynomial.cc",
         "symbolic_polynomial.h",
+        "symbolic_rational_function.cc",
+        "symbolic_rational_function.h",
         "symbolic_simplification.cc",
         "symbolic_simplification.h",
         "symbolic_variable.cc",
@@ -218,9 +224,8 @@ drake_cc_library(
         ":essential",
         ":extract_double",
         ":hash",
-        ":number_traits",
-        ":polynomial",
-        "//math:matrix_util",
+        ":random",
+        "@fmt",
     ],
 )
 
@@ -248,6 +253,15 @@ drake_cc_library(
 )
 
 # Miscellaneous utilities.
+
+drake_cc_library(
+    name = "identifier",
+    hdrs = ["identifier.h"],
+    deps = [
+        ":essential",
+        ":hash",
+    ],
+)
 
 DRAKE_RESOURCE_SENTINEL = "//:.drake-find_resource-sentinel"
 
@@ -295,6 +309,37 @@ drake_cc_library(
     visibility = ["//tools/install/libdrake:__pkg__"],
 )
 
+# The drake::filesystem support is intended ONLY for use within Drake's *.cc
+# files -- it is not a public dependency of Drake.  As such, we compile it with
+# hidden visibility, exclude its header file from the install, and exclude it
+# from the //common:common package_library shortcut.
+drake_cc_library(
+    name = "filesystem",
+    srcs = ["filesystem.cc"],
+    hdrs = ["filesystem.h"],
+    copts = ["-fvisibility=hidden"],
+    install_hdrs_exclude = ["filesystem.h"],
+    tags = [
+        "exclude_from_libdrake",
+        "exclude_from_package",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@ghc_filesystem",
+    ],
+)
+
+drake_cc_library(
+    name = "find_runfiles",
+    srcs = ["find_runfiles.cc"],
+    hdrs = ["find_runfiles.h"],
+    deps = [
+        ":essential",
+        ":filesystem",
+        "@bazel_tools//tools/cpp/runfiles",
+    ],
+)
+
 drake_cc_library(
     name = "find_resource",
     srcs = [
@@ -316,7 +361,8 @@ drake_cc_library(
     deps = [
         ":drake_marker_shared_library",
         ":essential",
-        "@spruce",
+        ":filesystem",
+        ":find_runfiles",
     ],
 )
 
@@ -330,8 +376,8 @@ drake_cc_library(
     visibility = ["//tools/install/libdrake:__pkg__"],
     deps = [
         ":essential",
+        ":filesystem",
         ":find_resource",
-        "@spruce",
     ],
 )
 
@@ -344,11 +390,37 @@ drake_cc_library(
 )
 
 drake_cc_library(
-    name = "nice_type_name",
-    srcs = ["nice_type_name.cc"],
-    hdrs = ["nice_type_name.h"],
+    name = "name_value",
+    hdrs = ["name_value.h"],
     deps = [
         ":essential",
+    ],
+)
+
+# N.B. This library does not have all of its dependencies declared. Instead,
+# it defines only the headers such that it can be used by `pydrake` without
+# installing the file. (If we just used `install_hdrs_exclude`, the header
+# would not make it into `//:drake_shared_library`.)
+drake_cc_library(
+    name = "nice_type_name_override_header",
+    hdrs = ["nice_type_name_override.h"],
+    install_hdrs_exclude = ["nice_type_name_override.h"],
+    tags = ["exclude_from_package"],
+    visibility = ["//bindings/pydrake/common:__pkg__"],
+)
+
+drake_cc_library(
+    name = "nice_type_name",
+    srcs = [
+        "nice_type_name.cc",
+        "nice_type_name_override.cc",
+    ],
+    hdrs = [
+        "nice_type_name.h",
+    ],
+    deps = [
+        ":essential",
+        ":nice_type_name_override_header",
     ],
 )
 
@@ -361,6 +433,13 @@ drake_cc_library(
     name = "copyable_unique_ptr",
     hdrs = ["copyable_unique_ptr.h"],
     deps = [":is_cloneable"],
+)
+
+drake_cc_library(
+    name = "random",
+    srcs = ["random.cc"],
+    hdrs = ["random.h"],
+    deps = [":essential"],
 )
 
 drake_cc_library(
@@ -396,52 +475,27 @@ drake_cc_library(
     hdrs = ["temp_directory.h"],
     deps = [
         ":essential",
-        "@spruce",
+        ":filesystem",
     ],
 )
 
+# This is a Drake-internal utility for use only as a direct dependency
+# of executable (drake_cc_binary) targets.  Thus, we exclude it from
+# the ":common" package library and from libdrake.
 drake_cc_library(
-    name = "text_logging_gflags",
-    hdrs = ["text_logging_gflags.h"],
-    # TODO(jwnimmer-tri) Ideally, gflags BUILD would do this for us.  Figure
-    # out what's going on.  Definitely don't let "-pthread" get copy-pasta'd
-    # throughout our code.
-    linkopts = select({
-        "//tools/cc_toolchain:linux": ["-pthread"],
-        "//conditions:default": [],
-    }),
+    name = "add_text_logging_gflags",
+    srcs = ["add_text_logging_gflags.cc"],
     tags = [
-        # Don't add this library into the ":common" package library.
-        # Only programs with a main() function should ever use this header.
-        "exclude_from_package",
-        # Don't install this header via this cc_library, because that would
-        # introduce a dependency from libdrake onto gflags.  Similarly, we
-        # can't use `install_hdrs_exclude` for this because the @gflags
-        # dependency should not be part of the install.  Instead, we exclude
-        # this cc_library entirely, and use a separate rule below for the
-        # installation.
         "exclude_from_libdrake",
+        "exclude_from_package",
     ],
+    visibility = ["//:__subpackages__"],
     deps = [
         ":essential",
+        ":unused",
         "@gflags",
     ],
-)
-
-# Compared to the above rule, this removes the deps attribute; we don't want to
-# link against gflags for libdrake.so, we just want to publish this header for
-# callers who have their own gflags to link against.
-drake_cc_library(
-    name = "text_logging_gflags_h",
-    hdrs = ["text_logging_gflags.h"],
-    tags = [
-        # Don't add this library into the ":common" package library.
-        # This rule should only be used for install purposes.
-        "exclude_from_package",
-    ],
-    # This rule should only be used for install purposes, not within the
-    # in-source bazel build.  We limit its visibility to enforce that.
-    visibility = ["//tools/install/libdrake:__pkg__"],
+    alwayslink = 1,
 )
 
 drake_cc_library(
@@ -463,6 +517,14 @@ drake_cc_library(
 )
 
 drake_cc_library(
+    name = "scope_exit",
+    hdrs = ["scope_exit.h"],
+    deps = [
+        ":essential",
+    ],
+)
+
+drake_cc_library(
     name = "scoped_singleton",
     hdrs = ["scoped_singleton.h"],
     deps = [
@@ -470,13 +532,26 @@ drake_cc_library(
     ],
 )
 
+drake_cc_library(
+    name = "value",
+    srcs = ["value.cc"],
+    hdrs = ["value.h"],
+    deps = [
+        ":copyable_unique_ptr",
+        ":essential",
+        ":hash",
+        ":is_cloneable",
+        ":nice_type_name",
+    ],
+)
+
 drake_cc_binary(
     name = "resource_tool",
     srcs = ["resource_tool.cc"],
     deps = [
+        ":add_text_logging_gflags",
         ":essential",
         ":find_resource",
-        ":text_logging_gflags",
     ],
 )
 
@@ -494,19 +569,24 @@ drake_py_binary(
 )
 
 install(
+    name = "install_drake_marker",
+    targets = [":libdrake_marker.so"],
+)
+
+install(
     name = "install",
     install_tests = [":test/resource_tool_installed_test.py"],
     targets = [
         ":libdrake_marker.so",
         ":resource_tool",
     ],
-    # TODO(jwnimmer-tri) The install rule should offer more specific options
-    # for programs not in bin/, and including the workspace and/or package name
-    # in the installed path.  For now, we'll just specify it manually.
     runtime_dest = "share/drake/common",
     data_dest = "share/drake",
     guess_data = "WORKSPACE",
     allowed_externals = [DRAKE_RESOURCE_SENTINEL],
+    deps = [
+        ":install_drake_marker",
+    ],
 )
 
 # === test/ ===
@@ -524,6 +604,7 @@ drake_cc_googletest(
         "test/autodiffxd_addition_test.cc",
         "test/autodiffxd_asin_test.cc",
         "test/autodiffxd_atan2_test.cc",
+        "test/autodiffxd_atan_test.cc",
         "test/autodiffxd_cos_test.cc",
         "test/autodiffxd_cosh_test.cc",
         "test/autodiffxd_division_test.cc",
@@ -543,6 +624,7 @@ drake_cc_googletest(
     ],
     deps = [
         ":autodiff",
+        "//common/test_utilities:eigen_matrix_compare",
     ],
 )
 
@@ -566,15 +648,9 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
-    name = "drake_bool_deprecated_test",
-    copts = [
-        # This test for deprecated functions; so we don't want this warning.
-        "-Wno-deprecated-declarations",
-    ],
+    name = "random_test",
     deps = [
-        ":drake_bool",
-        ":symbolic",
-        "//common/test_utilities:symbolic_test_util",
+        ":random",
     ],
 )
 
@@ -651,7 +727,7 @@ drake_cc_googletest(
 )
 
 # Functional test of DRAKE_ASSERT at compile time.
-drake_cc_googletest(
+drake_cc_test(
     name = "drake_assert_test_compile",
     deps = [
         ":essential",
@@ -675,6 +751,8 @@ sh_test(
         "//tools/cc_toolchain:capture_cc.env",
         "//tools/cc_toolchain:toolchain_deps",
     ],
+    # Fails when run under Valgrind tools.
+    tags = ["no_valgrind_tools"],
 )
 
 # TODO(eric.cousineau): Remove this alias and update `issue_template.md` to
@@ -710,16 +788,10 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
-    name = "drake_optional_test",
-    deps = [
-        ":essential",
-    ],
-)
-
-drake_cc_googletest(
     name = "drake_throw_test",
     deps = [
         ":essential",
+        "//common/test_utilities:expect_no_throw",
     ],
 )
 
@@ -742,6 +814,7 @@ drake_cc_googletest(
     deps = [
         ":essential",
         ":nice_type_name",
+        "//common/test_utilities:expect_no_throw",
     ],
 )
 
@@ -749,6 +822,17 @@ drake_cc_googletest(
     name = "hash_test",
     deps = [
         ":hash",
+    ],
+)
+
+drake_cc_googletest(
+    name = "identifier_test",
+    deps = [
+        ":identifier",
+        ":sorted_pair",
+        ":unused",
+        "//common/test_utilities:expect_no_throw",
+        "//common/test_utilities:expect_throws_message",
     ],
 )
 
@@ -775,6 +859,14 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
+    name = "filesystem_test",
+    deps = [
+        ":filesystem",
+        "//common/test_utilities:expect_throws_message",
+    ],
+)
+
+drake_cc_googletest(
     name = "find_resource_test",
     data = [
         "test/find_resource_test_data.txt",
@@ -782,6 +874,7 @@ drake_cc_googletest(
     deps = [
         ":drake_path",
         ":find_resource",
+        "//common/test_utilities:expect_no_throw",
     ],
 )
 
@@ -808,6 +901,41 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
+    name = "find_runfiles_test",
+    data = [
+        "test/find_resource_test_data.txt",
+    ],
+    deps = [
+        ":find_runfiles",
+        ":temp_directory",
+        "//common/test_utilities:expect_throws_message",
+    ],
+)
+
+drake_cc_googletest(
+    name = "find_runfiles_fail_test",
+    deps = [
+        ":find_runfiles",
+    ],
+)
+
+drake_py_unittest(
+    name = "find_runfiles_subprocess_test",
+    data = [
+        ":find_runfiles_test",
+    ],
+)
+
+drake_cc_googletest(
+    name = "find_runfiles_stub_test",
+    srcs = [
+        "find_runfiles.h",
+        "find_runfiles_stub.cc",
+        "test/find_runfiles_stub_test.cc",
+    ],
+)
+
+drake_cc_googletest(
     name = "is_approx_equal_abstol_test",
     deps = [
         ":essential",
@@ -816,10 +944,18 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
+    name = "name_value_test",
+    deps = [
+        ":name_value",
+    ],
+)
+
+drake_cc_googletest(
     name = "autodiffxd_make_coherent_test",
     deps = [
         ":autodiffxd_make_coherent",
         "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_no_throw",
     ],
 )
 
@@ -862,6 +998,7 @@ drake_cc_googletest(
     deps = [
         ":essential",
         "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_no_throw",
         "//common/test_utilities:random_polynomial_matrix",
     ],
 )
@@ -871,6 +1008,15 @@ drake_cc_googletest(
     deps = [
         ":essential",
         ":sorted_vectors_have_intersection",
+    ],
+)
+
+drake_cc_googletest(
+    name = "symbolic_codegen_test",
+    deps = [
+        ":essential",
+        ":symbolic",
+        "//common/test_utilities:symbolic_test_util",
     ],
 )
 
@@ -896,6 +1042,7 @@ drake_cc_googletest(
     deps = [
         ":essential",
         ":symbolic",
+        "//common/test_utilities:limit_malloc",
         "//common/test_utilities:symbolic_test_util",
     ],
 )
@@ -904,8 +1051,18 @@ drake_cc_googletest(
     name = "symbolic_expression_test",
     deps = [
         ":essential",
+        ":polynomial",
         ":symbolic",
         "//common/test_utilities:is_memcpy_movable",
+        "//common/test_utilities:symbolic_test_util",
+    ],
+)
+
+drake_cc_googletest(
+    name = "symbolic_expression_cell_test",
+    deps = [
+        ":essential",
+        ":symbolic",
         "//common/test_utilities:symbolic_test_util",
     ],
 )
@@ -942,6 +1099,7 @@ drake_cc_googletest(
     deps = [
         ":essential",
         ":symbolic",
+        "//common/test_utilities:eigen_matrix_compare",
         "//common/test_utilities:expect_throws_message",
         "//common/test_utilities:symbolic_test_util",
     ],
@@ -958,6 +1116,16 @@ drake_cc_googletest(
 )
 
 drake_cc_googletest(
+    name = "symbolic_ldlt_test",
+    deps = [
+        ":essential",
+        ":symbolic",
+        "//common/test_utilities:eigen_matrix_compare",
+        "//common/test_utilities:expect_no_throw",
+    ],
+)
+
+drake_cc_googletest(
     name = "symbolic_mixing_scalar_types_test",
     deps = [
         ":essential",
@@ -969,12 +1137,31 @@ drake_cc_googletest(
     name = "symbolic_polynomial_test",
     deps = [
         ":symbolic",
+        "//common/test_utilities:expect_no_throw",
         "//common/test_utilities:symbolic_test_util",
     ],
 )
 
 drake_cc_googletest(
     name = "symbolic_polynomial_matrix_test",
+    deps = [
+        ":essential",
+        ":symbolic",
+        "//common/test_utilities:symbolic_test_util",
+    ],
+)
+
+drake_cc_googletest(
+    name = "symbolic_rational_function_test",
+    deps = [
+        ":symbolic",
+        "//common/test_utilities:expect_throws_message",
+        "//common/test_utilities:symbolic_test_util",
+    ],
+)
+
+drake_cc_googletest(
+    name = "symbolic_rational_function_matrix_test",
     deps = [
         ":essential",
         ":symbolic",
@@ -996,6 +1183,7 @@ drake_cc_googletest(
     deps = [
         ":essential",
         ":symbolic",
+        "//common/test_utilities:expect_no_throw",
         "//common/test_utilities:symbolic_test_util",
     ],
 )
@@ -1005,6 +1193,7 @@ drake_cc_googletest(
     deps = [
         ":essential",
         ":symbolic",
+        "//common/test_utilities:expect_no_throw",
         "//common/test_utilities:is_memcpy_movable",
         "//common/test_utilities:symbolic_test_util",
     ],
@@ -1039,16 +1228,45 @@ drake_cc_googletest(
 
 drake_cc_googletest(
     name = "temp_directory_test",
+    # Run each test case in a different process, to avoid environment variable
+    # changes from one accidentally polluting the others.
+    shard_count = 3,
     deps = [
+        ":filesystem",
         ":temp_directory",
-        "@spruce",
     ],
 )
 
+# This version of text_logging_test is compiled with HAVE_SPDLOG enabled,
+# because that is what Drake's WORKSPACE provides for the @spdlog external.
 drake_cc_googletest(
     name = "text_logging_test",
+    defines = [
+        "TEXT_LOGGING_TEST_SPDLOG=1",
+    ],
+    use_default_main = False,
     deps = [
         ":essential",
+    ],
+)
+
+# This version of text_logging_test re-compiles all source files without
+# defining HAVE_SPDLOG, to ensure that the no-op stubs behave as desired.
+drake_cc_googletest(
+    name = "text_logging_no_spdlog_test",
+    srcs = [
+        "drake_copyable.h",
+        "never_destroyed.h",
+        "test/text_logging_test.cc",
+        "text_logging.cc",
+        "text_logging.h",
+    ],
+    defines = [
+        "TEXT_LOGGING_TEST_SPDLOG=0",
+    ],
+    use_default_main = False,
+    deps = [
+        "@fmt",
     ],
 )
 
@@ -1065,6 +1283,8 @@ drake_cc_googletest(
     deps = [
         ":type_safe_index",
         ":unused",
+        "//common:sorted_pair",
+        "//common/test_utilities:expect_no_throw",
         "//common/test_utilities:expect_throws_message",
     ],
 )
@@ -1072,6 +1292,13 @@ drake_cc_googletest(
 drake_cc_googletest(
     name = "eigen_autodiff_types_test",
     deps = [":autodiff"],
+)
+
+drake_cc_googletest(
+    name = "scope_exit_test",
+    deps = [
+        ":scope_exit",
+    ],
 )
 
 drake_cc_googletest(
@@ -1103,8 +1330,9 @@ drake_py_unittest(
     data = [
         ":cpplint_wrapper",
         ":eigen_types.h",
-        "@styleguide//:cpplint/cpplint_test_header.h",
     ],
+    # Exceeds timeout when run under Valgrind tools.
+    tags = ["no_valgrind_tools"],
 )
 
 drake_py_unittest(
@@ -1119,12 +1347,15 @@ drake_py_unittest(
     ],
 )
 
-# TODO(jwnimmer-tri) These tests are currently missing...
-# - drake_assert_test in fancy variants
-# - drake_assert_test_compile in fancy variants
-# - text_logging_test in fancy variants
-# - drake_deprecated_test in fancy variants
-# - cpplint_wrapper_test.py
+drake_cc_googletest(
+    name = "value_test",
+    deps = [
+        ":value",
+        "//common:essential",
+        "//common/test_utilities:expect_no_throw",
+        "//systems/framework/test_utilities:my_vector",
+    ],
+)
 
 add_lint_tests(
     python_lint_extra_srcs = [

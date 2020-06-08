@@ -9,6 +9,8 @@ namespace drake {
 namespace multibody {
 std::unique_ptr<RigidBodyTree<double>> ConstructKuka();
 
+std::unique_ptr<RigidBodyTree<double>> ConstructSingleBody();
+
 class KukaTest : public ::testing::Test {
  public:
   KukaTest();
@@ -21,7 +23,8 @@ class KukaTest : public ::testing::Test {
    * posture. Compare that forward kinematics body pose, with the body pose
    * in the global IK.
    */
-  void CheckGlobalIKSolution(double pos_tol, double orient_tol) const;
+  void CheckGlobalIKSolution(const solvers::MathematicalProgramResult& result,
+                             double pos_tol, double orient_tol) const;
 
   /**
    * Solve the inverse kinematics problem from the nonlinear solver.

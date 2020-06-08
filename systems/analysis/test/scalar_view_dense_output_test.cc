@@ -24,7 +24,7 @@ class ScalarViewDenseOutputTest : public ::testing::Test {
                 this->kFinalStateDerivative);
     dense_output->Update(std::move(step));
     dense_output->Consolidate();
-    return std::move(dense_output);
+    return dense_output;
   }
 
   const double kInvalidTime{-1.0};
@@ -45,7 +45,7 @@ class ScalarViewDenseOutputTest : public ::testing::Test {
 
 typedef ::testing::Types<double, AutoDiffXd> ExtensionTypes;
 
-TYPED_TEST_CASE(ScalarViewDenseOutputTest, ExtensionTypes);
+TYPED_TEST_SUITE(ScalarViewDenseOutputTest, ExtensionTypes);
 
 // Checks that ScalarViewDenseOutput properly wraps a
 // DenseOutput instance.

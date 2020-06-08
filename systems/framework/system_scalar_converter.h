@@ -53,11 +53,7 @@ class SystemScalarConverter {
   /// @endcode
   ///
   /// This constructor only creates a converter between a limited set of types,
-  /// specifically:
-  ///
-  /// - double
-  /// - drake::AutoDiffXd
-  /// - drake::symbolic::Expression
+  /// specifically the @ref default_scalars "default scalars".
   ///
   /// By default, all non-identity pairs (pairs where T and U differ) drawn
   /// from the above list can be used for T and U.  Systems may specialize
@@ -220,8 +216,10 @@ std::unique_ptr<System<T>> SystemScalarConverter::Convert(
   return std::unique_ptr<System<T>>(result);
 }
 
-namespace system_scalar_converter_detail {
+namespace system_scalar_converter_internal {
 // When Traits says that conversion is supported.
+// N.B. This logic should be reflected in `TemplateSystem._make` in the file
+// `scalar_conversion.py`.
 template <template <typename> class S, typename T, typename U>
 static std::unique_ptr<System<T>> Make(
     bool subtype_preservation, const System<U>& other, std::true_type) {
@@ -250,9 +248,9 @@ static std::unique_ptr<System<T>> Make(
     bool, const System<U>&, std::false_type) {
   // AddIfSupported is guaranteed not to call us, but we *will* be compiled,
   // so we have to have some kind of function body.
-  DRAKE_ABORT();
+  throw std::logic_error("system_scalar_converter_internal");
 }
-}  // namespace system_scalar_converter_detail
+}  // namespace system_scalar_converter_internal
 
 template <template <typename> class S, typename T, typename U>
 void SystemScalarConverter::AddIfSupported(
@@ -265,7 +263,7 @@ void SystemScalarConverter::AddIfSupported(
       // Dispatch to an overload based on whether S<U> ==> S<T> is supported.
       // (At runtime, this block is only executed for supported conversions,
       // but at compile time, Make will be instantiated unconditionally.)
-      return system_scalar_converter_detail::Make<S, T, U>(
+      return system_scalar_converter_internal::Make<S, T, U>(
           (subtype_preservation == GuaranteedSubtypePreservation::kEnabled),
           other, supported{});
     };

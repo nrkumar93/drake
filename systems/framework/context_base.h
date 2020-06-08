@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -9,19 +10,19 @@
 
 #include "drake/common/reset_on_copy.h"
 #include "drake/common/unused.h"
+#include "drake/common/value.h"
 #include "drake/systems/framework/cache.h"
 #include "drake/systems/framework/dependency_tracker.h"
 #include "drake/systems/framework/fixed_input_port_value.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace systems {
 
 #ifndef DRAKE_DOXYGEN_CXX
-namespace detail {
+namespace internal {
 // This provides SystemBase limited "friend" access to ContextBase.
 class SystemBaseContextBaseAttorney;
-}  // namespace detail
+}  // namespace internal
 #endif
 
 /** Provides non-templatized Context functionality shared by the templatized
@@ -46,7 +47,8 @@ class ContextBase : public internal::ContextMessageInterface {
   ContextBase& operator=(ContextBase&&) = delete;
   /** @} */
 
-  /** Creates an identical copy of the concrete context object. */
+  /** Creates an identical copy of the concrete context object.
+  @throws std::logic_error if this is not the root context. */
   std::unique_ptr<ContextBase> Clone() const;
 
   ~ContextBase() override;
@@ -89,6 +91,31 @@ class ContextBase : public internal::ContextMessageInterface {
     PropagateCachingChange(*this, &Cache::SetAllEntriesOutOfDate);
   }
 
+  /** (Advanced) Freezes the cache at its current contents, preventing any
+  further cache updates. When frozen, accessing an out-of-date cache entry
+  causes an exception to be throw. This is applied recursively to this
+  %Context and all its subcontexts, but _not_ to its parent or siblings so
+  it is most useful when called on the root %Context. If the cache was already
+  frozen this method does nothing but waste a little time. */
+  void FreezeCache() const {
+    PropagateCachingChange(*this, &Cache::freeze_cache);
+  }
+
+  /** (Advanced) Unfreezes the cache if it was previously frozen. This is
+  applied recursively to this %Context and all its subcontexts, but _not_
+  to its parent or siblings. If the cache was not frozen, this does nothing
+  but waste a little time. */
+  void UnfreezeCache() const {
+    PropagateCachingChange(*this, &Cache::unfreeze_cache);
+  }
+
+  /** (Advanced) Reports whether this %Context's cache is currently frozen.
+  This checks only locally; it is possible that parent, child, or sibling
+  subcontext caches are in a different state than this one. */
+  bool is_cache_frozen() const final {
+    return get_cache().is_cache_frozen();
+  }
+
   /** Returns the local name of the subsystem for which this is the Context.
   This is intended primarily for error messages and logging.
   @see SystemBase::GetSystemName() for details.
@@ -97,6 +124,9 @@ class ContextBase : public internal::ContextMessageInterface {
     return system_name_.empty() ? internal::SystemMessageInterface::no_name()
                                 : system_name_;
   }
+
+  /** (Internal) Gets the id of the subsystem that created this context. */
+  internal::SystemId get_system_id() const { return system_id_; }
 
   /** Returns the full pathname of the subsystem for which this is the Context.
   This is intended primarily for error messages and logging.
@@ -146,25 +176,25 @@ class ContextBase : public internal::ContextMessageInterface {
   }
 
   /** Returns the number of input ports in this context. */
-  int get_num_input_ports() const {
+  int num_input_ports() const {
     DRAKE_ASSERT(input_port_tickets_.size() == input_port_values_.size());
     return static_cast<int>(input_port_tickets_.size());
   }
 
   /** Returns the number of output ports represented in this context. */
-  int get_num_output_ports() const {
+  int num_output_ports() const {
     return static_cast<int>(output_port_tickets_.size());
   }
 
   /** Returns the dependency ticket associated with a particular input port. */
   DependencyTicket input_port_ticket(InputPortIndex port_num) {
-    DRAKE_DEMAND(port_num < get_num_input_ports());
+    DRAKE_DEMAND(port_num < num_input_ports());
     return input_port_tickets_[port_num];
   }
 
   /** Returns the dependency ticket associated with a particular output port. */
   DependencyTicket output_port_ticket(OutputPortIndex port_num) {
-    DRAKE_DEMAND(port_num < get_num_output_ports());
+    DRAKE_DEMAND(port_num < num_output_ports());
     return output_port_tickets_[port_num];
   }
 
@@ -179,13 +209,27 @@ class ContextBase : public internal::ContextMessageInterface {
   unconnected input port. See `Context<T>` for more-convenient overloads of
   FixInputPort() for vector values with elements of type T.
 
+  @note Calling this method on an already connected input port, i.e., an
+  input port that has previously been passed into a call to
+  DiagramBuilder::Connect(), causes FixedInputPortValue to override any other
+  value present on that port.
+
   @pre `index` selects an existing input port of this Context. */
   FixedInputPortValue& FixInputPort(
       int index, std::unique_ptr<AbstractValue> value);
 
   /** Same as above method but the value is passed by const reference instead
   of by unique_ptr. The port will contain a copy of the `value` (not retain a
-  pointer to the `value`). */
+  pointer to the `value`).
+
+  @note Calling this method on an already connected input port, i.e., an
+  input port that has previously been passed into a call to
+  DiagramBuilder::Connect(), causes FixedInputPortValue to override any other
+  value present on that port.
+
+  @exclude_from_pydrake_mkdoc{The prior overload's docstring is better, and we
+  only need one of the two -- overloading on ownership doesn't make sense for
+  pydrake.} */
   FixedInputPortValue& FixInputPort(int index, const AbstractValue& value) {
     return FixInputPort(index, value.Clone());
   }
@@ -194,7 +238,7 @@ class ContextBase : public internal::ContextMessageInterface {
   fixed, otherwise nullptr.
   @pre `index` selects an existing input port of this Context. */
   const FixedInputPortValue* MaybeGetFixedInputPortValue(int index) const {
-    DRAKE_DEMAND(0 <= index && index < get_num_input_ports());
+    DRAKE_DEMAND(0 <= index && index < num_input_ports());
     return input_port_values_[index].get();
   }
 
@@ -202,7 +246,7 @@ class ContextBase : public internal::ContextMessageInterface {
   is fixed, otherwise nullptr.
   @pre `index` selects an existing input port of this Context. */
   FixedInputPortValue* MaybeGetMutableFixedInputPortValue(int index) {
-    DRAKE_DEMAND(0 <= index && index < get_num_input_ports());
+    DRAKE_DEMAND(0 <= index && index < num_input_ports());
     return input_port_values_[index].get_mutable();
   }
 
@@ -221,6 +265,9 @@ class ContextBase : public internal::ContextMessageInterface {
     DRAKE_ASSERT(context->current_change_event_ >= 0);
     return ++context->current_change_event_;
   }
+
+  /** Returns true if this context has no parent. */
+  bool is_root_context() const { return parent_ == nullptr; }
 
  protected:
   /** Default constructor creates an empty ContextBase but initializes all the
@@ -247,8 +294,16 @@ class ContextBase : public internal::ContextMessageInterface {
   //@{
 
   /** Adds the next input port. Expected index is supplied along with the
-  assigned ticket. Subscribes the "all input ports" tracker to this one. */
-  void AddInputPort(InputPortIndex expected_index, DependencyTicket ticket);
+  assigned ticket. Subscribes the "all input ports" tracker to this one.
+  The fixed_input_type_checker will be used for validation when setting a fixed
+  input, or may be null when no validation should be performed.  Typically the
+  fixed_input_type_checker is created by System::MakeFixInputPortTypeChecker.
+  The fixed_input_type_checker lifetime will be the same as this ContextBase,
+  so it should not depend on pointers that may go out of scope.  Most acutely,
+  the function must not depend on any captured SystemBase pointers. */
+  void AddInputPort(
+      InputPortIndex expected_index, DependencyTicket ticket,
+      std::function<void(const AbstractValue&)> fixed_input_type_checker);
 
   /** Adds the next output port. Expected index is supplied along with the
   assigned ticket. */
@@ -315,6 +370,13 @@ class ContextBase : public internal::ContextMessageInterface {
   changed, likely because someone has asked to modify continuous state xc. */
   void NoteAllContinuousStateChanged(int64_t change_event) {
     NoteAllQChanged(change_event);
+    NoteAllVZChanged(change_event);
+  }
+
+  /** Notifies the local v and z trackers that each of them may have
+  changed, likely because someone has asked to modify just the first-order
+  state variables in xc. */
+  void NoteAllVZChanged(int64_t change_event) {
     NoteAllVChanged(change_event);
     NoteAllZChanged(change_event);
   }
@@ -382,9 +444,6 @@ class ContextBase : public internal::ContextMessageInterface {
   }
   //@}
 
-  /** Returns true if this context has no parent. */
-  bool is_root_context() const { return parent_ == nullptr; }
-
   /** (Internal use only) Returns true if this context provides resources for
   its own individual state variables or parameters. That means those variables
   or parameters were declared by this context's corresponding System. Currently
@@ -403,7 +462,14 @@ class ContextBase : public internal::ContextMessageInterface {
   // protected function on its children.
   static std::unique_ptr<ContextBase> CloneWithoutPointers(
       const ContextBase& source) {
-    return source.DoCloneWithoutPointers();
+    std::unique_ptr<ContextBase> result = source.DoCloneWithoutPointers();
+
+    // Verify that the most-derived Context didn't forget to override
+    // DoCloneWithoutPointers().
+    ContextBase& clone = *result;
+    DRAKE_THROW_UNLESS(typeid(source) == typeid(clone));
+
+    return result;
   }
 
   /** (Internal use only) Given a new context `clone` containing an
@@ -479,7 +545,7 @@ class ContextBase : public internal::ContextMessageInterface {
   up base class pointers. To do that, implement a protected copy constructor
   that inherits from the base class copy constructor (which doesn't repair the
   pointers), then implement DoCloneWithoutPointers() as
-  `return unique_ptr<ContextBase>(new DerivedType(*this));`. */
+  `return std::unique_ptr<ContextBase>(new DerivedType(*this));`. */
   virtual std::unique_ptr<ContextBase> DoCloneWithoutPointers() const = 0;
 
   /** DiagramContext must implement this to invoke BuildTrackerPointerMap() on
@@ -519,13 +585,16 @@ class ContextBase : public internal::ContextMessageInterface {
   }
 
  private:
-  friend class detail::SystemBaseContextBaseAttorney;
+  friend class internal::SystemBaseContextBaseAttorney;
 
   // Returns the parent Context or `nullptr` if this is the root Context.
   const ContextBase* get_parent_base() const { return parent_; }
 
   // Records the name of the system whose context this is.
   void set_system_name(const std::string& name) { system_name_ = name; }
+
+  // Records the id of the subsystem that created this context.
+  void set_system_id(internal::SystemId id) { system_id_ = id; }
 
   // Fixes the input port at `index` to the internal value source `port_value`.
   // If the port wasn't previously fixed, assigns a ticket and tracker for the
@@ -567,6 +636,11 @@ class ContextBase : public internal::ContextMessageInterface {
   std::vector<copyable_unique_ptr<FixedInputPortValue>>
       input_port_values_;
 
+  // For each input port, the type checker function will be used for validation
+  // when setting a fixed input.
+  std::vector<std::function<void(const AbstractValue&)>>
+      input_port_type_checkers_;
+
   // The cache of pre-computed values owned by this subcontext.
   mutable Cache cache_;
 
@@ -587,14 +661,19 @@ class ContextBase : public internal::ContextMessageInterface {
   // Name of the subsystem whose subcontext this is.
   std::string system_name_;
 
+  // Unique id of the subsystem whose subcontext this is.
+  internal::SystemId system_id_;
+
   // Used to validate that System-derived classes didn't forget to invoke the
   // SystemBase method that properly sets up the ContextBase.
   bool is_context_base_initialized_{false};
 };
 
 #ifndef DRAKE_DOXYGEN_CXX
+class DiagramContextTest;
+class LeafContextTest;
 class SystemBase;
-namespace detail {
+namespace internal {
 
 // This is an attorney-client pattern class providing SystemBase with access to
 // certain specific ContextBase private methods, and nothing else.
@@ -604,20 +683,28 @@ class SystemBaseContextBaseAttorney {
   SystemBaseContextBaseAttorney() = delete;
 
  private:
+  friend class drake::systems::DiagramContextTest;
+  friend class drake::systems::LeafContextTest;
   friend class drake::systems::SystemBase;
 
   static void set_system_name(ContextBase* context, const std::string& name) {
     DRAKE_DEMAND(context != nullptr);
     context->set_system_name(name);
   }
+  static void set_system_id(ContextBase* context, internal::SystemId id) {
+    DRAKE_DEMAND(context != nullptr);
+    context->set_system_id(id);
+  }
   static const ContextBase* get_parent_base(const ContextBase& context) {
     return context.get_parent_base();
   }
 
-  static void AddInputPort(ContextBase* context, InputPortIndex expected_index,
-                           DependencyTicket ticket) {
+  static void AddInputPort(
+      ContextBase* context, InputPortIndex expected_index,
+      DependencyTicket ticket,
+      std::function<void(const AbstractValue&)> type_checker) {
     DRAKE_DEMAND(context != nullptr);
-    context->AddInputPort(expected_index, ticket);
+    context->AddInputPort(expected_index, ticket, std::move(type_checker));
   }
 
   static void AddOutputPort(
@@ -666,7 +753,7 @@ class SystemBaseContextBaseAttorney {
   }
 };
 
-}  // namespace detail
+}  // namespace internal
 #endif
 
 }  // namespace systems

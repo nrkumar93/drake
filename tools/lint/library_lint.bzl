@@ -1,15 +1,15 @@
 # -*- python -*-
 
-load("//tools/skylark:drake_py.bzl", "py_test_isolated")
+load("@drake//tools/skylark:drake_py.bzl", "py_test_isolated")
 
 # Keep this constant in sync with library_lint_reporter.py.
 _TAG_EXCLUDE_FROM_PACKAGE = "exclude_from_package"
 
 def library_lint(
         existing_rules = None):
-    """Within the current package, checks that drake_cc_package_library has been
-    used correctly, reports a lint (test) error if not.  (To understand proper
-    use of drake_cc_package_library, consult its API documentation.)
+    """Within the current package, checks that drake_cc_package_library has
+    been used correctly, reports a lint (test) error if not.  (To understand
+    proper use of drake_cc_package_library, consult its API documentation.)
 
     Note that //examples/... packages are excluded from some checks, because
     they should generally not use drake_cc_package_library.
@@ -93,9 +93,11 @@ def library_lint(
     ])
 
     # Find libraries that are deps of the package_library but shouldn't be.
-    extra_deps_expression = "deps({}, 1) except ({})".format(
+    extra_deps_expression = "deps({}, 1) except ({}) except {}".format(
         package_name,
         correct_deps_expression,
+        # This is fine (it's a dependency of our copt select() statement).
+        "//tools:drake_werror",
     )
 
     # Find libraries that should be deps of the package_library but aren't.
@@ -113,6 +115,7 @@ def library_lint(
             expression = missing_deps_expression,
             scope = scope,
             testonly = 1,
+            tags = ["lint", "library_lint"],
             visibility = ["//visibility:private"],
         )
         native.genquery(
@@ -120,6 +123,7 @@ def library_lint(
             expression = extra_deps_expression,
             scope = scope,
             testonly = 1,
+            tags = ["lint", "library_lint"],
             visibility = ["//visibility:private"],
         )
         library_lint_reporter_data += [

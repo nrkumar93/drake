@@ -22,10 +22,7 @@ namespace math {
 ///    Remi Munos and Andrew Moore, "Barycentric Interpolators for Continuous
 ///    Space and Time Reinforcement Learning", NIPS 1998
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
+/// @tparam_double_only
 template <typename T>
 class BarycentricMesh {
   // TODO(russt): This is also an instance of a "linear function approximator"
@@ -161,10 +158,10 @@ class BarycentricMesh {
   /// value matrix that should be used to approximate the function with this
   /// barycentric interpolation.
   ///
-  /// Example usages:
-  ///  MatrixXd mesh_values = bary.MeshValuesFrom(
-  ///    [](const auto& x) { return Vector1d(std::sin(x[0])); });
-  ///
+  /// @code
+  ///   MatrixXd mesh_values = bary.MeshValuesFrom(
+  ///     [](const auto& x) { return Vector1d(std::sin(x[0])); });
+  /// @endcode
   MatrixX<T> MeshValuesFrom(
       const std::function<VectorX<T>(const Eigen::Ref<const VectorX<T>>&)>&
           vector_func) const;
@@ -179,3 +176,5 @@ class BarycentricMesh {
 
 }  // namespace math
 }  // namespace drake
+
+extern template class ::drake::math::BarycentricMesh<double>;

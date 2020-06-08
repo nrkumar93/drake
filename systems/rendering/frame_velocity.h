@@ -2,7 +2,7 @@
 
 #include <Eigen/Dense>
 
-#include "drake/multibody/multibody_tree/math/spatial_velocity.h"
+#include "drake/multibody/math/spatial_velocity.h"
 #include "drake/systems/framework/basic_vector.h"
 
 namespace drake {
@@ -16,8 +16,7 @@ namespace rendering {
 ///
 /// The exact order of elements is `{ωx, ωy, ωz, vx, vy, vz}`.
 ///
-/// @tparam T The Eigen scalar type. Supported scalar types are double,
-///         AutoDiffXd, and symbolic::Expression.
+/// @tparam_default_scalar
 template <typename T>
 class FrameVelocity final : public BasicVector<T> {
  public:
@@ -43,7 +42,7 @@ class FrameVelocity final : public BasicVector<T> {
   static constexpr int kSize = 6;
 
  protected:
-  FrameVelocity<T>* DoClone() const override;
+  [[nodiscard]] FrameVelocity<T>* DoClone() const override;
 
  private:
   // Assigns the translational velocity p_WA.

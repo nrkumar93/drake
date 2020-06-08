@@ -1,14 +1,15 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Geometry>
 
+#include "drake/attic_warning.h"
 #include "drake/common/drake_copyable.h"
-#include "drake/common/drake_optional.h"
 #include "drake/multibody/constraint/constraint_solver.h"
 #include "drake/multibody/rigid_body_plant/compliant_contact_model.h"
 #include "drake/multibody/rigid_body_plant/kinematics_results.h"
@@ -117,7 +118,9 @@ namespace systems {
 /// where `N(q)` is a transformation matrix only dependent on the positions.
 ///
 /// @tparam T The scalar type. Must be a valid Eigen scalar.
+///
 /// Instantiated templates for the following kinds of T's are provided:
+///
 /// - double
 /// - AutoDiffXd
 ///
@@ -341,10 +344,12 @@ class RigidBodyPlant : public LeafSystem<T> {
   }
 
   /// Returns the output port containing the state of a
-  /// particular model with instance ID equal to `model_instance_id`. Throws a
-  /// std::runtime_error if `model_instance_id` does not exist. This method can
-  /// only be called when this class is instantiated with constructor parameter
-  /// `export_model_instance_centric_ports` equal to `true`.
+  /// particular model with instance ID equal to `model_instance_id`.
+  /// @throws std::runtime_error if `model_instance_id` does not exist.
+  ///
+  /// This method can only be called when this class is instantiated with
+  /// constructor parameter `export_model_instance_centric_ports` equal to
+  /// `true`.
   const OutputPort<T>& model_instance_state_output_port(
       int model_instance_id) const;
 
@@ -401,14 +406,9 @@ class RigidBodyPlant : public LeafSystem<T> {
                           std::unique_ptr<const RigidBodyTree<double>> tree,
                           double timestep = 0.0);
 
-  // Evaluates the actuator command input ports and throws a runtime_error
+  // Evaluates the actuator command input ports and throws a std::runtime_error
   // exception if at least one of the ports is not connected.
   VectorX<T> EvaluateActuatorInputs(const Context<T>& context) const;
-
-  // LeafSystem<T> overrides.
-
-  std::unique_ptr<ContinuousState<T>> AllocateContinuousState() const override;
-  std::unique_ptr<DiscreteValues<T>> AllocateDiscreteState() const override;
 
   // System<T> overrides.
 
@@ -422,8 +422,6 @@ class RigidBodyPlant : public LeafSystem<T> {
     // Pass to SFINAE compatible implementation.
     DoCalcDiscreteVariableUpdatesImpl(context, events, updates);
   }
-
-  optional<bool> DoHasDirectFeedthrough(int, int) const override;
 
   // TODO(amcastro-tri): provide proper implementations for these methods to
   // track energy conservation.
@@ -542,7 +540,7 @@ class RigidBodyPlant : public LeafSystem<T> {
   multibody::constraint::ConstraintSolver<double> constraint_solver_;
 
   OutputPortIndex state_output_port_index_{};
-  optional<OutputPortIndex> state_derivative_output_port_index_;
+  std::optional<OutputPortIndex> state_derivative_output_port_index_;
   OutputPortIndex kinematics_output_port_index_{};
   OutputPortIndex contact_output_port_index_{};
 

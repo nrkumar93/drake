@@ -1,5 +1,7 @@
 # -*- python -*-
 
+load("//tools/skylark:py.bzl", "py_binary", "py_library", "py_test")
+
 def drake_py_library(
         name,
         deps = None,
@@ -8,7 +10,7 @@ def drake_py_library(
 
     # Work around https://github.com/bazelbuild/bazel/issues/1567.
     deps = (deps or []) + ["//:module_py"]
-    native.py_library(
+    py_library(
         name = name,
         deps = deps,
         **kwargs
@@ -51,6 +53,8 @@ def _py_target_isolated(
         visibility = None,
         **kwargs):
     # See #8041 for more details.
+    # TODO(eric.cousineau): See if we can remove these shims once we stop
+    # supporting Python 2 (#10606).
     if py_target == None:
         fail("Must supply macro function for defining `py_target`.")
 
@@ -101,11 +105,16 @@ def drake_py_binary(
         name,
         srcs = None,
         main = None,
+        data = [],
         deps = None,
         isolate = False,
         tags = [],
         add_test_rule = 0,
         test_rule_args = [],
+        test_rule_data = [],
+        test_rule_size = None,
+        test_rule_timeout = None,
+        test_rule_flaky = 0,
         **kwargs):
     """A wrapper to insert Drake-specific customizations.
 
@@ -123,10 +132,11 @@ def drake_py_binary(
         main = srcs[0]
     _py_target_isolated(
         name = name,
-        py_target = native.py_binary,
+        py_target = py_binary,
         isolate = isolate,
         srcs = srcs,
         main = main,
+        data = data,
         deps = deps,
         tags = tags,
         **kwargs
@@ -139,6 +149,10 @@ def drake_py_binary(
             deps = deps,
             isolate = isolate,
             args = test_rule_args,
+            data = data + test_rule_data,
+            size = test_rule_size,
+            timeout = test_rule_timeout,
+            flaky = test_rule_flaky,
             tags = tags + ["nolint"],
             # N.B. Same as the warning in `drake_pybind_cc_googletest`: numpy
             # imports unittest unconditionally.
@@ -148,7 +162,6 @@ def drake_py_binary(
 
 def drake_py_unittest(
         name,
-        srcs = [],
         **kwargs):
     """Declares a `unittest`-based python test.
 
@@ -158,11 +171,13 @@ def drake_py_unittest(
     to "small" to indicate a unit test.
     """
     helper = "//common/test_utilities:drake_py_unittest_main.py"
-    if not srcs:
-        srcs = ["test/%s.py" % name]
+    if kwargs.pop("srcs", None):
+        fail("Changing srcs= is not allowed by drake_py_unittest." +
+             " Use drake_py_test instead, if you need something weird.")
+    srcs = ["test/%s.py" % name, helper]
     drake_py_test(
         name = name,
-        srcs = srcs + [helper],
+        srcs = srcs,
         main = helper,
         allow_import_unittest = True,
         **kwargs
@@ -175,6 +190,7 @@ def drake_py_test(
         deps = None,
         isolate = True,
         allow_import_unittest = False,
+        tags = [],
         **kwargs):
     """A wrapper to insert Drake-specific customizations.
 
@@ -191,7 +207,8 @@ def drake_py_test(
         (thus disabling this interlock), but can override this parameter in
         case something unique is happening and the other macro can't be used.
 
-    By default, sets test size to "small" to indicate a unit test.
+    By default, sets test size to "small" to indicate a unit test. Adds the tag
+    "py" if not already present.
     """
     if size == None:
         size = "small"
@@ -204,13 +221,16 @@ def drake_py_test(
         deps += ["//:module_py"]
     if not allow_import_unittest:
         deps = deps + ["//common/test_utilities:disable_python_unittest"]
+    if "py" not in tags:
+        tags = tags + ["py"]
     _py_target_isolated(
         name = name,
-        py_target = native.py_test,
+        py_target = py_test,
         isolate = isolate,
         size = size,
         srcs = srcs,
         deps = deps,
+        tags = tags,
         **kwargs
     )
 
@@ -222,7 +242,7 @@ def py_test_isolated(
     """
     _py_target_isolated(
         name = name,
-        py_target = native.py_test,
+        py_target = py_test,
         isolate = True,
         **kwargs
     )

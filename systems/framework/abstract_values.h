@@ -5,7 +5,8 @@
 
 #include "drake/common/drake_assert.h"
 #include "drake/common/drake_copyable.h"
-#include "drake/systems/framework/value.h"
+#include "drake/common/drake_deprecated.h"
+#include "drake/common/value.h"
 
 namespace drake {
 namespace systems {
@@ -13,23 +14,27 @@ namespace systems {
 /// AbstractValues is a container for non-numerical state and parameters.
 /// It may or may not own the underlying data, and therefore is suitable
 /// for both leaf Systems and diagrams.
-///
-/// @tparam T A mathematical type compatible with Eigen's Scalar.
 class AbstractValues {
  public:
   // AbstractState is not copyable or moveable.
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(AbstractValues)
 
-  // Constructs an empty AbstractValues.
+  /// Constructs an empty AbstractValues.
   AbstractValues();
 
   /// Constructs an AbstractValues that owns the underlying data.
+  ///
+  /// @exclude_from_pydrake_mkdoc{The next overload's docstring is better, and
+  /// we only need one of the two -- overloading on ownership doesn't make
+  /// sense for pydrake.}
   explicit AbstractValues(std::vector<std::unique_ptr<AbstractValue>>&& data);
 
   /// Constructs an AbstractValues that does not own the underlying data.
   explicit AbstractValues(const std::vector<AbstractValue*>& data);
 
   /// Constructs an AbstractValues that owns a single @p datum.
+  ///
+  /// @exclude_from_pydrake_mkdoc{Not bound in pydrake.}
   explicit AbstractValues(std::unique_ptr<AbstractValue> datum);
 
   virtual ~AbstractValues();
@@ -46,9 +51,9 @@ class AbstractValues {
   AbstractValue& get_mutable_value(int index);
 
   /// Copies all of the AbstractValues in @p other into this. Asserts if the
-  /// two are not equal in size. Throws if any of the elements are of
-  /// incompatible type.
-  void CopyFrom(const AbstractValues& other);
+  /// two are not equal in size.
+  /// @throws std::exception if any of the elements are of incompatible type.
+  void SetFrom(const AbstractValues& other);
 
   /// Returns a deep copy of all the data in this AbstractValues. The clone
   /// will own its own data. This is true regardless of whether the data being

@@ -15,14 +15,14 @@ using symbolic::Formula;
 SystemSymbolicInspector::SystemSymbolicInspector(
     const System<symbolic::Expression>& system)
     : context_(system.CreateDefaultContext()),
-      input_variables_(system.get_num_input_ports()),
-      continuous_state_variables_(context_->get_continuous_state().size()),
-      discrete_state_variables_(context_->get_num_discrete_state_groups()),
-      numeric_parameters_(context_->num_numeric_parameters()),
+      input_variables_(system.num_input_ports()),
+      continuous_state_variables_(context_->num_continuous_states()),
+      discrete_state_variables_(context_->num_discrete_state_groups()),
+      numeric_parameters_(context_->num_numeric_parameter_groups()),
       output_(system.AllocateOutput()),
       derivatives_(system.AllocateTimeDerivatives()),
       discrete_updates_(system.AllocateDiscreteVariables()),
-      output_port_types_(system.get_num_output_ports()),
+      output_port_types_(system.num_output_ports()),
       context_is_abstract_(IsAbstract(system, *context_)) {
   // Stop analysis if the Context is in any way abstract, because we have no way
   // to initialize the abstract elements.
@@ -30,7 +30,7 @@ SystemSymbolicInspector::SystemSymbolicInspector(
 
   // Time.
   time_ = symbolic::Variable("t");
-  context_->set_time(time_);
+  context_->SetTime(time_);
 
   // Input.
   InitializeVectorInputs(system);
@@ -43,25 +43,25 @@ SystemSymbolicInspector::SystemSymbolicInspector(
   InitializeParameters();
 
   // Outputs.
-  for (int i = 0; i < system.get_num_output_ports(); ++i) {
+  for (int i = 0; i < system.num_output_ports(); ++i) {
     const OutputPort<symbolic::Expression>& port = system.get_output_port(i);
     output_port_types_[i] = port.get_data_type();
     port.Calc(*context_, output_->GetMutableData(i));
   }
 
   // Time derivatives.
-  if (context_->get_continuous_state().size() > 0) {
+  if (context_->num_continuous_states() > 0) {
     system.CalcTimeDerivatives(*context_, derivatives_.get());
   }
 
   // Discrete updates.
-  if (context_->get_num_discrete_state_groups() > 0) {
+  if (context_->num_discrete_state_groups() > 0) {
     system.CalcDiscreteVariableUpdates(*context_, discrete_updates_.get());
   }
 
   // Constraints.
   // TODO(russt): Maintain constraint descriptions.
-  for (int i = 0; i < system.get_num_constraints(); i++) {
+  for (int i = 0; i < system.num_constraints(); i++) {
     const SystemConstraint<Expression>& constraint =
         system.get_constraint(SystemConstraintIndex(i));
     const double tol = 0.0;
@@ -73,7 +73,7 @@ void SystemSymbolicInspector::InitializeVectorInputs(
     const System<symbolic::Expression>& system) {
   // For each input vector i, set each element j to a symbolic expression whose
   // value is the variable "ui_j".
-  for (int i = 0; i < system.get_num_input_ports(); ++i) {
+  for (int i = 0; i < system.num_input_ports(); ++i) {
     DRAKE_ASSERT(system.get_input_port(i).get_data_type() == kVectorValued);
     const int n = system.get_input_port(i).size();
     input_variables_[i].resize(n);
@@ -105,7 +105,7 @@ void SystemSymbolicInspector::InitializeDiscreteState() {
   // For each discrete state vector i, set each element j to a symbolic
   // expression whose value is the variable "xdi_j".
   auto& xd = context_->get_mutable_discrete_state();
-  for (int i = 0; i < context_->get_num_discrete_state_groups(); ++i) {
+  for (int i = 0; i < context_->num_discrete_state_groups(); ++i) {
     auto& xdi = xd.get_mutable_vector(i);
     discrete_state_variables_[i].resize(xdi.size());
     for (int j = 0; j < xdi.size(); ++j) {
@@ -120,7 +120,7 @@ void SystemSymbolicInspector::InitializeDiscreteState() {
 void SystemSymbolicInspector::InitializeParameters() {
   // For each numeric parameter vector i, set each element j to a symbolic
   // expression whose value is the variable "pi_j".
-  for (int i = 0; i < context_->num_numeric_parameters(); ++i) {
+  for (int i = 0; i < context_->num_numeric_parameter_groups(); ++i) {
     auto& pi = context_->get_mutable_numeric_parameter(i);
     numeric_parameters_[i].resize(pi.size());
     for (int j = 0; j < pi.size(); ++j) {
@@ -137,7 +137,7 @@ bool SystemSymbolicInspector::IsAbstract(
     const Context<symbolic::Expression>& context) {
   // If any of the input ports are abstract, we cannot do sparsity analysis of
   // this Context.
-  for (int i = 0; i < system.get_num_input_ports(); ++i) {
+  for (int i = 0; i < system.num_input_ports(); ++i) {
     if (system.get_input_port(i).get_data_type() == kAbstractValued) {
       return true;
     }
@@ -145,7 +145,7 @@ bool SystemSymbolicInspector::IsAbstract(
 
   // If there is any abstract state or parameters, we cannot do sparsity
   // analysis of this Context.
-  if (context.get_num_abstract_states() > 0) {
+  if (context.num_abstract_states() > 0) {
     return true;
   }
   if (context.num_abstract_parameters() > 0) {
@@ -225,7 +225,7 @@ bool SystemSymbolicInspector::IsTimeInvariant() const {
       return false;
     }
   }
-  for (int i = 0; i < output_->get_num_ports(); ++i) {
+  for (int i = 0; i < output_->num_ports(); ++i) {
     if (output_port_types_[i] == kAbstractValued) {
       // Then I can't be sure.  Return the conservative answer.
       return false;
@@ -237,26 +237,6 @@ bool SystemSymbolicInspector::IsTimeInvariant() const {
 
   return true;
 }
-
-namespace {
-
-// helper method for HasAffineDynamics
-bool is_affine(const VectorX<symbolic::Expression>& expressions,
-               const symbolic::Variables& vars) {
-  for (int i = 0; i < expressions.size(); ++i) {
-    const Expression& e{expressions(i)};
-    if (!e.is_polynomial()) {
-      return false;
-    }
-    const symbolic::Polynomial p{e, vars};
-    if (p.TotalDegree() > 1) {
-      return false;
-    }
-  }
-  return true;
-}
-
-}  // namespace
 
 bool SystemSymbolicInspector::HasAffineDynamics() const {
   // If the Context contains any abstract values, then I can't trust my parsing.
@@ -272,11 +252,11 @@ bool SystemSymbolicInspector::HasAffineDynamics() const {
     vars.insert(symbolic::Variables(v));
   }
 
-  if (!is_affine(derivatives_->CopyToVector(), vars)) {
+  if (!IsAffine(derivatives_->CopyToVector(), vars)) {
     return false;
   }
   for (int i = 0; i < discrete_updates_->num_groups(); ++i) {
-    if (!is_affine(discrete_updates_->get_vector(i).get_value(), vars)) {
+    if (!IsAffine(discrete_updates_->get_vector(i).get_value(), vars)) {
       return false;
     }
   }

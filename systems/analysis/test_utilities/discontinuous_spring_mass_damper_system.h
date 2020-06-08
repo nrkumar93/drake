@@ -30,8 +30,7 @@ class DiscontinuousSpringMassDamperSystem final
                                       double mass_kg,
                                       double constant_force)
       : SpringMassDamperSystem<T>(
-            SystemTypeTag<implicit_integrator_test::
-                DiscontinuousSpringMassDamperSystem>{},
+            SystemTypeTag<DiscontinuousSpringMassDamperSystem>{},
             spring_constant_N_per_m,
             damping_constant_Ns_per_m,
             mass_kg),
@@ -75,6 +74,9 @@ class DiscontinuousSpringMassDamperSystem final
 
     // Second element of the derivative is spring acceleration.
     (*derivatives)[1] = force / this->get_mass();
+
+    // Third element of the derivative is the energy added into the spring.
+    (*derivatives)[2] = this->CalcConservativePower(context);
   }
 
  private:

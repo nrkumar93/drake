@@ -4,10 +4,9 @@
 #include <string>
 #include <vector>
 
-#include "drake/multibody/rigid_body_tree.h"
+#include "drake/multibody/plant/multibody_plant.h"
 #include "drake/systems/framework/context.h"
 #include "drake/systems/framework/leaf_system.h"
-#include "drake/systems/framework/value.h"
 
 namespace drake {
 namespace manipulation {
@@ -23,15 +22,22 @@ enum class InterpolatorType {
 };
 
 /// This class implements a source of joint positions for a robot.
-/// It has two input ports, one for robot_plan_t messages containing a
-/// plan to follow, and another vector-valued port which expects the
-/// current (q,v) state of the robot.
+/// It has one input port for robot_plan_t messages containing a
+/// plan to follow.
 ///
 /// The system has two output ports, one with the current desired
 /// state (q,v) of the robot and another for the accelerations.
 ///
+/// @system{ RobotPlanInterpolator,
+///   @input_port{plan},
+///   @output_port{state}
+///   @output_port{acceleration}
+/// }
+///
 /// If a plan is received with no knot points, the system will create
-/// a plan which commands the arm to hold at the measured position.
+/// a plan which commands the robot to hold at the measured position.
+///
+/// @ingroup manipulation_systems
 class RobotPlanInterpolator : public systems::LeafSystem<double> {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(RobotPlanInterpolator)
@@ -41,12 +47,9 @@ class RobotPlanInterpolator : public systems::LeafSystem<double> {
                         double update_interval = kDefaultPlanUpdateInterval);
   ~RobotPlanInterpolator() override;
 
+  /// N.B. This input port is useless and may be left disconnected.
   const systems::InputPort<double>& get_plan_input_port() const {
     return this->get_input_port(plan_input_port_);
-  }
-
-  const systems::InputPort<double>& get_state_input_port() const {
-    return this->get_input_port(state_input_port_);
   }
 
   const systems::OutputPort<double>&
@@ -67,14 +70,11 @@ class RobotPlanInterpolator : public systems::LeafSystem<double> {
   void Initialize(double plan_start_time, const VectorX<double>& q0,
                   systems::State<double>* state) const;
 
-  const RigidBodyTree<double>& tree() { return tree_; }
+  const multibody::MultibodyPlant<double>& plant() { return plant_; }
 
  protected:
   void SetDefaultState(const systems::Context<double>& context,
                        systems::State<double>* state) const override;
-
-  std::unique_ptr<systems::AbstractValues> AllocateAbstractState()
-      const override;
 
   void DoCalcUnrestrictedUpdate(const systems::Context<double>& context,
             const std::vector<const systems::UnrestrictedUpdateEvent<double>*>&,
@@ -87,19 +87,20 @@ class RobotPlanInterpolator : public systems::LeafSystem<double> {
   void OutputState(const systems::Context<double>& context,
                    systems::BasicVector<double>* output) const;
 
-  // Calculator method for the accleration output port.
+  // Calculator method for the acceleration output port.
   void OutputAccel(const systems::Context<double>& context,
                    systems::BasicVector<double>* output) const;
 
   void MakeFixedPlan(double plan_start_time, const VectorX<double>& q0,
-                  systems::State<double>* state) const;
+                     systems::State<double>* state) const;
 
   static constexpr double kDefaultPlanUpdateInterval = 0.1;
   const int plan_input_port_{};
-  int state_input_port_{-1};
   int state_output_port_{-1};
   int acceleration_output_port_{-1};
-  RigidBodyTree<double> tree_;
+  systems::AbstractStateIndex plan_index_;
+  systems::AbstractStateIndex init_flag_index_;
+  multibody::MultibodyPlant<double> plant_{0.0};
   const InterpolatorType interp_type_;
 };
 

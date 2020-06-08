@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "drake/attic_warning.h"
 #include "drake/common/eigen_types.h"
 #include "drake/common/unused.h"
 #include "drake/multibody/joints/drake_joint_impl.h"
@@ -114,10 +115,6 @@ class FixedJoint : public DrakeJointImpl<FixedJoint> {
   Eigen::VectorXd zeroConfiguration() const override;
   Eigen::VectorXd randomConfiguration(
       std::default_random_engine& generator) const override;
-
-// TODO(liang.fok) Remove this deprecated method prior to release 1.0.
-  DRAKE_DEPRECATED("Please use get_position_name().")
-  std::string getPositionName(int index) const override;
 
  public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW

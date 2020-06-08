@@ -10,8 +10,8 @@ namespace drake {
 namespace symbolic {
 namespace {
 
-using std::string;
 using std::runtime_error;
+using std::string;
 
 // Provides common variables that are used by the following tests.
 class EnvironmentTest : public ::testing::Test {
@@ -66,7 +66,7 @@ TEST_F(EnvironmentTest, InitWithMapExceptionNan) {
   EXPECT_THROW(Environment{m}, runtime_error);
 }
 
-TEST_F(EnvironmentTest, insert_find) {
+TEST_F(EnvironmentTest, InsertFind) {
   Environment env1{{var_x_, 2}, {var_y_, 3}, {var_z_, 4}};
   const Environment env2{env1};
 
@@ -83,6 +83,34 @@ TEST_F(EnvironmentTest, insert_find) {
 
   env1.insert(var_v_, 6);
   EXPECT_EQ(env1.size(), 5u);
+}
+
+TEST_F(EnvironmentTest, InsertMultipleItemsFind) {
+  const auto x = MakeMatrixContinuousVariable<3, 4>("x");
+  Eigen::Matrix<double, 3, 4> v;
+  v << 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0;
+
+  Environment env;
+  env.insert(x, v);
+  EXPECT_EQ(env.size(), 12);
+
+  for (int j = 0; j < 4; ++j) {
+    for (int i = 0; i < 3; ++i) {
+      const auto it(env.find(x(i, j)));
+      ASSERT_TRUE(it != env.end());
+      EXPECT_EQ(it->second, v(i, j));
+    }
+  }
+}
+
+TEST_F(EnvironmentTest, InsertMultipleItemsFindSizeMismatch) {
+  const auto x = MakeMatrixContinuousVariable<4, 3>("x");
+  Eigen::Matrix<double, 3, 4> v;
+  v << 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0;
+  Environment env;
+  // size of x : 4 x 3.
+  // size of v : 3 x 4.
+  EXPECT_THROW(env.insert(x, v), std::runtime_error);
 }
 
 TEST_F(EnvironmentTest, domain) {
@@ -121,6 +149,34 @@ TEST_F(EnvironmentTest, LookupOperator) {
   EXPECT_EQ(const_env.size(), 1u);
   EXPECT_THROW(env[var_dummy_], runtime_error);
   EXPECT_THROW(const_env[var_dummy_], runtime_error);
+}
+
+TEST_F(EnvironmentTest, PopulateRandomVariables) {
+  const Variable uni{"uni", Variable::Type::RANDOM_UNIFORM};
+  const Variable gau{"gau", Variable::Type::RANDOM_GAUSSIAN};
+  const Variable exp{"exp", Variable::Type::RANDOM_EXPONENTIAL};
+  const Environment env1{{var_x_, 2}};
+  RandomGenerator g{};
+
+  // PopulateRandomVariables should add entries for the three random variables.
+  const Environment env2{
+      PopulateRandomVariables(env1, {var_x_, uni, gau, exp}, &g)};
+  EXPECT_EQ(env2.size(), 4);
+  EXPECT_TRUE(env2.find(uni) != env1.end());
+  EXPECT_TRUE(env2.find(gau) != env1.end());
+  EXPECT_TRUE(env2.find(exp) != env1.end());
+
+  // PopulateRandomVariables should add entries for the unassigned random
+  // variables, gau and exp. But it should keep the original assignment `uni ↦
+  // 10.0`.
+  const Environment env3{{var_x_, 2}, {uni, 10.0}};
+  const Environment env4{
+      PopulateRandomVariables(env3, {var_x_, uni, gau, exp}, &g)};
+  EXPECT_EQ(env4.size(), 4);
+  EXPECT_TRUE(env4.find(uni) != env1.end());
+  EXPECT_TRUE(env4.find(gau) != env1.end());
+  EXPECT_TRUE(env4.find(exp) != env1.end());
+  EXPECT_EQ(env4[uni], 10.0);
 }
 
 }  // namespace

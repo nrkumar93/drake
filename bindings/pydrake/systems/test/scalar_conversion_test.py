@@ -5,8 +5,12 @@ import unittest
 
 from pydrake.autodiffutils import AutoDiffXd
 from pydrake.symbolic import Expression
-from pydrake.systems.framework import LeafSystem_, SystemScalarConverter
-from pydrake.util.cpp_template import TemplateClass
+from pydrake.systems.framework import (
+    DiagramBuilder,
+    LeafSystem_,
+    SystemScalarConverter,
+)
+from pydrake.common.cpp_template import TemplateClass
 
 
 @mut.TemplateSystem.define("Example_")
@@ -54,11 +58,19 @@ class TestScalarConversion(unittest.TestCase):
         """Tests the Example_ system."""
         # Test template.
         self.assertIsInstance(Example_, TemplateClass)
+        self.assertEqual(
+            str(Example_), f"<TemplateSystem {__name__}.Example_>")
         self.assertIs(Example_[float], Example)
 
         # Test parameters.
         param_list = [(T,) for T in SystemScalarConverter.SupportedScalars]
         self.assertListEqual(Example_.param_list, param_list)
+
+        for T in SystemScalarConverter.SupportedScalars:
+            system_T = Example_[T](0)
+            self.assertEqual(
+                system_T.GetSystemType(),
+                f"{__name__}.Example_[{T.__name__}]")
 
         # Test private properties (do NOT use these in your code!).
         self.assertTupleEqual(
@@ -84,6 +96,18 @@ class TestScalarConversion(unittest.TestCase):
             self.assertIsInstance(system_T, Example_[T])
             self.assertEqual(system_T.value, 100)
             self.assertIs(system_T.copied_from, system_U)
+
+    def test_example_system_in_diagram(self):
+        system_f = Example(value=10)
+        system_f.set_name("example")
+        builder_f = DiagramBuilder()
+        builder_f.AddSystem(system_f)
+        diagram_f = builder_f.Build()
+
+        diagram_ad = diagram_f.ToAutoDiffXd()
+        system_ad = diagram_ad.GetSubsystemByName(system_f.get_name())
+        self.assertIsInstance(system_ad, Example_[AutoDiffXd])
+        self.assertIs(system_ad.copied_from, system_f)
 
     def test_define_convertible_system_api(self):
         """Tests more advanced API of `TemplateSystem.define`, both

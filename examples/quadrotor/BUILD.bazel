@@ -1,18 +1,31 @@
 # -*- python -*-
 
 load(
-    "//tools:drake.bzl",
+    "//tools/skylark:drake_cc.bzl",
     "drake_cc_binary",
     "drake_cc_googletest",
     "drake_cc_library",
 )
 load("//tools/install:install_data.bzl", "install_data")
 load("//tools/lint:lint.bzl", "add_lint_tests")
+load("//tools/workspace:forward_files.bzl", "forward_files")
+load("//tools/workspace/models:files.bzl", "skydio_2_mesh_files")
 
 package(
     default_visibility = [
         "//visibility:public",
     ],
+)
+
+_SKYDIO_2_MESHES = forward_files(
+    srcs = ["@models//:" + x for x in skydio_2_mesh_files()],
+    dest_prefix = "",
+    strip_prefix = "@models//:skydio_2/",
+    visibility = ["//visibility:private"],
+)
+
+install_data(
+    extra_prod_models = _SKYDIO_2_MESHES,
 )
 
 drake_cc_library(
@@ -22,11 +35,25 @@ drake_cc_library(
     deps = [
         "//common:default_scalars",
         "//math:geometric_transform",
-        "//math:gradient",
         "//systems/controllers:linear_quadratic_regulator",
         "//systems/framework:leaf_system",
         "//systems/primitives:affine_system",
-        "//util",
+    ],
+)
+
+drake_cc_library(
+    name = "quadrotor_geometry",
+    srcs = ["quadrotor_geometry.cc"],
+    hdrs = ["quadrotor_geometry.h"],
+    data = [":models"],
+    deps = [
+        "//common:find_resource",
+        "//geometry:scene_graph",
+        "//math:geometric_transform",
+        "//multibody/parsing",
+        "//multibody/plant",
+        "//systems/framework:diagram_builder",
+        "//systems/framework:leaf_system",
     ],
 )
 
@@ -41,14 +68,13 @@ drake_cc_binary(
     ],
     deps = [
         ":quadrotor_plant",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
+        "//common:add_text_logging_gflags",
         "//common:find_resource",
-        "//lcm",
-        "//multibody:rigid_body_tree",
-        "//multibody:rigid_body_tree_construction",
+        "//geometry:geometry_visualization",
+        "//multibody/parsing",
+        "//multibody/plant",
         "//systems/analysis:simulator",
+        "//systems/analysis:simulator_gflags",
         "//systems/framework:diagram",
         "//systems/primitives:constant_vector_source",
         "@gflags",
@@ -59,24 +85,28 @@ drake_cc_binary(
     name = "run_quadrotor_lqr",
     srcs = ["run_quadrotor_lqr.cc"],
     add_test_rule = 1,
-    data = [":models"],
     test_rule_args = [
         "-simulation_trials=2",
         "-simulation_real_time_rate=0.0",
     ],
     deps = [
+        ":quadrotor_geometry",
         ":quadrotor_plant",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant",
-        "//attic/multibody/rigid_body_plant:drake_visualizer",
         "//common:find_resource",
         "//common:is_approx_equal_abstol",
+        "//geometry:geometry_visualization",
         "//lcm",
-        "//multibody:rigid_body_tree",
-        "//multibody:rigid_body_tree_construction",
         "//systems/analysis:simulator",
         "//systems/framework:diagram",
         "@gflags",
+    ],
+)
+
+drake_cc_googletest(
+    name = "quadrotor_plant_test",
+    deps = [
+        ":quadrotor_plant",
+        "//systems/framework/test_utilities",
     ],
 )
 
@@ -85,18 +115,22 @@ drake_cc_googletest(
     data = [":models"],
     deps = [
         ":quadrotor_plant",
-        "//attic/multibody/parsers",
-        "//attic/multibody/rigid_body_plant",
         "//common:find_resource",
         "//common/test_utilities:eigen_matrix_compare",
-        "//multibody:rigid_body_tree_construction",
+        "//multibody/parsing",
+        "//multibody/plant",
         "//systems/analysis:simulator",
         "//systems/framework:diagram",
-        "//systems/framework/test_utilities",
         "//systems/primitives:constant_vector_source",
     ],
 )
 
-install_data()
+drake_cc_googletest(
+    name = "quadrotor_geometry_test",
+    deps = [
+        ":quadrotor_geometry",
+        ":quadrotor_plant",
+    ],
+)
 
 add_lint_tests()

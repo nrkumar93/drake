@@ -12,14 +12,18 @@ namespace {
 void TestFullConfig(multibody::joints::FloatingBaseType type) {
   std::string urdf = FindResourceOrThrow(
       "drake/multibody/test/rigid_body_tree/two_dof_robot.urdf");
-  std::string config = FindResourceOrThrow(
-      "drake/multibody/test/test.alias_groups");
 
   auto robot = std::make_unique<RigidBodyTree<double>>();
   parsers::urdf::AddModelInstanceFromUrdfFileToWorld(urdf, type, robot.get());
 
   RigidBodyTreeAliasGroups<double> alias(robot.get());
-  alias.LoadFromFile(config);
+
+  alias.AddBodyGroup("b_group1", {});
+  alias.AddBodyGroup("b_group2", {"link1"});
+  alias.AddBodyGroup("b_group2", {"link3"});
+  alias.AddBodyGroup("b_group3", {"world"});
+  alias.AddJointGroup("j_group1", {});
+  alias.AddJointGroup("j_group2", {"base", "joint1"});
 
   EXPECT_TRUE(alias.has_position_group("j_group1"));
   EXPECT_TRUE(alias.has_position_group("j_group2"));
@@ -52,6 +56,7 @@ void TestFullConfig(multibody::joints::FloatingBaseType type) {
   const std::vector<int>& v_indices = alias.get_velocity_group("j_group2");
   switch (type) {
     case drake::multibody::joints::kQuaternion:
+    case drake::multibody::joints::kExperimentalMultibodyPlantStyle:
       EXPECT_EQ(q_indices.size(), 8u);
       EXPECT_EQ(v_indices.size(), 7u);
       EXPECT_EQ(robot->get_position_name(q_indices[0]), "base_x");

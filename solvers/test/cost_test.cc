@@ -11,6 +11,7 @@
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
 #include "drake/common/test_utilities/is_dynamic_castable.h"
 #include "drake/common/test_utilities/symbolic_test_util.h"
+#include "drake/common/text_logging.h"
 #include "drake/math/autodiff.h"
 #include "drake/math/autodiff_gradient.h"
 #include "drake/solvers/constraint.h"
@@ -31,7 +32,7 @@ using Eigen::Ref;
 using drake::Vector1d;
 using Eigen::Vector2d;
 using Eigen::VectorXd;
-using drake::solvers::detail::is_convertible_workaround;
+using drake::solvers::internal::is_convertible_workaround;
 using drake::solvers::test::GenericTrivialCost2;
 
 namespace drake {
@@ -134,6 +135,11 @@ GTEST_TEST(testCost, testLinearCost) {
   auto new_cost = make_shared<LinearCost>(a, b);
   new_cost->Eval(x0, &y);
   EXPECT_NEAR(y(0), obj_expected + b, tol);
+
+  new_cost->set_description("simple linear cost");
+  EXPECT_EQ(
+      fmt::format("{}", *new_cost),
+      "LinearCost (100 + $(0) + 2 * $(1)) described as 'simple linear cost'");
 }
 
 GTEST_TEST(testCost, testQuadraticCost) {
@@ -201,9 +207,9 @@ template <typename C, typename BoundType, typename... Args>
 void VerifyRelatedCost(const Ref<const VectorXd>& x_value, Args&&... args) {
   // Ensure that a constraint constructed in a particular fashion yields
   // equivalent results to its shim, and the related cost.
-  const auto inf = std::numeric_limits<double>::infinity();
-  auto lb = -BoundType(-inf);
-  auto ub = BoundType(inf);
+  const double inf = std::numeric_limits<double>::infinity();
+  BoundType lb = -BoundType(-inf);
+  BoundType ub = BoundType(inf);
   C constraint(std::forward<Args>(args)..., lb, ub);
   typename related_cost<C>::type cost(std::forward<Args>(args)...);
   VectorXd y_expected, y;

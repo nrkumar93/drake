@@ -6,9 +6,6 @@ namespace drake {
 namespace systems {
 namespace rendering {
 
-// Linkage for kSize.
-template <typename T> constexpr int PoseVector<T>::kSize;
-
 template <typename T>
 PoseVector<T>::PoseVector()
     : PoseVector<T>::PoseVector(Eigen::Quaternion<T>::Identity(),
@@ -33,6 +30,19 @@ Isometry3<T> PoseVector<T>::get_isometry() const {
   isometry.translation().z() = (*this)[2];
   isometry.rotate(this->get_rotation());
   return isometry;
+}
+
+template <typename T>
+math::RigidTransform<T> PoseVector<T>::get_transform() const {
+  const auto& data = *this;
+  return math::RigidTransform<T>{get_rotation(),
+                                 Vector3<T>{data[0], data[1], data[2]}};
+}
+
+template <typename T>
+void PoseVector<T>::set_transform(const math::RigidTransform<T>& transform) {
+  this->set_translation(Eigen::Translation<T, 3>(transform.translation()));
+  this->set_rotation(transform.rotation().ToQuaternion());
 }
 
 template <typename T>

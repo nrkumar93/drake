@@ -1,10 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <utility>
+#include <variant>
 
 #include "drake/common/drake_copyable.h"
-#include "drake/common/drake_optional.h"
 #include "drake/common/symbolic.h"
 #include "drake/systems/primitives/affine_system.h"
 
@@ -26,16 +27,7 @@ namespace systems {
 /// where `u` denotes the input vector, `x` denotes the state vector, and
 /// `y` denotes the output vector.
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
-///
-/// They are already available to link against in the containing library.
-/// No other values for T are currently supported.
-///
+/// @tparam_default_scalar
 /// @ingroup primitive_systems
 ///
 /// @see AffineSystem
@@ -69,8 +61,8 @@ class LinearSystem : public AffineSystem<T> {
   /// Creates a unique pointer to LinearSystem<T> by decomposing @p dynamics and
   /// @p outputs using @p state_vars and @p input_vars.
   ///
-  /// @throws runtime_error if either @p dynamics or @p outputs is not linear in
-  /// @p state_vars and @p input_vars.
+  /// @throws std::runtime_error if either @p dynamics or @p outputs is not
+  /// linear in @p state_vars and @p input_vars.
   static std::unique_ptr<LinearSystem<T>> MakeLinearSystem(
       const Eigen::Ref<const VectorX<symbolic::Expression>>& dynamics,
       const Eigen::Ref<const VectorX<symbolic::Expression>>& output,
@@ -103,18 +95,8 @@ class LinearSystem : public AffineSystem<T> {
 /// both with the output:
 ///   @f[ y(t) = C(t) x(t) + D(t) u(t). @f]
 ///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
-///
-/// Instantiated templates for the following kinds of T's are provided:
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
-///
-/// They are already available to link against in the containing library.
-/// No other values for T are currently supported.
-///
+/// @tparam_default_scalar
 /// @ingroup primitive_systems
-///
 template <typename T>
 class TimeVaryingLinearSystem : public TimeVaryingAffineSystem<T> {
  public:
@@ -147,77 +129,76 @@ class TimeVaryingLinearSystem : public TimeVaryingAffineSystem<T> {
   }
 };
 
-#ifndef DRAKE_DOXYGEN_CXX
-// LinearSystem special values for port indices.  Omitted from Doxygen because
-// we should really not be using `int`s here in the first place, and we don't
-// really want to leak these into the drake::systems namespace globally.
-const int kNoInput = -1;
-const int kUseFirstInputIfItExists = -2;
-const int kNoOutput = -3;
-const int kUseFirstOutputIfItExists = -4;
-#endif
-
 /// Takes the first-order Taylor expansion of a System around a nominal
 /// operating point (defined by the Context).
 ///
 /// This method currently supports linearizing around at most a single vector
 /// input port and at most a single vector output port.  For systems with
 /// more ports, use @p input_port_index and @p output_port_index to select
-/// the input for the newly constructed system.  Any additional input ports
-/// will be treated as constants (fixed at the value specified in @p context).
+/// the input for the newly constructed system.  Any additional _vector_
+/// input ports will be treated as constants (fixed at the value specified in
+/// `context`). Abstract-valued input ports must be unconnected (i.e., the
+/// system must treat the port as optional and it must be unused).
 ///
 /// @param system The system or subsystem to linearize.
 /// @param context Defines the nominal operating point about which the system
 /// should be linearized.  See note below.
-/// @param input_port_index A valid input port index for @p system or kNoInput
-/// or (default) kUseFirstInputIfItExists.
+/// @param input_port_index A valid input port index for @p system or
+/// InputPortSelection.  All other inputs are assumed to be fixed to the
+/// value described by the @p context. @default kUseFirstInputIfItExists.
 /// @param output_port_index A valid output port index for @p system or
-/// kNoOutput or (default) kUseFirstOutputIfItExists.
+/// an OutputPortSelection. @default kUseFirstOutputIfItExists.
 /// @param equilibrium_check_tolerance Specifies the tolerance on ensuring that
 /// the derivative vector isZero at the nominal operating point.  @default 1e-6.
 /// @returns A LinearSystem that approximates the original system in the
 /// vicinity of the operating point.  See note below.
-/// @throws std::runtime_error if the system the operating point is not an
+/// @throws std::runtime_error if the operating point is not an
 /// equilibrium point of the system (within the specified tolerance)
-/// @throws std::runtime_error if the system if the system is not (only)
+/// @throws std::runtime_error if the system is not (only)
 /// continuous or (only) discrete time with a single periodic update.
 ///
-/// Note: All inputs in the Context must be connected, either to the
+/// @note All _vector_ inputs in the system must be connected, either to the
 /// output of some upstream System within a Diagram (e.g., if system is a
 /// reference to a subsystem in a Diagram), or to a constant value using, e.g.
-///   context->FixInputPort(0,default_input);
+/// `port.FixValue(context, default_input)`. Any _abstract_ inputs in the
+/// system must be unconnected (the port must be both optional and unused).
 ///
-/// Note: The inputs, states, and outputs of the returned system are NOT the
+/// @note The inputs, states, and outputs of the returned system are NOT the
 /// same as the original system.  Denote x0,u0 as the nominal state and input
 /// defined by the Context, and y0 as the value of the output at (x0,u0),
 /// then the created systems inputs are (u-u0), states are (x-x0), and
 /// outputs are (y-y0).
 ///
+/// @note This method does *not* (yet) set the initial conditions (default nor
+/// random) of the LinearSystem based on `system`.
+///
 /// @ingroup primitive_systems
 ///
 std::unique_ptr<LinearSystem<double>> Linearize(
     const System<double>& system, const Context<double>& context,
-    int input_port_index = kUseFirstInputIfItExists,
-    int output_port_index = kUseFirstOutputIfItExists,
+    std::variant<InputPortSelection, InputPortIndex> input_port_index =
+        InputPortSelection::kUseFirstInputIfItExists,
+    std::variant<OutputPortSelection, OutputPortIndex> output_port_index =
+        OutputPortSelection::kUseFirstOutputIfItExists,
     double equilibrium_check_tolerance = 1e-6);
 
 /// A first-order Taylor series approximation to a @p system in the neighborhood
 /// of an arbitrary point.  When Taylor-expanding a system at a non-equilibrium
 /// point, it may be represented either of the form:
-///   @f[ \dot{x} - \dot{x0} = A (x - x0) + B (u - u0), @f]
+///   @f[ \dot{x} - \dot{x}_0 = A (x - x_0) + B (u - u_0), @f]
 /// for continuous time, or
-///   @f[ x[n+1] - x0[n+1] = A (x[n] - x0[n]) + B (u[n] - u0[n]), @f]
-/// for discrete time.  As above, we denote x0, u0 to be the nominal state and
-/// input at the provided @p context.  The system description is affine when the
-/// terms @f$ \dot{x0} - A x0 - B u0 @f$ and @f$ x0[n+1] - A x0[n] - B u0[n] @f$
-/// are nonzero.
+///   @f[ x[n+1] - x_0[n+1] = A (x[n] - x_0[n]) + B (u[n] - u_0[n]), @f]
+/// for discrete time.  As above, we denote @f$ x_0, u_0 @f$ to be the nominal
+/// state and input at the provided @p context.  The system description is
+/// affine when the terms @f$ \dot{x}_0 - A x_0 - B u_0 @f$ and @f$ x_0[n+1] -
+/// A x_0[n] - B u_0[n] @f$ are nonzero.
 ///
 /// More precisely, let x be a state and u be an input.  This function returns
 /// an AffineSystem of the form:
-///   @f[ \dot{x} = A x + B u + f0, @f] (CT)
-///   @f[ x[n+1] = A x[n] + B u[n] + f0, @f] (DT)
-/// where @f$ f0 = \dot{x0} - A x0 - B u0 @f$ (CT) and
-/// @f$ f0 = x0[n+1] - A x[n] - B u[n] @f$ (DT).
+///   @f[ \dot{x} = A x + B u + f_0, @f] (CT)
+///   @f[ x[n+1] = A x[n] + B u[n] + f_0, @f] (DT)
+/// where @f$ f_0 = \dot{x}_0 - A x_0 - B u_0 @f$ (CT) and
+/// @f$ f_0 = x_0[n+1] - A x[n] - B u[n] @f$ (DT).
 ///
 /// This method currently supports approximating around at most a single vector
 /// input port and at most a single vector output port.  For systems with
@@ -228,16 +209,22 @@ std::unique_ptr<LinearSystem<double>> Linearize(
 /// @param system The system or subsystem to linearize.
 /// @param context Defines the nominal operating point about which the system
 /// should be linearized.
-/// @param input_port_index A valid input port index for @p system or kNoInput
-/// or (default) kUseFirstInputIfItExists.
+/// @param input_port_index A valid input port index for @p system or
+/// InputPortSelection. @default kUseFirstInputIfItExists.
 /// @param output_port_index A valid output port index for @p system or
-/// kNoOutput or (default) kUseFirstOutputIfItExists.
+/// OutputPortSelection. @default kUseFirstOutputIfItExists.
 /// @returns An AffineSystem at this linearization point.
-/// @throws std::runtime_error if the system if the system is not (only)
-/// continuous or (only) discrete time with a single periodic update.
+/// @throws if any abstract inputs are connected, if any
+///         vector-valued inputs are unconnected, if the system is not (only)
+///         continuous or not (only) discrete time with a single periodic
+///         update.
 ///
-/// Note that x, u and y are in the same coordinate system as the original
-/// @p system, since the terms involving x0, u0 reside in f0.
+/// @note x, u and y are in the same coordinate system as the original
+/// @p system, since the terms involving @f$ x_0, u_0 @f$ reside in
+/// @f$ f_0 @f$.
+///
+/// @note This method does *not* (yet) set the initial conditions (default nor
+/// random) of the AffineSystem based on `system`.
 ///
 /// @ingroup primitive_systems
 ///
@@ -245,8 +232,10 @@ std::unique_ptr<LinearSystem<double>> Linearize(
 // me handle the additional options without a lot of boilerplate.
 std::unique_ptr<AffineSystem<double>> FirstOrderTaylorApproximation(
     const System<double>& system, const Context<double>& context,
-    int input_port_index = kUseFirstInputIfItExists,
-    int output_port_index = kUseFirstOutputIfItExists);
+    std::variant<InputPortSelection, InputPortIndex> input_port_index =
+        InputPortSelection::kUseFirstInputIfItExists,
+    std::variant<OutputPortSelection, OutputPortIndex> output_port_index =
+        OutputPortSelection::kUseFirstOutputIfItExists);
 
 /// Returns the controllability matrix:  R = [B, AB, ..., A^{n-1}B].
 /// @ingroup control_systems
@@ -255,7 +244,7 @@ Eigen::MatrixXd ControllabilityMatrix(const LinearSystem<double>& sys);
 /// Returns true iff the controllability matrix is full row rank.
 /// @ingroup control_systems
 bool IsControllable(const LinearSystem<double>& sys,
-                    optional<double> threshold = nullopt);
+                    std::optional<double> threshold = std::nullopt);
 
 /// Returns the observability matrix: O = [ C; CA; ...; CA^{n-1} ].
 /// @ingroup estimator_systems
@@ -264,7 +253,7 @@ Eigen::MatrixXd ObservabilityMatrix(const LinearSystem<double>& sys);
 /// Returns true iff the observability matrix is full column rank.
 /// @ingroup estimator_systems
 bool IsObservable(const LinearSystem<double>& sys,
-                  optional<double> threshold = nullopt);
+                  std::optional<double> threshold = std::nullopt);
 
 }  // namespace systems
 }  // namespace drake

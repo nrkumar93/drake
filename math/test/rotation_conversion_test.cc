@@ -337,7 +337,7 @@ class RotationConversionTest : public ::testing::Test {
   std::vector<RotationMatrix<double>> rotation_matrix_test_cases_;
 };
 
-TEST_F(RotationConversionTest, quat2RotmatTest) {
+TEST_F(RotationConversionTest, quaternionToRotationMatrixTest) {
   for (const Quaterniond& qi : quaternion_test_cases_) {
     // Compute the rotation matrix using Eigen geometry module, compare the
     // result with RotationMatrix(quaternion).
@@ -382,7 +382,7 @@ TEST_F(RotationConversionTest, RotmatQuat) {
 }
 
 TEST_F(RotationConversionTest, rotmat2rpyTest) {
-  for (const RotationMatrix<double> Ri : rotation_matrix_test_cases_) {
+  for (const RotationMatrix<double>& Ri : rotation_matrix_test_cases_) {
     const RollPitchYaw<double> rpy(Ri);
     const RotationMatrix<double> rotmat_expected(rpy);
     // RollPitchYaw(RotationMatrix) is inverse of RotationMatrix(RollPitchYaw).

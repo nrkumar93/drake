@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,34 +34,36 @@ class EvaluatorBase {
 
   virtual ~EvaluatorBase() {}
 
-  /**
-   * Evaluates the expression with a scalar type of double.
-   * @param x A `num_vars` x 1 input vector.
-   * @param[out] y A `num_outputs` x 1 output vector.
-   */
   // TODO(bradking): consider using a Ref for `y`.  This will require the client
   // to do allocation, but also allows it to choose stack allocation instead.
+  /**
+   * Evaluates the expression.
+   * @param[in] x A `num_vars` x 1 input vector.
+   * @param[out] y A `num_outputs` x 1 output vector.
+   */
   void Eval(const Eigen::Ref<const Eigen::VectorXd>& x,
             Eigen::VectorXd* y) const {
     DRAKE_ASSERT(x.rows() == num_vars_ || num_vars_ == Eigen::Dynamic);
     DoEval(x, y);
+    DRAKE_ASSERT(y->rows() == num_outputs_);
   }
 
-  /**
-   * Evaluates the expression with a scalar type of AutoDiffXd.
-   * @param x A `num_vars` x 1 input vector.
-   * @param[out] y A `num_outputs` x 1 output vector.
-   */
   // TODO(eric.cousineau): Move this to DifferentiableConstraint derived class
   // if/when we need to support non-differentiable functions (at least, if
   // DifferentiableConstraint is ever implemented).
+  /**
+   * Evaluates the expression.
+   * @param[in] x A `num_vars` x 1 input vector.
+   * @param[out] y A `num_outputs` x 1 output vector.
+   */
   void Eval(const Eigen::Ref<const AutoDiffVecXd>& x, AutoDiffVecXd* y) const {
     DRAKE_ASSERT(x.rows() == num_vars_ || num_vars_ == Eigen::Dynamic);
     DoEval(x, y);
+    DRAKE_ASSERT(y->rows() == num_outputs_);
   }
 
   /**
-   * Evaluates the expression with a scalar type of symbolic::Expression.
+   * Evaluates the expression.
    * @param[in] x A `num_vars` x 1 input vector.
    * @param[out] y A `num_outputs` x 1 output vector.
    */
@@ -68,19 +71,36 @@ class EvaluatorBase {
             VectorX<symbolic::Expression>* y) const {
     DRAKE_ASSERT(x.rows() == num_vars_ || num_vars_ == Eigen::Dynamic);
     DoEval(x, y);
+    DRAKE_ASSERT(y->rows() == num_outputs_);
   }
 
   /**
    * Set a human-friendly description for the evaluator.
    */
-  inline void set_description(const std::string& description) {
+  void set_description(const std::string& description) {
     description_ = description;
   }
 
   /**
    * Getter for a human-friendly description for the evaluator.
    */
-  inline const std::string& get_description() const { return description_; }
+  const std::string& get_description() const { return description_; }
+
+  /**
+   * Formats this evaluator into the given stream using `vars` for the bound
+   * decision variable names.
+   *
+   * The size of `vars` must match the `num_vars()` declared by this evaluator.
+   * (If `num_vars()` is `Eigen::Dynamic`, then `vars` may be any size.)
+   */
+  std::ostream& Display(std::ostream& os,
+                        const VectorX<symbolic::Variable>& vars) const;
+
+  /**
+   * Formats this evaluator into the given stream, without displaying the
+   * decision variables it is bound to.
+   */
+  std::ostream& Display(std::ostream& os) const;
 
   /**
    * Getter for the number of variables, namely the number of rows in x, as
@@ -93,6 +113,28 @@ class EvaluatorBase {
    * in Eval(x, y).
    */
   int num_outputs() const { return num_outputs_; }
+
+  /**
+   * Set the sparsity pattern of the gradient matrix ∂y/∂x (the gradient of
+   * y value in Eval, w.r.t x in Eval) . gradient_sparsity_pattern contains
+   * *all* the pairs of (row_index, col_index) for which the corresponding
+   * entries could have non-zero value in the gradient matrix ∂y/∂x.
+   */
+  void SetGradientSparsityPattern(
+      const std::vector<std::pair<int, int>>& gradient_sparsity_pattern);
+
+  /**
+   * Returns the vector of (row_index, col_index) that contains all the entries
+   * in the gradient of Eval function (∂y/∂x) whose value could be non-zero,
+   * namely if ∂yᵢ/∂xⱼ could be non-zero, then the pair (i, j) is in
+   * gradient_sparsity_pattern.
+   * @retval gradient_sparsity_pattern If nullopt, then we regard all entries of
+   * the gradient as potentially non-zero.
+   */
+  const std::optional<std::vector<std::pair<int, int>>>&
+      gradient_sparsity_pattern() const {
+    return gradient_sparsity_pattern_;
+  }
 
  protected:
   /**
@@ -139,6 +181,15 @@ class EvaluatorBase {
   virtual void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>& x,
                       VectorX<symbolic::Expression>* y) const = 0;
 
+  /**
+   * NVI implementation of Display. The default implementation will report
+   * the NiceTypeName, get_description, and list the bound variables.
+   * Subclasses may override to customize the message.
+   * @pre vars size is consistent with num_vars".
+   */
+  virtual std::ostream& DoDisplay(
+      std::ostream& os, const VectorX<symbolic::Variable>& vars) const;
+
   // Setter for the number of outputs.
   // This method is only meant to be called, if the sub-class structure permits
   // to change the number of outputs. One example is LinearConstraint in
@@ -150,7 +201,20 @@ class EvaluatorBase {
   int num_vars_{};
   int num_outputs_{};
   std::string description_;
+  // gradient_sparsity_pattern_ records the pair (row_index, col_index) that
+  // contains the non-zero entries in the gradient of the Eval
+  // function. Note that if the entry (row_index, col_index) *can* be non-zero
+  // for certain value of x, then it should be included in
+  // gradient_sparsity_patten_. When gradient_sparsity_pattern_.has_value() =
+  // false, the gradient matrix is regarded as non-sparse, i.e., every entry of
+  // the gradient matrix can be non-zero.
+  std::optional<std::vector<std::pair<int, int>>> gradient_sparsity_pattern_;
 };
+
+/**
+ * Print out the evaluator.
+ */
+std::ostream& operator<<(std::ostream& os, const EvaluatorBase& e);
 
 /**
  * Implements an evaluator of the form P(x, y...) where P is a multivariate
@@ -211,7 +275,6 @@ class PolynomialEvaluator : public EvaluatorBase {
  * An evaluator that may be specified using a callable object. Consider
  * constructing these instances using MakeFunctionEvaluator(...).
  * @tparam F The function / functor's type.
- * @see detail::FunctionTraits.
  */
 template <typename F>
 class FunctionEvaluator : public EvaluatorBase {
@@ -227,30 +290,30 @@ class FunctionEvaluator : public EvaluatorBase {
    */
   template <typename FF, typename... Args>
   FunctionEvaluator(FF&& f, Args&&... args)
-      : EvaluatorBase(detail::FunctionTraits<F>::numOutputs(f),
-                      detail::FunctionTraits<F>::numInputs(f),
+      : EvaluatorBase(internal::FunctionTraits<F>::numOutputs(f),
+                      internal::FunctionTraits<F>::numInputs(f),
                       std::forward<Args>(args)...),
         f_(std::forward<FF>(f)) {}
 
  private:
   void DoEval(const Eigen::Ref<const Eigen::VectorXd>& x,
               Eigen::VectorXd* y) const override {
-    y->resize(detail::FunctionTraits<F>::numOutputs(f_));
+    y->resize(internal::FunctionTraits<F>::numOutputs(f_));
     DRAKE_ASSERT(static_cast<size_t>(x.rows()) ==
-                 detail::FunctionTraits<F>::numInputs(f_));
+                 internal::FunctionTraits<F>::numInputs(f_));
     DRAKE_ASSERT(static_cast<size_t>(y->rows()) ==
-                 detail::FunctionTraits<F>::numOutputs(f_));
-    detail::FunctionTraits<F>::eval(f_, x, y);
+                 internal::FunctionTraits<F>::numOutputs(f_));
+    internal::FunctionTraits<F>::eval(f_, x, y);
   }
 
   void DoEval(const Eigen::Ref<const AutoDiffVecXd>& x,
               AutoDiffVecXd* y) const override {
-    y->resize(detail::FunctionTraits<F>::numOutputs(f_));
+    y->resize(internal::FunctionTraits<F>::numOutputs(f_));
     DRAKE_ASSERT(static_cast<size_t>(x.rows()) ==
-                 detail::FunctionTraits<F>::numInputs(f_));
+                 internal::FunctionTraits<F>::numInputs(f_));
     DRAKE_ASSERT(static_cast<size_t>(y->rows()) ==
-                 detail::FunctionTraits<F>::numOutputs(f_));
-    detail::FunctionTraits<F>::eval(f_, x, y);
+                 internal::FunctionTraits<F>::numOutputs(f_));
+    internal::FunctionTraits<F>::eval(f_, x, y);
   }
 
   void DoEval(const Eigen::Ref<const VectorX<symbolic::Variable>>&,
@@ -267,7 +330,6 @@ class FunctionEvaluator : public EvaluatorBase {
  * @tparam FF Perfect-forwarding type of `F` (e.g., `const F&`, `F&&`).
  * @param f Callable function object.
  * @return An implementation of EvaluatorBase using the callable object.
- * @see detail::FunctionTraits.
  * @relates FunctionEvaluator
  */
 template <typename FF>

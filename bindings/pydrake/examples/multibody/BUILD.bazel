@@ -1,17 +1,17 @@
 # -*- python -*-
 
 load("@drake//tools/install:install.bzl", "install")
-load("//tools/lint:lint.bzl", "add_lint_tests")
 load(
-    "//tools/skylark:pybind.bzl",
+    "@drake//tools/skylark:pybind.bzl",
     "get_drake_py_installs",
     "get_pybind_package_info",
 )
 load(
-    "//tools/skylark:drake_py.bzl",
+    "@drake//tools/skylark:drake_py.bzl",
     "drake_py_binary",
     "drake_py_library",
 )
+load("//bindings/pydrake:pydrake.bzl", "add_lint_tests_pydrake")
 
 package(default_visibility = [
     "//bindings/pydrake:__subpackages__",
@@ -44,13 +44,47 @@ drake_py_binary(
     deps = [
         ":module_py",
         "//bindings/pydrake:lcm_py",
-        "//bindings/pydrake/multibody:multibody_tree_py",
+        "//bindings/pydrake/multibody:parsing_py",
+        "//bindings/pydrake/multibody:plant_py",
         "//bindings/pydrake/systems:analysis_py",
     ],
 )
 
-PY_TARGETS = [
+drake_py_binary(
+    name = "pendulum_lqr_monte_carlo_analysis",
+    srcs = ["pendulum_lqr_monte_carlo_analysis.py"],
+    add_test_rule = 1,
+    data = ["//examples/pendulum:models"],
+    test_rule_args = [
+        "--num_samples=10",
+        "--torque_limit=2.0",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":module_py",
+        "//bindings/pydrake/multibody",
+        "//bindings/pydrake/systems",
+    ],
+)
+
+drake_py_binary(
+    name = "run_planar_scenegraph_visualizer",
+    srcs = ["run_planar_scenegraph_visualizer.py"],
+    add_test_rule = 1,
+    data = ["//examples/pendulum:models"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":module_py",
+        "//bindings/pydrake/examples:manipulation_station_py",
+        "//bindings/pydrake/multibody",
+        "//bindings/pydrake/systems",
+    ],
+)
+
+PY_LIBRARIES = [
     ":cart_pole_passive_simulation",
+    ":pendulum_lqr_monte_carlo_analysis",
+    ":run_planar_scenegraph_visualizer",
 ]
 
 # Package roll-up (for Bazel dependencies).
@@ -58,13 +92,13 @@ PY_TARGETS = [
 drake_py_library(
     name = "multibody",
     imports = PACKAGE_INFO.py_imports,
-    deps = PY_TARGETS,
+    deps = PY_LIBRARIES,
 )
 
 install(
     name = "install",
-    targets = PY_TARGETS,
+    targets = PY_LIBRARIES,
     py_dest = PACKAGE_INFO.py_dest,
 )
 
-add_lint_tests()
+add_lint_tests_pydrake()

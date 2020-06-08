@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include "drake/common/sorted_pair.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 #include "drake/common/test_utilities/expect_throws_message.h"
 #include "drake/common/unused.h"
 
@@ -44,7 +46,8 @@ GTEST_TEST(TypeSafeIndex, Constructor) {
   DRAKE_EXPECT_THROWS_MESSAGE_IF_ARMED(
       AIndex(-1), std::runtime_error,
       "Explicitly constructing an invalid index.+");
-  EXPECT_NO_THROW(unused(AIndex(invalid)));  // Copy construct invalid index.
+  DRAKE_EXPECT_NO_THROW(
+      unused(AIndex(invalid)));  // Copy construct invalid index.
 }
 
 // Verifies the constructor behavior -- in debug and release modes.
@@ -71,7 +74,7 @@ GTEST_TEST(TypeSafeIndex, IndexAssignment) {
   {
     AIndex source(3);
     AIndex starts_invalid;
-    EXPECT_NO_THROW(starts_invalid = source);
+    DRAKE_EXPECT_NO_THROW(starts_invalid = source);
     EXPECT_EQ(source, 3);
     EXPECT_EQ(starts_invalid, source);
   }
@@ -80,7 +83,7 @@ GTEST_TEST(TypeSafeIndex, IndexAssignment) {
   {
     AIndex invalid;
     AIndex target(3);
-    EXPECT_NO_THROW(target = invalid);
+    DRAKE_EXPECT_NO_THROW(target = invalid);
     EXPECT_FALSE(target.is_valid());
   }
 
@@ -89,7 +92,7 @@ GTEST_TEST(TypeSafeIndex, IndexAssignment) {
     AIndex invalid;
     AIndex target(2);
     EXPECT_TRUE(target.is_valid());
-    EXPECT_NO_THROW(invalid = move(target));
+    DRAKE_EXPECT_NO_THROW(invalid = move(target));
     EXPECT_FALSE(target.is_valid());
     EXPECT_EQ(invalid, 2);
   }
@@ -98,7 +101,7 @@ GTEST_TEST(TypeSafeIndex, IndexAssignment) {
   {
     AIndex invalid;
     AIndex target(3);
-    EXPECT_NO_THROW(target = move(invalid));
+    DRAKE_EXPECT_NO_THROW(target = move(invalid));
     EXPECT_FALSE(target.is_valid());
     EXPECT_FALSE(invalid.is_valid());
   }
@@ -373,16 +376,16 @@ GTEST_TEST(TypeSafeIndex, ConversionNotAllowedBetweenDifferentTypes) {
 // merely the canary in the coal mine.
 GTEST_TEST(TypeSafeIndex, UseInStl) {
   std::vector<AIndex> indices;
-  EXPECT_NO_THROW(indices.resize(3));
+  DRAKE_EXPECT_NO_THROW(indices.resize(3));
   EXPECT_FALSE(indices[0].is_valid());
-  EXPECT_NO_THROW(indices[1] = AIndex(1));
-  EXPECT_NO_THROW(indices[2] = AIndex());  // Valid for *move* assignment.
+  DRAKE_EXPECT_NO_THROW(indices[1] = AIndex(1));
+  DRAKE_EXPECT_NO_THROW(indices[2] = AIndex());  // Valid for *move* assignment.
   AIndex invalid;
-  EXPECT_NO_THROW(indices[2] = invalid);
-  EXPECT_NO_THROW(indices.emplace_back(3));
-  EXPECT_NO_THROW(indices.emplace_back(AIndex(4)));
-  EXPECT_NO_THROW(indices.emplace_back());
-  EXPECT_NO_THROW(indices.emplace_back(AIndex()));
+  DRAKE_EXPECT_NO_THROW(indices[2] = invalid);
+  DRAKE_EXPECT_NO_THROW(indices.emplace_back(3));
+  DRAKE_EXPECT_NO_THROW(indices.emplace_back(AIndex(4)));
+  DRAKE_EXPECT_NO_THROW(indices.emplace_back());
+  DRAKE_EXPECT_NO_THROW(indices.emplace_back(AIndex()));
 }
 
 //-------------------------------------------------------------------
@@ -500,6 +503,67 @@ GTEST_TEST(IntegralComparisons, CompareSizeT) {
       AIndex junk(big_overflow_value), std::runtime_error,
       "Explicitly constructing an invalid index. Type .* has an invalid "
           "value; it must lie in the range .*");
+
+  // Now we test right out at the limit of the *smaller* type -- the int.
+  const AIndex biggest_index{std::numeric_limits<int>::max()};
+  const size_t equal(static_cast<int>(biggest_index));
+  const size_t bigger = equal + 1;
+  const size_t smaller = equal - 1;
+
+  EXPECT_FALSE(biggest_index == smaller);
+  EXPECT_TRUE(biggest_index != smaller);
+  EXPECT_FALSE(biggest_index < smaller);
+  EXPECT_FALSE(biggest_index <= smaller);
+  EXPECT_TRUE(biggest_index > smaller);
+  EXPECT_TRUE(biggest_index >= smaller);
+
+  EXPECT_TRUE(biggest_index == equal);
+  EXPECT_FALSE(biggest_index != equal);
+  EXPECT_FALSE(biggest_index < equal);
+  EXPECT_TRUE(biggest_index <= equal);
+  EXPECT_FALSE(biggest_index > equal);
+  EXPECT_TRUE(biggest_index >= equal);
+
+  EXPECT_FALSE(biggest_index == bigger);
+  EXPECT_TRUE(biggest_index != bigger);
+  EXPECT_TRUE(biggest_index < bigger);
+  EXPECT_TRUE(biggest_index <= bigger);
+  EXPECT_FALSE(biggest_index > bigger);
+  EXPECT_FALSE(biggest_index >= bigger);
+}
+
+// Confirms that comparisons with unsigned types that have fewer bits than
+// TypeSafeIndex's underlying int report propertly.
+GTEST_TEST(TypeSafeIndex, CompareUnsignedShort) {
+  TestScalarComparisons<uint16_t>();
+  TestScalarIncrement<uint16_t>();
+
+  // Test right out at the limit of the *smaller* type -- the uint16_t.
+  const uint16_t big_unsigned = std::numeric_limits<uint16_t>::max();
+  const AIndex bigger_index{static_cast<int>(big_unsigned) + 1};
+  const AIndex smaller_index{static_cast<int>(big_unsigned) - 1};
+  const AIndex equal_index(static_cast<int>(big_unsigned));
+
+  EXPECT_FALSE(bigger_index == big_unsigned);
+  EXPECT_TRUE(bigger_index != big_unsigned);
+  EXPECT_FALSE(bigger_index < big_unsigned);
+  EXPECT_FALSE(bigger_index <= big_unsigned);
+  EXPECT_TRUE(bigger_index > big_unsigned);
+  EXPECT_TRUE(bigger_index >= big_unsigned);
+
+  EXPECT_TRUE(equal_index == big_unsigned);
+  EXPECT_FALSE(equal_index != big_unsigned);
+  EXPECT_FALSE(equal_index < big_unsigned);
+  EXPECT_TRUE(equal_index <= big_unsigned);
+  EXPECT_FALSE(equal_index > big_unsigned);
+  EXPECT_TRUE(equal_index >= big_unsigned);
+
+  EXPECT_FALSE(smaller_index == big_unsigned);
+  EXPECT_TRUE(smaller_index != big_unsigned);
+  EXPECT_TRUE(smaller_index < big_unsigned);
+  EXPECT_TRUE(smaller_index <= big_unsigned);
+  EXPECT_FALSE(smaller_index > big_unsigned);
+  EXPECT_FALSE(smaller_index >= big_unsigned);
 }
 
 // This tests that one index cannot be *constructed* from another index type,
@@ -544,6 +608,17 @@ GTEST_TEST(TypeSafeIndex, CompatibleWithUnorderedSet) {
   EXPECT_EQ(indexes.find(a3), indexes.end());
   EXPECT_NE(indexes.find(a1), indexes.end());
   EXPECT_NE(indexes.find(a2), indexes.end());
+}
+
+// Confirms that a SortedPair<IndexType> can be used as a key in a hashing
+// container. This is representative of TypeSafeIndex's compatibility with the
+// DrakeHash notion.
+GTEST_TEST(TypeSafeIndex, SortedPairIndexHashable) {
+  AIndex a1(1);
+  AIndex a2(2);
+  std::unordered_set<SortedPair<AIndex>> pairs;
+  pairs.insert({a2, a1});
+  EXPECT_EQ(pairs.count(SortedPair<AIndex>(a1, a2)), 1);
 }
 
 }  // namespace

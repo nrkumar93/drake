@@ -1,9 +1,8 @@
-#!/usr/bin/env python2
-
 """cpplint_wrapper.py -- Run cpplint.py using Drake's standard settings,
 summarizing its output for cleanliness, and providing a --fast option
 to run multiple linters in parallel.
 """
+
 
 import argparse
 import functools
@@ -23,10 +22,10 @@ def summarize_cpplint(cmdline_and_files, args):
     try:
         output = subprocess.check_output(
             cmdline_and_files,
-            stderr=subprocess.STDOUT)
+            stderr=subprocess.STDOUT).decode('utf8')
         passed = True
     except subprocess.CalledProcessError as e:
-        output = e.output
+        output = e.output.decode('utf8')
         passed = False
 
     # Filter out known non-errors from everything else.
@@ -46,7 +45,7 @@ def summarize_cpplint(cmdline_and_files, args):
             errors.append(line)
     if not passed and not errors:
         # Our filtering failed, so report everything.
-        errors = [e.output or "NO OUTPUT"]
+        errors = [output or "NO OUTPUT"]
     return errors
 
 
@@ -63,15 +62,15 @@ def worker_summarize_cpplint(cmdline_and_files, args):
 
 
 def multiprocess_cpplint(cmdline, files, args):
-    """Given a cpplint subprocess command line (just the program and arguments),
-    separate list of files, and number of processes (None for "all CPUs"), run
-    cpplint, display a progress bar, warning summary, and return a shell
+    """Given a cpplint subprocess command line (just the program and args),
+    separate list of files, and number of processes (None for "all CPUs"),
+    run cpplint, display a progress bar, warning summary, and return a shell
     exitcode (0 on success, 1 on failure).
     """
 
     # Lint the files N at a time, to amortize interpreter start-up.
     N = 10
-    files_groups = [files[i:i + N] for i in xrange(0, len(files), N)]
+    files_groups = [files[i:i + N] for i in range(0, len(files), N)]
     cmdlines = [cmdline + some_files for some_files in files_groups]
 
     # Farm out each chunk to a process in a Pool.
@@ -91,13 +90,13 @@ def multiprocess_cpplint(cmdline, files, args):
     # Act on the results.
     num_errors = len(errors)
     if num_errors == 0:
-        print ' TOTAL %d files passed' % len(files)
+        print(' TOTAL %d files passed' % len(files))
         return 0
     else:
-        print ' TOTAL %d files checked, found %d warnings' % (
-            len(files), num_errors)
+        print(' TOTAL %d files checked, found %d warnings' % (
+            len(files), num_errors))
         for line in errors:
-            print >>sys.stdout, line
+            print(line)
         return 1
 
 
@@ -167,7 +166,7 @@ def main():
         if os.path.splitext(filename)[1][1:] in args.extensions]
     for filename in args_files:
         if os.path.splitext(filename)[1][1:] not in args.extensions:
-            print "Ignoring %s; not a valid file name." % filename
+            print("Ignoring %s; not a valid file name." % filename)
         else:
             files.append(filename)
 

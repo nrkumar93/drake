@@ -1,5 +1,7 @@
 #include "drake/systems/framework/cache_entry.h"
 
+#include "drake/common/test_utilities/expect_no_throw.h"
+
 // Tests the System (const) side of caching, which consists of a CacheEntry
 // objects that can be provided automatically or defined by users. When a
 // Context is created, each CacheEntry in a System is provided with a
@@ -22,7 +24,6 @@
 #include "drake/systems/framework/system_base.h"
 #include "drake/systems/framework/test_utilities/my_vector.h"
 #include "drake/systems/framework/test_utilities/pack_value.h"
-#include "drake/systems/framework/value.h"
 
 using std::string;
 using Eigen::Vector3d;
@@ -34,7 +35,7 @@ namespace {
 // Free functions suitable for defining cache entries.
 auto Alloc3 = []() { return AbstractValue::Make<int>(3); };
 auto Calc99 = [](const ContextBase&, AbstractValue* result) {
-  result->SetValue(99);
+  result->set_value(99);
 };
 
 // This one is fatally flawed since null is not allowed.
@@ -123,8 +124,15 @@ class MySystemBase final : public SystemBase {
                               &MySystemBase::CalcMyVector3,
                               {xc_ticket(), string_entry_.ticket()})) {
     set_name("cache_entry_test_system");
+
+    // We'll make entry4 disabled by default; everything else is enabled.
+    entry4_.disable_caching_by_default();
+
     EXPECT_EQ(num_cache_entries(), 8);
     EXPECT_EQ(GetSystemName(), "cache_entry_test_system");
+
+    EXPECT_FALSE(entry3_.is_disabled_by_default());
+    EXPECT_TRUE(entry4_.is_disabled_by_default());
   }
 
   const CacheEntry& entry0() const { return entry0_; }
@@ -159,16 +167,23 @@ class MySystemBase final : public SystemBase {
     return context;
   }
 
-  void DoCheckValidContext(const ContextBase&) const final {}
+  std::function<void(const AbstractValue&)> MakeFixInputPortTypeChecker(
+      InputPortIndex /* unused */) const final {
+    return {};
+  }
 
-  const CacheEntry& entry0_;
-  const CacheEntry& entry1_;
-  const CacheEntry& entry2_;
-  const CacheEntry& entry3_;
-  const CacheEntry& entry4_;
-  const CacheEntry& entry5_;
-  const CacheEntry& string_entry_;
-  const CacheEntry& vector_entry_;
+  std::multimap<int, int> GetDirectFeedthroughs() const final {
+    throw std::logic_error("GetDirectFeedthroughs is not implemented");
+  }
+
+  CacheEntry& entry0_;
+  CacheEntry& entry1_;
+  CacheEntry& entry2_;
+  CacheEntry& entry3_;
+  CacheEntry& entry4_;
+  CacheEntry& entry5_;
+  CacheEntry& string_entry_;
+  CacheEntry& vector_entry_;
 };
 
 // An allocator is not permitted to return null. That should be caught when
@@ -194,14 +209,49 @@ GTEST_TEST(CacheEntryAllocTest, BadAllocGetsCaught) {
 // dependencies is `{nothing_ticket()}`.
 GTEST_TEST(CacheEntryAllocTest, EmptyPrerequisiteListForbidden) {
   MySystemBase system;
-  EXPECT_NO_THROW(
+  DRAKE_EXPECT_NO_THROW(
       system.DeclareCacheEntry("default prerequisites", Alloc3, Calc99));
-  EXPECT_NO_THROW(system.DeclareCacheEntry("no prerequisites", Alloc3, Calc99,
-                                           {system.nothing_ticket()}));
+  DRAKE_EXPECT_NO_THROW(
+      system.DeclareCacheEntry(
+          "no prerequisites", Alloc3, Calc99, {system.nothing_ticket()}));
   DRAKE_EXPECT_THROWS_MESSAGE(
       system.DeclareCacheEntry("empty prerequisites", Alloc3, Calc99, {}),
       std::logic_error,
       ".*[Cc]annot create.*empty prerequisites.*nothing_ticket.*");
+}
+
+GTEST_TEST(CacheEntryAllocTest, DetectsDefaultPrerequisites) {
+  MySystemBase system;
+  const CacheEntry& default_prereqs =
+      system.DeclareCacheEntry("default prerequisites", Alloc3, Calc99);
+  EXPECT_TRUE(default_prereqs.has_default_prerequisites());
+
+  // TODO(sherm1) Currently we treat default prerequisites and explicit
+  // all_sources_ticket() the same. That's not desirable though, just a
+  // limitation. Ideally explicit specification of anything should be considered
+  // non-default. Replace this test when that's fixed.
+  const CacheEntry& explicit_default_prereqs =
+      system.DeclareCacheEntry("explicit default prerequisites", Alloc3, Calc99,
+                               {system.all_sources_ticket()});
+  EXPECT_TRUE(
+      explicit_default_prereqs.has_default_prerequisites());  // Not good.
+
+  // This specifies exactly the same dependencies as all_sources_ticket() but
+  // in a way that is clearly non-default.
+  const CacheEntry& long_form_all_sources_prereqs = system.DeclareCacheEntry(
+      "long form all sources prerequisites", Alloc3, Calc99,
+      {system.all_sources_except_input_ports_ticket(),
+       system.all_input_ports_ticket()});
+  EXPECT_FALSE(
+      long_form_all_sources_prereqs.has_default_prerequisites());  // Good!
+
+  const CacheEntry& no_prereqs = system.DeclareCacheEntry(
+      "no prerequisites", Alloc3, Calc99, {system.nothing_ticket()});
+  EXPECT_FALSE(no_prereqs.has_default_prerequisites());
+
+  const CacheEntry& time_only_prereq = system.DeclareCacheEntry(
+      "time only prerequisite", Alloc3, Calc99, {system.time_ticket()});
+  EXPECT_FALSE(time_only_prereq.has_default_prerequisites());
 }
 
 // Allocate a System and Context and provide some convenience methods.
@@ -223,6 +273,16 @@ class CacheEntryTest : public ::testing::Test {
     EXPECT_EQ(entry0_tracker.prerequisites().size(), 1);
     EXPECT_EQ(entry0_tracker.prerequisites()[0],
               &context_.get_tracker(system_.all_sources_ticket()));
+
+    // Only entry4 should have been created disabled.
+    EXPECT_FALSE(entry0().is_cache_entry_disabled(context_));
+    EXPECT_FALSE(entry1().is_cache_entry_disabled(context_));
+    EXPECT_FALSE(entry2().is_cache_entry_disabled(context_));
+    EXPECT_FALSE(entry3().is_cache_entry_disabled(context_));
+    EXPECT_TRUE(entry4().is_cache_entry_disabled(context_));
+    EXPECT_FALSE(entry5().is_cache_entry_disabled(context_));
+    EXPECT_FALSE(string_entry().is_cache_entry_disabled(context_));
+    EXPECT_FALSE(vector_entry().is_cache_entry_disabled(context_));
 
     EXPECT_TRUE(entry0().is_out_of_date(context_));
     EXPECT_TRUE(entry1().is_out_of_date(context_));
@@ -351,7 +411,7 @@ TEST_F(CacheEntryTest, ValueMethodsWork) {
   // EvalAbstract() should retrieve the same object as Eval() did.
   const AbstractValue& abstract_value_eval = entry0().EvalAbstract(context_);
   EXPECT_EQ(value0.serial_number(), expected_serial_num);  // No change.
-  EXPECT_EQ(abstract_value_eval.GetValueOrThrow<int>(), 99);
+  EXPECT_EQ(abstract_value_eval.get_value<int>(), 99);
 
   // GetKnownUpToDateAbstract() should return the same object as EvalAbstract().
   const AbstractValue& abstract_value_get =
@@ -369,18 +429,18 @@ TEST_F(CacheEntryTest, ValueMethodsWork) {
   // stored value.
   std::unique_ptr<AbstractValue> out = AbstractValue::Make<string>("something");
   string_entry().Calc(context_, &*out);
-  EXPECT_EQ(out->GetValue<string>(), "calculated_result");
+  EXPECT_EQ(out->get_value<string>(), "calculated_result");
   EXPECT_EQ(string_entry().GetKnownUpToDate<string>(context_), "initial");
   EXPECT_EQ(string_value.serial_number(), expected_serial_num);  // No change.
 
-// In Debug we have an expensive check that the output type provided to
-// Calc() has the right concrete type. Make sure it works.
-#ifdef DRAKE_ASSERT_IS_ARMED
-  auto bad_out = AbstractValue::Make<double>(3.14);
-  DRAKE_EXPECT_THROWS_MESSAGE(
-      string_entry().Calc(context_, &*bad_out), std::logic_error,
-      ".*Calc().*expected.*type.*string.*but got.*double.*");
-#endif
+  // In Debug we have an expensive check that the output type provided to
+  // Calc() has the right concrete type. Make sure it works.
+  if (kDrakeAssertIsArmed) {
+    auto bad_out = AbstractValue::Make<double>(3.14);
+    DRAKE_EXPECT_THROWS_MESSAGE(
+        string_entry().Calc(context_, &*bad_out), std::logic_error,
+        ".*Calc().*expected.*type.*string.*but got.*double.*");
+  }
 
   // The value is currently marked up to date, so Eval does nothing.
   const string& result = string_entry().Eval<string>(context_);
@@ -396,7 +456,7 @@ TEST_F(CacheEntryTest, ValueMethodsWork) {
   string_entry().Eval<string>(context_);
   ++expected_serial_num;
   EXPECT_FALSE(string_entry().is_out_of_date(context_));
-  EXPECT_NO_THROW(string_entry().GetKnownUpToDate<string>(context_));
+  DRAKE_EXPECT_NO_THROW(string_entry().GetKnownUpToDate<string>(context_));
   EXPECT_EQ(string_value.serial_number(), expected_serial_num);  // Updated.
 
   // The result reference was updated by the Eval().
@@ -437,6 +497,58 @@ TEST_F(CacheEntryTest, InvalidateAllWorks) {
   EXPECT_TRUE(entry5().is_out_of_date(context_));
   EXPECT_TRUE(string_entry().is_out_of_date(context_));
   EXPECT_TRUE(vector_entry().is_out_of_date(context_));
+}
+
+// Make sure we can modify the set of prerequisites for a cache entry after
+// its initial declaration, and that the new set is properly reflected in
+// the next generated Context.
+TEST_F(CacheEntryTest, ModifyPrerequisites) {
+  const std::set<DependencyTicket>& string_prereqs =
+      string_entry().prerequisites();
+  EXPECT_EQ(string_prereqs.size(), 1);  // Just time_ticket.
+  EXPECT_FALSE(string_entry().is_out_of_date(context_));
+  const DependencyTracker& entry1_tracker =
+      context_.get_tracker(entry1().ticket());
+  const DependencyTracker& entry2_tracker =
+      context_.get_tracker(entry2().ticket());
+
+  // If we change entry1 or entry2, string_entry should not be invalidated.
+  entry1_tracker.NoteValueChange(1001);  // Arbitrary unused change event #.
+  entry2_tracker.NoteValueChange(1002);
+  EXPECT_FALSE(string_entry().is_out_of_date(context_));
+
+  // Now add entry1 as a prerequisite.
+  CacheEntry& mutable_string_entry =
+      system_.get_mutable_cache_entry(string_entry().cache_index());
+  mutable_string_entry.mutable_prerequisites().insert(entry1().ticket());
+  auto new_context = system_.AllocateContext();
+  EXPECT_TRUE(string_entry().is_out_of_date(*new_context));
+  string_entry()
+      .get_mutable_cache_entry_value(*new_context)
+      .SetValueOrThrow<std::string>("something");
+  EXPECT_FALSE(string_entry().is_out_of_date(*new_context));
+
+  const DependencyTracker& new_entry1_tracker =
+      new_context->get_tracker(entry1().ticket());
+  const DependencyTracker& new_entry2_tracker =
+      new_context->get_tracker(entry2().ticket());
+
+  // entry2 should still not be a prerequisite.
+  new_entry2_tracker.NoteValueChange(1003);
+  EXPECT_FALSE(string_entry().is_out_of_date(*new_context));
+  // But entry1 is now a prerequisite.
+  new_entry1_tracker.NoteValueChange(1004);
+  EXPECT_TRUE(string_entry().is_out_of_date(*new_context));
+
+  // And let's make sure time is still a prerequisite.
+  string_entry()
+      .get_mutable_cache_entry_value(*new_context)
+      .SetValueOrThrow<std::string>("something else");
+  const DependencyTracker& new_time_tracker =
+      new_context->get_tracker(system_.time_ticket());
+  EXPECT_FALSE(string_entry().is_out_of_date(*new_context));
+  new_time_tracker.NoteValueChange(1005);
+  EXPECT_TRUE(string_entry().is_out_of_date(*new_context));
 }
 
 // Make sure the debugging routine to disable the cache works, and is
@@ -508,9 +620,9 @@ TEST_F(CacheEntryTest, DisableCacheWorks) {
 
   // GetKnownUpToDate() should work even though caching is disabled, since the
   // entries are marked up to date.
-  EXPECT_NO_THROW(entry1().GetKnownUpToDate<int>(context_));
-  EXPECT_NO_THROW(string_entry().GetKnownUpToDate<string>(context_));
-  EXPECT_NO_THROW(vector_entry().GetKnownUpToDate<MyVector3d>(context_));
+  DRAKE_EXPECT_NO_THROW(entry1().GetKnownUpToDate<int>(context_));
+  DRAKE_EXPECT_NO_THROW(string_entry().GetKnownUpToDate<string>(context_));
+  DRAKE_EXPECT_NO_THROW(vector_entry().GetKnownUpToDate<MyVector3d>(context_));
 
   // Now re-enable caching and verify that it works.
   EXPECT_TRUE(entry1().is_cache_entry_disabled(context_));
@@ -577,23 +689,24 @@ TEST_F(CacheEntryTest, CanSwapValue) {
   EXPECT_EQ(entry_value.get_value<string>(), "initial");
   auto new_value = AbstractValue::Make<string>("new value");
   entry_value.swap_value(&new_value);
-  EXPECT_EQ(new_value->GetValue<string>(), "initial");
+  EXPECT_EQ(new_value->get_value<string>(), "initial");
   EXPECT_TRUE(entry_value.is_out_of_date());
   entry_value.mark_up_to_date();
   EXPECT_EQ(entry_value.get_value<string>(), "new value");
   EXPECT_EQ(string_entry().GetKnownUpToDate<string>(context_), "new value");
 
-// In Debug builds, try a bad swap and expect it to be caught.
-#ifdef DRAKE_ASSERT_IS_ARMED
-  std::unique_ptr<AbstractValue> empty_ptr;
-  DRAKE_EXPECT_THROWS_MESSAGE(entry_value.swap_value(&empty_ptr),
-                              std::logic_error,
-                              ".*swap_value().*value.*empty.*");
-  auto bad_value = AbstractValue::Make<int>(29);
-  DRAKE_EXPECT_THROWS_MESSAGE(
-      entry_value.swap_value(&bad_value), std::logic_error,
-      ".*swap_value().*value.*wrong concrete type.*int.*[Ee]xpected.*string.*");
-#endif
+  // In Debug builds, try a bad swap and expect it to be caught.
+  if (kDrakeAssertIsArmed) {
+    std::unique_ptr<AbstractValue> empty_ptr;
+    DRAKE_EXPECT_THROWS_MESSAGE(entry_value.swap_value(&empty_ptr),
+                                std::logic_error,
+                                ".*swap_value().*value.*empty.*");
+    auto bad_value = AbstractValue::Make<int>(29);
+    DRAKE_EXPECT_THROWS_MESSAGE(
+        entry_value.swap_value(&bad_value), std::logic_error,
+        ".*swap_value().*value.*wrong concrete type.*int.*"
+        "[Ee]xpected.*string.*");
+  }
 }
 
 TEST_F(CacheEntryTest, InvalidationIsRecursive) {

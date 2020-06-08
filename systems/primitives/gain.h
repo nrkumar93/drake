@@ -1,5 +1,6 @@
 #pragma once
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/eigen_types.h"
 #include "drake/systems/framework/vector_system.h"
@@ -11,19 +12,7 @@ namespace systems {
 /// constant vector.  The input to this system directly feeds through to its
 /// output.
 ///
-/// This class uses Drake's `-inl.h` pattern.  When seeing linker errors from
-/// this class, please refer to https://drake.mit.edu/cxx_inl.html.
-///
-/// Instantiated templates for the following scalar types @p T are provided:
-/// - double
-/// - AutoDiffXd
-/// - symbolic::Expression
-///
-/// They are already available to link against in the containing library.
-///
-/// To use other specific scalar types see gain-inl.h.
-///
-/// @tparam T The vector element type, which must be a valid Eigen scalar.
+/// @tparam_default_scalar
 /// @ingroup primitive_systems
 template <typename T>
 class Gain final : public VectorSystem<T> {
@@ -50,22 +39,25 @@ class Gain final : public VectorSystem<T> {
 
   /// Returns the gain constant. This method should only be called if the gain
   /// can be represented as a scalar value, i.e., every element in the gain
-  /// vector is the same. It will abort if the gain cannot be represented as a
-  /// single scalar value.
+  /// vector is the same. It will throw an exception if the gain cannot be
+  /// represented as a single scalar value.
   double get_gain() const;
 
   /// Returns the gain vector constant.
   const Eigen::VectorXd& get_gain_vector() const;
 
- protected:
+ private:
   void DoCalcVectorOutput(
       const Context<T>& context,
       const Eigen::VectorBlock<const VectorX<T>>& input,
       const Eigen::VectorBlock<const VectorX<T>>& state,
-      Eigen::VectorBlock<VectorX<T>>* output) const override;
+      Eigen::VectorBlock<VectorX<T>>* output) const final;
 
   const Eigen::VectorXd k_;
 };
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::Gain)

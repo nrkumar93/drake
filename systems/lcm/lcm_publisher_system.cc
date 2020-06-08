@@ -7,7 +7,6 @@
 #include "drake/common/text_logging.h"
 #include "drake/lcm/drake_lcm.h"
 #include "drake/lcm/drake_lcm_interface.h"
-#include "drake/systems/framework/fixed_input_port_value.h"
 
 namespace drake {
 namespace systems {
@@ -16,60 +15,76 @@ namespace lcm {
 using drake::lcm::DrakeLcmInterface;
 using drake::lcm::DrakeLcm;
 
-namespace {
-const int kPortIndex = 0;
-}  // namespace
-
-// TODO(jwnimmer-tri) The "serializer xor translator" disjoint implementations
-// within the method bodies below are not ideal, because of the code smell, and
-// because it is likely confusing for users.  We should take further steps to
-// make the Value<LcmMessage> port the primary input port, and find a better
-// phrasing for the vector-valued input port for users.  For now though, this
-// implementation serves as a transition point where we don't have to rewrite
-// the old code yet, but still can supply the AbstractValue port for new code.
-
 LcmPublisherSystem::LcmPublisherSystem(
     const std::string& channel,
-    const LcmAndVectorBaseTranslator* translator,
     std::unique_ptr<SerializerInterface> serializer,
-    DrakeLcmInterface* lcm)
+    DrakeLcmInterface* lcm,
+    const TriggerTypeSet& publish_triggers,
+    double publish_period)
     : channel_(channel),
-      translator_(translator),
       serializer_(std::move(serializer)),
       owned_lcm_(lcm ? nullptr : new DrakeLcm()),
       lcm_(lcm ? lcm : owned_lcm_.get()) {
-  DRAKE_DEMAND((translator_ != nullptr) != (serializer_.get() != nullptr));
+  DRAKE_DEMAND(serializer_ != nullptr);
   DRAKE_DEMAND(lcm_);
+  DRAKE_DEMAND(publish_period >= 0.0);
+  DRAKE_DEMAND(!publish_triggers.empty());
 
-  if (translator_ != nullptr) {
-    DeclareInputPort(kVectorValued, translator_->get_vector_size());
-  } else {
-    DeclareAbstractInputPort();
+  // Check that publish_triggers does not contain an unsupported trigger.
+  for (const auto& trigger : publish_triggers) {
+      DRAKE_THROW_UNLESS((trigger == TriggerType::kForced) ||
+        (trigger == TriggerType::kPeriodic) ||
+        (trigger == TriggerType::kPerStep));
   }
 
+  // Declare a forced publish so that any time Publish(.) is called on this
+  // system (or a Diagram containing it), a message is emitted.
+  if (publish_triggers.find(TriggerType::kForced) != publish_triggers.end()) {
+    this->DeclareForcedPublishEvent(
+      &LcmPublisherSystem::PublishInputAsLcmMessage);
+  }
+
+  DeclareAbstractInputPort("lcm_message", *serializer_->CreateDefaultValue());
+
   set_name(make_name(channel_));
+  if (publish_triggers.find(TriggerType::kPeriodic) != publish_triggers.end()) {
+    DRAKE_THROW_UNLESS(publish_period > 0.0);
+    const double offset = 0.0;
+    this->DeclarePeriodicPublishEvent(
+        publish_period, offset,
+        &LcmPublisherSystem::PublishInputAsLcmMessage);
+  } else {
+    // publish_period > 0 without TriggerType::kPeriodic has no meaning and is
+    // likely a mistake.
+    DRAKE_THROW_UNLESS(publish_period == 0.0);
+  }
+
+  if (publish_triggers.find(TriggerType::kPerStep) != publish_triggers.end()) {
+    this->DeclarePerStepEvent(
+    systems::PublishEvent<double>([this](
+        const systems::Context<double>& context,
+        const systems::PublishEvent<double>&) {
+      // TODO(edrumwri) Remove this code once set_publish_period(.) has
+      // been removed; it exists so that one does not get both a per-step
+      // publish and a periodic publish if a user constructs the publisher
+      // the "old" way (construction followed by set_publish_period()).
+      if (this->disable_internal_per_step_publish_events_)
+        return;
+
+      this->PublishInputAsLcmMessage(context);
+    }));
+  }
 }
 
 LcmPublisherSystem::LcmPublisherSystem(
     const std::string& channel,
     std::unique_ptr<SerializerInterface> serializer,
-    drake::lcm::DrakeLcmInterface* lcm)
-    : LcmPublisherSystem(channel, nullptr, std::move(serializer), lcm) {}
-
-LcmPublisherSystem::LcmPublisherSystem(
-    const std::string& channel,
-    const LcmAndVectorBaseTranslator& translator,
-    drake::lcm::DrakeLcmInterface* lcm)
-    : LcmPublisherSystem(channel, &translator, nullptr, lcm) {}
-
-LcmPublisherSystem::LcmPublisherSystem(
-    const std::string& channel,
-    const LcmTranslatorDictionary& translator_dictionary,
-    DrakeLcmInterface* lcm)
-    : LcmPublisherSystem(
-          channel,
-          translator_dictionary.GetTranslator(channel),
-          lcm) {}
+    DrakeLcmInterface* lcm, double publish_period)
+    : LcmPublisherSystem(channel, std::move(serializer), lcm,
+      (publish_period > 0.0) ?
+      TriggerTypeSet({TriggerType::kForced, TriggerType::kPeriodic}) :
+      TriggerTypeSet({TriggerType::kForced, TriggerType::kPerStep}),
+      publish_period) {}
 
 LcmPublisherSystem::~LcmPublisherSystem() {}
 
@@ -80,7 +95,7 @@ void LcmPublisherSystem::AddInitializationMessage(
   initialization_publisher_ = std::move(initialization_publisher);
 
   DeclareInitializationEvent(systems::PublishEvent<double>(
-      systems::Event<double>::TriggerType::kInitialization,
+      systems::TriggerType::kInitialization,
       [this](const systems::Context<double>& context,
              const systems::PublishEvent<double>&) {
         this->initialization_publisher_(context, this->lcm_);
@@ -95,58 +110,26 @@ const std::string& LcmPublisherSystem::get_channel_name() const {
   return channel_;
 }
 
-void LcmPublisherSystem::set_publish_period(double period) {
-  LeafSystem<double>::DeclarePeriodicPublish(period);
-}
-
-void LcmPublisherSystem::DoPublish(
-    const Context<double>& context,
-    const std::vector<const systems::PublishEvent<double>*>& events) const {
-
-  DRAKE_DEMAND(!events.empty());  // Framework guarantees this.
-  const auto& event = events.front();
-
-  if (event->get_trigger_type() ==
-      systems::Event<double>::TriggerType::kInitialization) {
-    // We shouldn't get another event along with our own initialization event.
-    DRAKE_DEMAND(events.size() == 1);
-    SPDLOG_TRACE(drake::log(), "Invoking initialization publisher");
-    event->handle(context);
-    return;
-  }
-
-  // If the event isn't initialization, we assume it is a request to publish
-  // the input port contents as an LCM message. (This is likely to be a periodic
-  // event, but could be a forced event or any other type.) If multiple events
-  // occur simultaneously (for example, due to occasional synchronization of
-  // periods from different periodic events), we still only want to publish the
-  // input port values once, so we don't care if there are more events.
-
-  SPDLOG_TRACE(drake::log(), "Publishing LCM {} message", channel_);
-  DRAKE_ASSERT((translator_ != nullptr) != (serializer_.get() != nullptr));
+// Takes the VectorBase from the input port of the context and publishes
+// it onto an LCM channel. This function is called automatically, as
+// necessary, at the requisite publishing period (if a positive publish period
+// was passed to the constructor) or per a simulation step (if no publish
+// period or publish period = 0.0 was passed to the constructor).
+EventStatus LcmPublisherSystem::PublishInputAsLcmMessage(
+    const Context<double>& context) const {
+  DRAKE_LOGGER_TRACE("Publishing LCM {} message", channel_);
+  DRAKE_ASSERT(serializer_ != nullptr);
 
   // Converts the input into LCM message bytes.
+  const AbstractValue& input = get_input_port().Eval<AbstractValue>(context);
   std::vector<uint8_t> message_bytes;
-  if (translator_ != nullptr) {
-    const VectorBase<double>* const input_vector =
-        this->EvalVectorInput(context, kPortIndex);
-    DRAKE_ASSERT(input_vector != nullptr);
-    translator_->Serialize(context.get_time(), *input_vector, &message_bytes);
-  } else {
-    const AbstractValue* const input_value =
-        this->EvalAbstractInput(context, kPortIndex);
-    DRAKE_ASSERT(input_value != nullptr);
-    serializer_->Serialize(*input_value, &message_bytes);
-  }
+  serializer_->Serialize(input, &message_bytes);
 
   // Publishes onto the specified LCM channel.
   lcm_->Publish(channel_, message_bytes.data(), message_bytes.size(),
                 context.get_time());
-}
 
-const LcmAndVectorBaseTranslator& LcmPublisherSystem::get_translator() const {
-  DRAKE_DEMAND(translator_ != nullptr);
-  return *translator_;
+  return EventStatus::Succeeded();
 }
 
 }  // namespace lcm

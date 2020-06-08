@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "drake/common/test_utilities/eigen_matrix_compare.h"
+#include "drake/common/test_utilities/expect_no_throw.h"
 
 using Eigen::Matrix3Xf;
 using Eigen::Matrix4Xf;
@@ -31,6 +32,23 @@ struct check_helper {
   template <typename XprTypeA, typename XprTypeB>
   static AssertionResult Compare(const XprTypeA& a, const XprTypeB& b) {
     return CompareMatrices(a, b);
+  }
+};
+
+template <>
+struct check_helper<uint8_t> {
+  template <typename XprType>
+  static bool IsDefault(const XprType& xpr) {
+    return (xpr.array() == 0).all();
+  }
+
+  template <typename XprTypeA, typename XprTypeB>
+  static AssertionResult Compare(const XprTypeA& a, const XprTypeB& b) {
+    if ((a.array() == b.array()).all()) {
+      return AssertionSuccess();
+    } else {
+      return AssertionFailure();
+    }
   }
 };
 
@@ -125,8 +143,6 @@ GTEST_TEST(PointCloudTest, Basic) {
             get_values(cloud).middleCols(small_size, large_size - small_size)));
   };
 
-  // TODO(eric.cousineau): Iterate through the combinatorics of fields.
-
   // Points.
   Matrix3Xf xyzs_expected(3, count);
   xyzs_expected.transpose() <<
@@ -140,6 +156,34 @@ GTEST_TEST(PointCloudTest, Basic) {
               [](PointCloud& cloud) { return cloud.xyzs(); },
               [](PointCloud& cloud, int i) { return cloud.mutable_xyz(i); },
               [](PointCloud& cloud, int i) { return cloud.xyz(i); });
+
+  // Normals.
+  Matrix3Xf normals_expected(3, count);
+  normals_expected.transpose() <<
+    1, 2, 3,
+    10, 20, 30,
+    100, 200, 300,
+    4, 5, 6,
+    40, 50, 60;
+  CheckFields(normals_expected, pc_flags::kNormals,
+              [](PointCloud& cloud) { return cloud.mutable_normals(); },
+              [](PointCloud& cloud) { return cloud.normals(); },
+              [](PointCloud& cloud, int i) { return cloud.mutable_normal(i); },
+              [](PointCloud& cloud, int i) { return cloud.normal(i); });
+
+  // RGBs.
+  Matrix3X<uint8_t> rgbs_expected(3, count);
+  rgbs_expected.transpose() <<
+    1, 2, 3,
+    10, 20, 30,
+    100, 200, 255,
+    4, 5, 6,
+    40, 50, 60;
+  CheckFields(rgbs_expected, pc_flags::kRGBs,
+            [](PointCloud& cloud) { return cloud.mutable_rgbs(); },
+            [](PointCloud& cloud) { return cloud.rgbs(); },
+            [](PointCloud& cloud, int i) { return cloud.mutable_rgb(i); },
+            [](PointCloud& cloud, int i) { return cloud.rgb(i); });
 
   // Descriptors (Curvature).
   Eigen::RowVectorXf descriptors_expected(count);
@@ -166,7 +210,7 @@ GTEST_TEST(PointCloudTest, Fields) {
     PointCloud cloud(1, pc_flags::kXYZs);
     EXPECT_TRUE(cloud.has_xyzs());
     EXPECT_TRUE(cloud.HasFields(pc_flags::kXYZs));
-    EXPECT_NO_THROW(cloud.RequireFields(pc_flags::kXYZs));
+    DRAKE_EXPECT_NO_THROW(cloud.RequireFields(pc_flags::kXYZs));
     EXPECT_FALSE(cloud.HasFields(pc_flags::kDescriptorFPFH));
     EXPECT_THROW(cloud.RequireFields(pc_flags::kDescriptorFPFH),
                  std::runtime_error);
@@ -174,11 +218,11 @@ GTEST_TEST(PointCloudTest, Fields) {
 
   // Check with exact fields.
   {
-    PointCloud cloud(1, pc_flags::kXYZs | pc_flags::kDescriptorCurvature);
-    EXPECT_TRUE(cloud.HasExactFields(
-        pc_flags::kXYZs | pc_flags::kDescriptorCurvature));
-    EXPECT_NO_THROW(cloud.RequireExactFields(
-        pc_flags::kXYZs | pc_flags::kDescriptorCurvature));
+    auto fields = pc_flags::kXYZs | pc_flags::kNormals | pc_flags::kRGBs |
+                  pc_flags::kDescriptorCurvature;
+    PointCloud cloud(1, fields);
+    EXPECT_TRUE(cloud.HasExactFields(fields));
+    DRAKE_EXPECT_NO_THROW(cloud.RequireExactFields(fields));
     EXPECT_FALSE(cloud.HasExactFields(pc_flags::kXYZs));
     EXPECT_THROW(cloud.RequireExactFields(pc_flags::kXYZs),
                  std::runtime_error);
@@ -187,8 +231,9 @@ GTEST_TEST(PointCloudTest, Fields) {
   // Check invalid fields.
   {
     EXPECT_THROW(PointCloud(1, 0), std::runtime_error);
-    EXPECT_THROW(PointCloud(1, 100), std::runtime_error);
-    EXPECT_THROW(PointCloud(1, -100), std::runtime_error);
+    const int invalid_flag_value = pc_flags::internal::kMaxBitInUse << 1;
+    EXPECT_THROW(PointCloud(1, invalid_flag_value), std::runtime_error);
+    EXPECT_THROW(PointCloud(1, -invalid_flag_value), std::runtime_error);
   }
 
   // Check with descriptors.

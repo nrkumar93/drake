@@ -2,13 +2,13 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "optitrack/optitrack_data_descriptions_t.hpp"
 #include "optitrack/optitrack_frame_t.hpp"
 
-#include "drake/common/drake_optional.h"
 #include "drake/common/eigen_types.h"
 #include "drake/systems/framework/leaf_system.h"
 
@@ -36,7 +36,7 @@ std::map<int, Isometry3<double>> ExtractOptitrackPoses(
  * @param object_id ID to be searched for in the frame message.
  * @returns Rigid body object, or `nullopt` if not found.
  */
-optional<optitrack::optitrack_rigid_body_t> FindOptitrackBody(
+std::optional<optitrack::optitrack_rigid_body_t> FindOptitrackBody(
       const optitrack::optitrack_frame_t& message, int object_id);
 
 /**
@@ -44,7 +44,7 @@ optional<optitrack::optitrack_rigid_body_t> FindOptitrackBody(
  * @param message Description message.
  * @returns Object ID if found, or `nullopt` if not found.
  */
-optional<int> FindOptitrackObjectId(
+std::optional<int> FindOptitrackObjectId(
     const optitrack::optitrack_data_descriptions_t& message,
     const std::string& object_name);
 
@@ -52,6 +52,8 @@ optional<int> FindOptitrackObjectId(
  * Extracts and provides an output of the pose of a desired object as an
  * Eigen::Isometry3d from an Optitrack LCM OPTITRACK_FRAME_T message, the
  * pose transformed to a desired coordinate frame.
+ *
+ * @ingroup manipulation_systems
  */
 class OptitrackPoseExtractor : public systems::LeafSystem<double> {
  public:

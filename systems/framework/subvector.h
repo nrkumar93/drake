@@ -5,6 +5,7 @@
 
 #include <Eigen/Dense>
 
+#include "drake/common/default_scalars.h"
 #include "drake/common/drake_copyable.h"
 #include "drake/common/drake_throw.h"
 #include "drake/systems/framework/vector_base.h"
@@ -15,7 +16,7 @@ namespace systems {
 /// Subvector is a concrete class template that implements
 /// VectorBase by providing a sliced view of a VectorBase.
 ///
-/// @tparam T A mathematical type compatible with Eigen's Scalar.
+/// @tparam_default_scalar
 template <typename T>
 class Subvector : public VectorBase<T> {
  public:
@@ -45,14 +46,15 @@ class Subvector : public VectorBase<T> {
 
   int size() const override { return num_elements_; }
 
-  const T& GetAtIndex(int index) const override {
+ protected:
+  const T& DoGetAtIndex(int index) const override {
     DRAKE_THROW_UNLESS(index < size());
-    return vector_->GetAtIndex(first_element_ + index);
+    return (*vector_)[first_element_ + index];
   }
 
-  T& GetAtIndex(int index) override {
+  T& DoGetAtIndex(int index) override {
     DRAKE_THROW_UNLESS(index < size());
-    return vector_->GetAtIndex(first_element_ + index);
+    return (*vector_)[first_element_ + index];
   }
 
  private:
@@ -63,3 +65,6 @@ class Subvector : public VectorBase<T> {
 
 }  // namespace systems
 }  // namespace drake
+
+DRAKE_DECLARE_CLASS_TEMPLATE_INSTANTIATIONS_ON_DEFAULT_SCALARS(
+    class ::drake::systems::Subvector)

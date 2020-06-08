@@ -2,8 +2,11 @@
 
 #include <utility>
 
+#include <Eigen/Eigenvalues>
+
 #include "drake/common/default_scalars.h"
 #include "drake/common/drake_assert.h"
+#include "drake/common/drake_throw.h"
 #include "drake/common/eigen_types.h"
 #include "drake/common/symbolic.h"
 #include "drake/common/symbolic_decompose.h"
@@ -17,13 +20,15 @@ using std::unique_ptr;
 
 template <typename T>
 TimeVaryingAffineSystem<T>::TimeVaryingAffineSystem(
-    SystemScalarConverter converter,
-    int num_states, int num_inputs, int num_outputs, double time_period)
+    SystemScalarConverter converter, int num_states, int num_inputs,
+    int num_outputs, double time_period)
     : LeafSystem<T>(std::move(converter)),
       num_states_(num_states),
       num_inputs_(num_inputs),
       num_outputs_(num_outputs),
-      time_period_(time_period) {
+      time_period_(time_period),
+      x0_(VectorX<T>::Zero(num_states)),
+      Sqrt_Sigma_x0_(Eigen::MatrixXd::Zero(num_states, num_states)) {
   DRAKE_DEMAND(num_states_ >= 0);
   DRAKE_DEMAND(num_inputs_ >= 0);
   DRAKE_DEMAND(num_outputs_ >= 0);
@@ -34,13 +39,16 @@ TimeVaryingAffineSystem<T>::TimeVaryingAffineSystem(
   if (time_period_ == 0.0) {
     this->DeclareContinuousState(num_states_);
   } else {
-    this->DeclareContinuousState(0);
     this->DeclareDiscreteState(num_states_);
     this->DeclarePeriodicDiscreteUpdate(time_period_, 0.0);
   }
   if (num_inputs_ > 0)
     this->DeclareInputPort(kVectorValued, num_inputs_);
   if (num_outputs_ > 0) {
+    // TODO(sherm1, eric.cousineau): For subclasses that override CalcOutputY,
+    // ideally we would offer a mechanism for them to alter the prerequisites
+    // argument to DeclareOutputPort to match their implementation, either
+    // specific to this class, or generally via #12709.
     this->DeclareVectorOutputPort(BasicVector<T>(num_outputs_),
                                   &TimeVaryingAffineSystem::CalcOutputY);
   }
@@ -58,6 +66,24 @@ const OutputPort<T>& TimeVaryingAffineSystem<T>::get_output_port()
     const {
   DRAKE_DEMAND(num_outputs_ > 0);
   return System<T>::get_output_port(0);
+}
+
+template <typename T>
+void TimeVaryingAffineSystem<T>::configure_default_state(
+    const Eigen::Ref<const VectorX<T>>& x0) {
+  DRAKE_DEMAND(x0.rows() == num_states_);
+  x0_ = x0;
+}
+
+template <typename T>
+void TimeVaryingAffineSystem<T>::configure_random_state(
+    const Eigen::Ref<const Eigen::MatrixXd>& covariance) {
+  DRAKE_DEMAND(covariance.rows() == num_states_);
+  DRAKE_DEMAND(covariance.cols() == num_states_);
+  if (num_states_ > 0) {
+    Sqrt_Sigma_x0_ = Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd>(covariance)
+                         .operatorSqrt();
+  }
 }
 
 // This is the default implementation for this virtual method.
@@ -80,9 +106,7 @@ void TimeVaryingAffineSystem<T>::CalcOutputY(
   }
 
   if (num_inputs_ > 0) {
-    const BasicVector<T>* input = this->EvalVectorInput(context, 0);
-    DRAKE_DEMAND(input);
-    const auto& u = input->get_value();
+    const auto& u = get_input_port().Eval(context);
     const MatrixX<T> Dt = D(t);
     DRAKE_DEMAND(Dt.rows() == num_outputs_ && Dt.cols() == num_inputs_);
     y += Dt * u;
@@ -99,22 +123,20 @@ void TimeVaryingAffineSystem<T>::DoCalcTimeDerivatives(
   const T t = context.get_time();
 
   VectorX<T> xdot = f0(t);
-  DRAKE_DEMAND(xdot.rows() == num_states_);
+  DRAKE_THROW_UNLESS(xdot.rows() == num_states_);
 
   const auto& x =
       dynamic_cast<const BasicVector<T>&>(context.get_continuous_state_vector())
           .get_value();
   const MatrixX<T> At = A(t);
-  DRAKE_DEMAND(At.rows() == num_states_ && At.cols() == num_states_);
+  DRAKE_THROW_UNLESS(At.rows() == num_states_ && At.cols() == num_states_);
   xdot += At * x;
 
   if (num_inputs_ > 0) {
-    const BasicVector<T>* input = this->EvalVectorInput(context, 0);
-    DRAKE_DEMAND(input);
-    const auto& u = input->get_value();
+    const auto& u = get_input_port().Eval(context);
 
     const MatrixX<T> Bt = B(t);
-    DRAKE_DEMAND(Bt.rows() == num_states_ && Bt.cols() == num_inputs_);
+    DRAKE_THROW_UNLESS(Bt.rows() == num_states_ && Bt.cols() == num_inputs_);
     xdot += Bt * u;
   }
   derivatives->SetFromVector(xdot);
@@ -142,15 +164,42 @@ void TimeVaryingAffineSystem<T>::DoCalcDiscreteVariableUpdates(
   xn += At * x;
 
   if (num_inputs_ > 0) {
-    const BasicVector<T>* input = this->EvalVectorInput(context, 0);
-    DRAKE_DEMAND(input);
-    const auto& u = input->get_value();
+    const auto& u = get_input_port().Eval(context);
 
     const MatrixX<T> Bt = B(t);
     DRAKE_DEMAND(Bt.rows() == num_states_ && Bt.cols() == num_inputs_);
     xn += Bt * u;
   }
   updates->get_mutable_vector().SetFromVector(xn);
+}
+
+template <typename T>
+void TimeVaryingAffineSystem<T>::SetDefaultState(const Context<T>& context,
+                                                 State<T>* state) const {
+  unused(context);
+  if (time_period_ == 0.0) {
+    state->get_mutable_continuous_state().SetFromVector(x0_);
+  } else {
+    state->get_mutable_discrete_state(0).SetFromVector(x0_);
+  }
+}
+
+template <typename T>
+void TimeVaryingAffineSystem<T>::SetRandomState(
+    const Context<T>& context, State<T>* state,
+    RandomGenerator* generator) const {
+  unused(context);
+  Eigen::VectorXd w(num_states_);
+  std::normal_distribution<double> normal;
+  for (int i = 0; i < num_states_; i++) {
+    w[i] = normal(*generator);
+  }
+  const auto x0 = x0_ + Sqrt_Sigma_x0_ * w;
+  if (time_period_ == 0.0) {
+    state->get_mutable_continuous_state().SetFromVector(x0);
+  } else {
+    state->get_mutable_discrete_state(0).SetFromVector(x0);
+  }
 }
 
 // Our public constructor declares that our most specific subclass is
@@ -164,8 +213,17 @@ AffineSystem<T>::AffineSystem(const Eigen::Ref<const Eigen::MatrixXd>& A,
                               const Eigen::Ref<const Eigen::VectorXd>& y0,
                               double time_period)
     : AffineSystem<T>(
-          SystemTypeTag<systems::AffineSystem>{},
+          SystemTypeTag<AffineSystem>{},
           A, B, f0, C, D, y0, time_period) {}
+
+namespace {
+
+// Returns whether a matrix is "meaningful" when pre-multiplying a vector.
+bool IsMeaningful(const Eigen::MatrixXd& D) {
+  return D.size() > 0 && (D.array() != 0).any();
+}
+
+}  // namespace
 
 // Our protected constructor does all of the real work -- everything else
 // delegates to here.
@@ -185,7 +243,10 @@ AffineSystem<T>::AffineSystem(SystemScalarConverter converter,
       f0_(f0),
       C_(C),
       D_(D),
-      y0_(y0) {
+      y0_(y0),
+      // This check permits a workaround for inadvertent computational loops
+      // (#12706).
+      has_meaningful_D_(IsMeaningful(D)) {
   DRAKE_DEMAND(this->num_states() == A.rows());
   DRAKE_DEMAND(this->num_states() == A.cols());
   DRAKE_DEMAND(this->num_states() == B.rows());
@@ -202,7 +263,9 @@ template <typename T>
 template <typename U>
 AffineSystem<T>::AffineSystem(const AffineSystem<U>& other)
     : AffineSystem(other.A(), other.B(), other.f0(), other.C(), other.D(),
-                   other.y0(), other.time_period()) {}
+                   other.y0(), other.time_period()) {
+  this->ConfigureDefaultAndRandomStateFrom(other);
+}
 
 template <typename T>
 unique_ptr<AffineSystem<T>> AffineSystem<T>::MakeAffineSystem(
@@ -250,10 +313,8 @@ void AffineSystem<T>::CalcOutputY(const Context<T>& context,
   auto y = output_vector->get_mutable_value();
   y = C_ * x + y0_;
 
-  if (this->num_inputs()) {
-    const BasicVector<T>* input = this->EvalVectorInput(context, 0);
-    DRAKE_DEMAND(input);
-    const auto& u = input->get_value();
+  if (has_meaningful_D_ && this->num_inputs()) {
+    const auto& u = this->get_input_port().Eval(context);
     y += D_ * u;
   }
 }
@@ -270,9 +331,7 @@ void AffineSystem<T>::DoCalcTimeDerivatives(
   VectorX<T> xdot = A_ * x + f0_;
 
   if (this->num_inputs() > 0) {
-    const BasicVector<T>* input = this->EvalVectorInput(context, 0);
-    DRAKE_DEMAND(input);
-    const auto& u = input->get_value();
+    const auto& u = this->get_input_port().Eval(context);
 
     xdot += B_ * u;
   }
@@ -291,9 +350,7 @@ void AffineSystem<T>::DoCalcDiscreteVariableUpdates(
   VectorX<T> xnext = A_ * x + f0_;
 
   if (this->num_inputs() > 0) {
-    const BasicVector<T>* input = this->EvalVectorInput(context, 0);
-    DRAKE_DEMAND(input);
-    const auto& u = input->get_value();
+    const auto& u = this->get_input_port().Eval(context);
 
     xnext += B_ * u;
   }

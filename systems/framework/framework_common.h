@@ -2,12 +2,16 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "drake/common/drake_assert.h"
-#include "drake/common/drake_optional.h"
+#include "drake/common/identifier.h"
 #include "drake/common/type_safe_index.h"
+#include "drake/common/value.h"
 
 namespace drake {
 namespace systems {
@@ -17,12 +21,12 @@ namespace systems {
 // the same meaning in both class hierarchies. A System and its Context always
 // have parallel internal structure.
 
-/** Identifies a particular source value or computation for purposes of
-declaring and managing dependencies. Unique only within a given subsystem
-and its corresponding subcontext. */
 // This is presented as an ID to end users but is implemented internally as
 // a typed integer index for fast access into the std::vector of dependency
 // trackers. That's why it is named differently than the other "indexes".
+/** Identifies a particular source value or computation for purposes of
+declaring and managing dependencies. Unique only within a given subsystem
+and its corresponding subcontext. */
 using DependencyTicket = TypeSafeIndex<class DependencyTag>;
 
 /** Serves as a unique identifier for a particular CacheEntry in a System and
@@ -60,6 +64,9 @@ using NumericParameterIndex = TypeSafeIndex<class NumericParameterTag>;
 and its corresponding Context. */
 using AbstractParameterIndex = TypeSafeIndex<class AbstractParameterTag>;
 
+/** Serves as the local index for constraints declared on a given System. */
+using SystemConstraintIndex = TypeSafeIndex<class SystemConstraintTag>;
+
 /** All system ports are either vectors of Eigen scalars, or black-box
 AbstractValues which may contain any type. */
 typedef enum {
@@ -67,17 +74,59 @@ typedef enum {
   kAbstractValued = 1,
 } PortDataType;
 
+// TODO(sherm1) Implement this.
 /** Port type indicating a vector value whose size is not prespecified but
 rather depends on what it is connected to (not yet implemented). */
-// TODO(sherm1) Implement this.
 constexpr int kAutoSize = -1;
 
+/** (Advanced.)  Tag type that indicates a system or port should use a default
+name, instead of a user-provided name.  Most users will use the kUseDefaultName
+constant, without ever having to mention this type. */
+struct UseDefaultName final {};
+
+/** Name to use when you want a default one generated. You should normally
+give meaningful names to all Drake System entities you create rather than
+using this. */
+constexpr UseDefaultName kUseDefaultName = {};
+
+/** (Advanced.) Sugar that compares a variant against kUseDefaultName. */
+inline bool operator==(
+    const std::variant<std::string, UseDefaultName>& value,
+    const UseDefaultName&) {
+  return std::holds_alternative<UseDefaultName>(value);
+}
+
+/** Intended for use in e.g. variant<InputPortSelection, InputPortIndex> for
+algorithms that support optional and/or default port indices. */
+enum class InputPortSelection { kNoInput = -1, kUseFirstInputIfItExists = -2 };
+
+/** Intended for use in e.g. variant<OutputPortSelection, OutputPortIndex> for
+algorithms that support optional and/or default port indices. */
+enum class OutputPortSelection { kNoOutput = -1, kUseFirstOutputIfItExists =
+    -2 };
+
 #ifndef DRAKE_DOXYGEN_CXX
-class AbstractValue;
 class ContextBase;
 class InputPortBase;
+class SystemBase;
 
 namespace internal {
+
+// Type used to match a Context to its System.
+using SystemId = drake::Identifier<class SystemIdTag>;
+
+// A utility to call the package-private constructor of some framework classes.
+class FrameworkFactory {
+ public:
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(FrameworkFactory)
+  FrameworkFactory() = delete;
+  ~FrameworkFactory() = delete;
+
+  template <typename T, typename... Args>
+  static std::unique_ptr<T> Make(Args... args) {
+    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+  }
+};
 
 // TODO(sherm1) These interface classes shouldn't be here -- split into their
 // own headers. As written they obscure the limited use of these interfaces
@@ -109,13 +158,9 @@ class SystemMessageInterface {
   // namespace-decorated human-readable name as returned by NiceTypeName.
   virtual std::string GetSystemType() const = 0;
 
-  // Throws an std::logic_error if the given Context is incompatible with
-  // this System. This is likely to be _very_ expensive and should generally be
-  // done only in Debug builds, like this:
-  // @code
-  //    DRAKE_ASSERT_VOID(ThrowIfContextNotCompatible(context));
-  // @endcode
-  virtual void ThrowIfContextNotCompatible(const ContextBase&) const = 0;
+  // Checks whether the given context was created for this system.
+  // See SystemBase::ValidateContext for full documentation.
+  virtual void ValidateContext(const ContextBase& context) const = 0;
 
   // Use this string as a stand-in name for an unnamed System. This is not
   // a default name, just an indicator that there is no name. This is a policy
@@ -163,6 +208,9 @@ class ContextMessageInterface {
   // and the path separator from SystemMessageInterface::path_separator().
   virtual std::string GetSystemPathname() const = 0;
 
+  // Returns true if the cache in this subcontext has been frozen.
+  virtual bool is_cache_frozen() const = 0;
+
  protected:
   ContextMessageInterface() = default;
   DRAKE_DEFAULT_COPY_AND_MOVE_AND_ASSIGN(ContextMessageInterface);
@@ -193,6 +241,10 @@ class SystemParentServiceInterface {
   // above.)
   virtual std::string GetParentPathname() const = 0;
 
+  // Returns the root Diagram at the top of this Diagram tree. Will return
+  // `this` if we are already at the root.
+  virtual const SystemBase& GetRootSystemBase() const = 0;
+
  protected:
   SystemParentServiceInterface() = default;
   DRAKE_DEFAULT_COPY_AND_MOVE_AND_ASSIGN(SystemParentServiceInterface);
@@ -218,19 +270,20 @@ enum BuiltInTicketNumbers {
   kPnTicket             = 10,  // All numeric parameters.
   kPaTicket             = 11,  // All abstract parameters.
   kAllParametersTicket  = 12,  // All parameters p = {pn, pa}.
-  kAllInputPortsTicket  = 13,  // All input ports u.
-  kAllSourcesTicket     = 14,  // All of the above.
-  kConfigurationTicket  = 15,  // All values that may affect configuration.
-  kKinematicsTicket     = 16,  // Configuration plus velocity-affecting values.
+  kAllSourcesExceptInputPortsTicket = 13,  // Everything except input ports.
+  kAllInputPortsTicket  = 14,  // All input ports u.
+  kAllSourcesTicket     = 15,  // All of the above.
+  kConfigurationTicket  = 16,  // All values that may affect configuration.
+  kKinematicsTicket     = 17,  // Configuration plus velocity-affecting values.
   kLastSourceTicket     = kKinematicsTicket,  // (Used in testing.)
 
   // The rest of these are pre-defined computations with associated cache
   // entries.
-  kXcdotTicket          = 17,  // d/dt xc = {qdot, vdot, zdot}.
-  kPeTicket             = 18,  // Potential energy.
-  kKeTicket             = 19,  // Kinetic energy.
-  kPcTicket             = 20,  // Conservative power.
-  kPncTicket            = 21,  // Non-conservative power.
+  kXcdotTicket          = 18,  // d/dt xc = {qdot, vdot, zdot}.
+  kPeTicket             = 19,  // Potential energy.
+  kKeTicket             = 20,  // Kinetic energy.
+  kPcTicket             = 21,  // Conservative power.
+  kPncTicket            = 22,  // Non-conservative power.
 
   kNextAvailableTicket  = kPncTicket+1
 };
@@ -241,7 +294,7 @@ enum BuiltInTicketNumbers {
 // of the child's parent Diagram. If the `child_subsystem` index is missing it
 // indicates that the prerequisite is internal.
 struct OutputPortPrerequisite {
-  optional<SubsystemIndex> child_subsystem;
+  std::optional<SubsystemIndex> child_subsystem;
   DependencyTicket dependency;
 };
 

@@ -70,7 +70,7 @@ def _determine_linux(repository_ctx):
     sed = exec_using_which(repository_ctx, [
         "sed",
         "-n",
-        "/^\(NAME\|VERSION_ID\)=/{s/[^=]*=//;s/\"//g;p}",
+        r"/^\(NAME\|VERSION_ID\)=/{s/[^=]*=//;s/\"//g;p}",
         "/etc/os-release",
     ])
     if sed.error != None:
@@ -80,8 +80,11 @@ def _determine_linux(repository_ctx):
     lines = [line.strip() for line in sed.stdout.strip().split("\n")]
     distro = " ".join([x for x in lines if len(x) > 0])
 
-    # Match supported Ubuntu release(s).
-    for ubuntu_release in ["16.04", "18.04"]:
+    # Match supported Ubuntu release(s). These should match those listed in
+    # both doc/developers.rst the root CMakeLists.txt.
+    for ubuntu_release in ["18.04", "20.04"]:
+        if ubuntu_release == "20.04":
+            print("WARNING: Drake is not officially supported on Ubuntu 20.04 (Focal)")  # noqa
         if distro == "Ubuntu " + ubuntu_release:
             return _make_result(ubuntu_release = ubuntu_release)
 
@@ -108,7 +111,7 @@ def _determine_macos(repository_ctx):
     macos_release = ".".join(major_minor_versions)
 
     # Match supported macOS release(s).
-    if macos_release in ["10.12", "10.13", "10.14"]:
+    if macos_release in ["10.14", "10.15"]:
         return _make_result(macos_release = macos_release)
 
     # Nothing matched.
@@ -129,9 +132,9 @@ def determine_os(repository_ctx):
         - error: str iff any error occurred, else None
         - distribution: str either "ubuntu" or "macos" if no error
         - is_macos: True iff on a supported macOS release, else False
-        - macos_release: str like "10.13" iff on a supported macOS, else None
+        - macos_release: str like "10.15" iff on a supported macOS, else None
         - is_ubuntu: True iff on a supported Ubuntu version, else False
-        - ubuntu_release: str like "16.04" iff on a supported ubuntu, else None
+        - ubuntu_release: str like "18.04" iff on a supported ubuntu, else None
     """
 
     os_name = repository_ctx.os.name
@@ -153,7 +156,7 @@ def os_specific_alias(repository_ctx, mapping):
             of values are of the form name=actual as in alias(name, actual).
 
     The keys of mapping are searched in the following preferential order:
-    - Exact release, via e.g., "Ubuntu 16.04" or "macOS 10.12"
+    - Exact release, via e.g., "Ubuntu 18.04" or "macOS 10.15"
     - Any release, via "Ubuntu default" or "macOS default"
     - Anything else, via "default"
     """
@@ -213,3 +216,30 @@ os_specific_alias_repository = repository_rule(
     },
     implementation = _os_specific_alias_impl,
 )
+
+def _os_impl(repo_ctx):
+    os_result = determine_os(repo_ctx)
+    repo_ctx.file("BUILD.bazel", "")
+
+    if os_result.error:
+        fail(os_result.error)
+
+    constants = """
+DISTRIBUTION = {distribution}
+UBUNTU_RELEASE = {ubuntu_release}
+MACOS_RELEASE = {macos_release}
+    """.format(
+        distribution = repr(os_result.distribution),
+        ubuntu_release = repr(os_result.ubuntu_release),
+        macos_release = repr(os_result.macos_release),
+    )
+    repo_ctx.file("os.bzl", constants)
+
+os_repository = repository_rule(
+    implementation = _os_impl,
+)
+
+"""
+Provides the fields `DISTRIBUTION`, `UBUNTU_RELEASE` and `MACOS_RELEASE` from
+`determine_os`.
+"""

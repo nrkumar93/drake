@@ -45,6 +45,9 @@ Most third-party software used by Drake will be incorporated via files named
 (`boost`, `eigen`, `vtk`, etc.).  Consult that file to check which download or
 installation helper is used; find the helper in the the list below to continue.
 
+Drake maintainers can use the bazel-bin/tools/workspace/new_release tool to
+report any out-of-date externals.
+
 ## Updating github_archive software versions
 
 For software downloaded from github.com and compiled from source, there are two
@@ -95,11 +98,6 @@ Commit and pull-request the changed lines to Drake as usual.  Many changes like
 this will be susceptible to Ubuntu vs macOS differences, so please opt-in to
 the macOS build(s) in Jenkins before merging, using the instructions at
 https://drake.mit.edu/jenkins.html#running-an-on-demand-build.
-
-## Updating bitbucket_archive software versions
-
-The `bitbucket_archive` instructions are isomorphic to the `github_archive`
-instructions; please see above for detailed steps.
 
 ## Updating pypi_archive software versions
 
@@ -155,15 +153,20 @@ it into Drake are roughly:
 - Edit `tools/workspace/default.bzl` to load and conditionally call the new
   `foo_repository()` macro or rule.
 
+When indicating licenses in the source, use the identifier from the
+[SPDX License List](https://spdx.org/licenses/).
+
 ## When using a library from the host operating system
 
 See `glib` for an example.
 
 Update the package setup lists to mention the new package:
 
-- `setup/ubuntu/16.04/binary_distribution/packages.txt` with the `libfoo0`
+- `setup/ubuntu/binary_distribution/packages-bionic.txt` and
+  `setup/ubuntu/binary_distribution/packages-focal.txt` with the `libfoo0`
   runtime library;
-- `setup/ubuntu/16.04/source_distribution/packages.txt` with the `libfoo-dev`
+- `setup/ubuntu/source_distribution/packages-bionic.txt` and
+  `setup/ubuntu/source_distribution/packages-focal.txt` with the `libfoo-dev`
   library;
 - `setup/mac/binary_distribution/Brewfile` if used in Drake's installed copy;
 - `setup/mac/source_distribution/Brewfile` if only used during development (not
@@ -174,4 +177,18 @@ a library from the host.
 
 ## When downloading a library or tool as source code
 
-TODO(jwnimmer-tri) Write this section.
+For choosing the version or commit to use in `repository.bzl`:
+
+* When upstream provides numbered releases, pin Drake to use the most recent
+stable release. Drake maintainers will automatically upgrade to a more recent
+stable release on a monthly basis.
+* Otherwise, pin Drake to use the most recent commit of the upstream mainline
+branch. Drake maintainers will automatically upgrade to a more recent mainline
+commit on a monthly basis.
+* If the pin policy is unsatisfactory for the case of some specific external,
+consult Drake's build system maintainers for advice.
+
+For Git, the mainline branch is typically `master`, whereas for Mercurial it is
+`default`.
+
+TODO(jwnimmer-tri) Write the remainder of this section.

@@ -1,18 +1,19 @@
 # -*- python -*-
 
 load("@drake//tools/install:install.bzl", "install")
-load("//tools/lint:lint.bzl", "add_lint_tests")
 load(
-    "//tools/skylark:pybind.bzl",
+    "@drake//tools/skylark:pybind.bzl",
+    "add_pybind_coverage_data",
     "drake_pybind_library",
     "get_drake_py_installs",
     "get_pybind_package_info",
 )
 load(
-    "//tools/skylark:drake_py.bzl",
+    "@drake//tools/skylark:drake_py.bzl",
     "drake_py_library",
     "drake_py_unittest",
 )
+load("//bindings/pydrake:pydrake.bzl", "add_lint_tests_pydrake")
 
 package(default_visibility = [
     "//bindings/pydrake:__subpackages__",
@@ -27,17 +28,16 @@ drake_py_library(
     srcs = ["__init__.py"],
     imports = PACKAGE_INFO.py_imports,
     deps = [
-        "//bindings/pydrake:common_py",
+        "//bindings/pydrake:module_py",
     ],
 )
 
 drake_pybind_library(
     name = "planner_py",
     cc_deps = [
-        "//bindings/pydrake/util:drake_optional_pybind",
-        "//bindings/pydrake/util:eigen_pybind",
+        "//bindings/pydrake:documentation_pybind",
+        "//bindings/pydrake/common:eigen_pybind",
     ],
-    cc_so_name = "planner",
     cc_srcs = ["planner_py.cc"],
     package_info = PACKAGE_INFO,
     py_deps = [
@@ -45,18 +45,63 @@ drake_pybind_library(
     ],
 )
 
+drake_pybind_library(
+    name = "schunk_wsg_py",
+    cc_deps = [
+        "//bindings/pydrake:documentation_pybind",
+        "//bindings/pydrake/common:eigen_pybind",
+    ],
+    cc_srcs = ["schunk_wsg_py.cc"],
+    package_info = PACKAGE_INFO,
+    py_deps = [
+        ":module_py",
+    ],
+)
+
+drake_py_library(
+    name = "simple_ui_py",
+    srcs = ["simple_ui.py"],
+    imports = PACKAGE_INFO.py_imports,
+    deps = [":module_py"],
+)
+
 PY_LIBRARIES_WITH_INSTALL = [
     ":planner_py",
+    ":schunk_wsg_py",
 ]
 
 PY_LIBRARIES = [
     ":module_py",
+    ":simple_ui_py",
 ]
 
 drake_py_unittest(
     name = "planner_test",
+    data = [
+        "//multibody/benchmarks/acrobot:models",
+    ],
     deps = [
         ":planner_py",
+        "//bindings/pydrake/multibody",
+    ],
+)
+
+drake_py_unittest(
+    name = "schunk_wsg_test",
+    deps = [
+        ":schunk_wsg_py",
+        "//bindings/pydrake/systems",
+    ],
+)
+
+drake_py_unittest(
+    name = "simple_ui_test",
+    data = [
+        "//multibody/benchmarks/acrobot:models",
+    ],
+    deps = [
+        ":simple_ui_py",
+        "//bindings/pydrake/multibody",
     ],
 )
 
@@ -80,4 +125,6 @@ install(
     deps = get_drake_py_installs(PY_LIBRARIES_WITH_INSTALL),
 )
 
-add_lint_tests()
+add_pybind_coverage_data()
+
+add_lint_tests_pydrake()

@@ -6,16 +6,20 @@
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
 
-#include "drake/bindings/pydrake/systems/systems_pybind.h"
-#include "drake/bindings/pydrake/util/cpp_template_pybind.h"
-#include "drake/bindings/pydrake/util/eigen_geometry_pybind.h"
-#include "drake/bindings/pydrake/util/eigen_pybind.h"
-#include "drake/bindings/pydrake/util/type_pack.h"
+#include "drake/bindings/pydrake/common/cpp_template_pybind.h"
+#include "drake/bindings/pydrake/common/eigen_geometry_pybind.h"
+#include "drake/bindings/pydrake/common/eigen_pybind.h"
+#include "drake/bindings/pydrake/common/type_pack.h"
+#include "drake/bindings/pydrake/common/value_pybind.h"
+#include "drake/bindings/pydrake/documentation_pybind.h"
+#include "drake/bindings/pydrake/pydrake_pybind.h"
 #include "drake/common/drake_throw.h"
 #include "drake/common/eigen_types.h"
+#include "drake/systems/sensors/camera_info.h"
 #include "drake/systems/sensors/image.h"
+#include "drake/systems/sensors/image_to_lcm_image_array_t.h"
 #include "drake/systems/sensors/pixel_types.h"
-#include "drake/systems/sensors/rgbd_camera.h"
+#include "drake/systems/sensors/rgbd_sensor.h"
 
 using std::string;
 using std::unique_ptr;
@@ -24,24 +28,34 @@ using std::vector;
 namespace drake {
 namespace pydrake {
 
-template <typename T, T Value>
-using constant = std::integral_constant<T, Value>;
+template <typename T, T kPixelType>
+using constant = std::integral_constant<T, kPixelType>;
 
-template <typename T, T ... Values>
-using constant_pack = type_pack<type_pack<constant<T, Values>>...>;
+template <typename T, T... kPixelTypes>
+using constant_pack = type_pack<type_pack<constant<T, kPixelTypes>>...>;
 
 using Eigen::Map;
+using Eigen::Vector3d;
+using geometry::FrameId;
+using geometry::render::CameraProperties;
+using geometry::render::DepthCameraProperties;
+using math::RigidTransformd;
+using math::RollPitchYawd;
 
 PYBIND11_MODULE(sensors, m) {
+  PYDRAKE_PREVENT_PYTHON3_MODULE_REIMPORT(m);
+
   // NOLINTNEXTLINE(build/namespaces): Emulate placement in namespace.
   using namespace drake::systems;
   // NOLINTNEXTLINE(build/namespaces): Emulate placement in namespace.
   using namespace drake::systems::sensors;
+  constexpr auto& doc = pydrake_doc.drake.systems.sensors;
 
   m.doc() = "Bindings for the sensors portion of the Systems framework.";
 
+  py::module::import("pydrake.common.eigen_geometry");
+  py::module::import("pydrake.geometry.render");
   py::module::import("pydrake.systems.framework");
-  py::module::import("pydrake.util.eigen_geometry");
 
   // Expose only types that are used.
   py::enum_<PixelFormat>(m, "PixelFormat")
@@ -49,34 +63,41 @@ PYBIND11_MODULE(sensors, m) {
       .value("kDepth", PixelFormat::kDepth)
       .value("kLabel", PixelFormat::kLabel);
 
+  vector<string> pixel_type_names = {
+      "kRgba8U",
+      "kDepth16U",
+      "kDepth32F",
+      "kLabel16I",
+  };
+
+  // This list should match pixel_type_names.
+  using PixelTypeList = constant_pack<PixelType,  //
+      PixelType::kRgba8U,                         //
+      PixelType::kDepth16U,                       //
+      PixelType::kDepth32F,                       //
+      PixelType::kLabel16I>;
+
   {
     // Expose image types and their traits.
     py::enum_<PixelType> pixel_type(m, "PixelType");
-    vector<string> enum_names = {
-        "kRgba8U",
-        "kDepth32F",
-        "kLabel16I",
-    };
 
-    using ParamList = constant_pack<PixelType,
-        PixelType::kRgba8U,
-        PixelType::kDepth32F,
-        PixelType::kLabel16I>;
-
-    // Simple constexpr for-loop.
-    int i = 0;
+    // This uses the `type_visit` pattern for looping. See `type_pack_test.cc`
+    // for more information on the pattern.
+    int pixel_type_index = 0;
     auto instantiation_visitor = [&](auto param) {
       // Extract information from inferred parameter.
-      using Param = decltype(param);
-      static_assert(Param::size == 1, "Should have scalar type_pack");
-      constexpr PixelType Value = Param::template type_at<0>::value;
-
-      using ImageT = Image<Value>;
-      using ImageTraitsT = ImageTraits<Value>;
+      constexpr PixelType kPixelType =
+          decltype(param)::template type_at<0>::value;
+      using ImageT = Image<kPixelType>;
+      using ImageTraitsT = ImageTraits<kPixelType>;
       using T = typename ImageTraitsT::ChannelType;
 
+      // Get associated properites, and iterate.
+      const std::string pixel_type_name = pixel_type_names[pixel_type_index];
+      ++pixel_type_index;
+
       // Add definition to enum, before requesting the Python parameter.
-      pixel_type.value(enum_names[i].c_str(), Value);
+      pixel_type.value(pixel_type_name.c_str(), kPixelType);
       py::tuple py_param = GetPyParam(param);
 
       // Add traits.
@@ -87,6 +108,15 @@ PYBIND11_MODULE(sensors, m) {
       traits.attr("kPixelFormat") = PixelFormat{ImageTraitsT::kPixelFormat};
       AddTemplateClass(m, "ImageTraits", traits, py_param);
 
+      auto at = [](ImageT* self, int x, int y) {
+        // Since Image<>::at(...) uses DRAKE_ASSERT for performance reasons,
+        // rewrite the checks here using DRAKE_THROW_UNLESS so that it will not
+        // segfault in Python.
+        DRAKE_THROW_UNLESS(x >= 0 && x < self->width());
+        DRAKE_THROW_UNLESS(y >= 0 && y < self->height());
+        Map<VectorX<T>> pixel(self->at(x, y), int{ImageTraitsT::kNumChannels});
+        return pixel;
+      };
       // Shape for use with NumPy, OpenCV, etc. Using same shape as what is
       // present in `show_images.py`.
       auto get_shape = [](const ImageT* self) {
@@ -99,28 +129,20 @@ PYBIND11_MODULE(sensors, m) {
       auto get_mutable_data = [=](ImageT* self) {
         return ToArray(self->at(0, 0), self->size(), get_shape(self));
       };
-      auto check_coord = [](const ImageT* self, int x, int y) {
-        // Since Image<>::at(...) uses DRAKE_ASSERT for performance reasons,
-        // rewrite the checks here using DRAKE_THROW_UNLESS so that it will not
-        // segfault in Python.
-        DRAKE_THROW_UNLESS(x >= 0 && x < self->width());
-        DRAKE_THROW_UNLESS(y >= 0 && y < self->height());
-      };
 
       py::class_<ImageT> image(m, TemporaryClassName<ImageT>().c_str());
-      image
-          .def(py::init<int, int>())
-          .def(py::init<int, int, T>())
-          .def("width", &ImageT::width)
-          .def("height", &ImageT::height)
-          .def("size", &ImageT::size)
-          .def("resize", &ImageT::resize)
-          .def("at", [=](ImageT* self, int x, int y) {
-                check_coord(self, x, y);
-                Map<VectorX<T>> pixel(
-                    self->at(x, y), int{ImageTraitsT::kNumChannels});
-                return pixel;
-              }, py::arg("x"), py::arg("y"), py_reference_internal)
+      AddTemplateClass(m, "Image", image, py_param);
+      image  // BR
+          .def(py::init<int, int>(), py::arg("width"), py::arg("height"),
+              doc.Image.ctor.doc_2args)
+          .def(py::init<int, int, T>(), py::arg("width"), py::arg("height"),
+              py::arg("initial_value"), doc.Image.ctor.doc_3args)
+          .def("width", &ImageT::width, doc.Image.width.doc)
+          .def("height", &ImageT::height, doc.Image.height.doc)
+          .def("size", &ImageT::size, doc.Image.size.doc)
+          .def("resize", &ImageT::resize, doc.Image.resize.doc)
+          .def("at", at, py::arg("x"), py::arg("y"), py_reference_internal,
+              doc.Image.at.doc_2args_x_y_nonconst)
           // Non-C++ properties. Make them Pythonic.
           .def_property_readonly("shape", get_shape)
           .def_property_readonly("data", get_data, py_reference_internal)
@@ -129,15 +151,13 @@ PYBIND11_MODULE(sensors, m) {
       // Constants.
       image.attr("Traits") = traits;
       // - Do not duplicate aliases (e.g. `kNumChannels`) for now.
-      AddTemplateClass(m, "Image", image, py_param);
       // Add type alias for instantiation.
-      m.attr(("Image" + enum_names[i].substr(1)).c_str()) = image;
+      const std::string suffix = pixel_type_name.substr(1);
+      m.attr(("Image" + suffix).c_str()) = image;
       // Add abstract values.
-      pysystems::AddValueInstantiation<ImageT>(m);
-      // Ensure that iterate.
-      ++i;
+      AddValueInstantiation<ImageT>(m);
     };
-    type_visit(instantiation_visitor, ParamList{});
+    type_visit(instantiation_visitor, PixelTypeList{});
   }
 
   // Constants.
@@ -152,82 +172,144 @@ PYBIND11_MODULE(sensors, m) {
   using T = double;
 
   // Systems.
-  py::class_<CameraInfo>(m, "CameraInfo")
-    .def(py::init<int, int, double>(),
-         py::arg("width"), py::arg("height"),
-         py::arg("fov_y"))
-    .def(py::init<int, int, double, double, double, double>(),
-         py::arg("width"), py::arg("height"),
-         py::arg("focal_x"), py::arg("focal_y"),
-         py::arg("center_x"), py::arg("center_y"))
-    .def("width", &CameraInfo::width)
-    .def("height", &CameraInfo::height)
-    .def("focal_x", &CameraInfo::focal_x)
-    .def("focal_y", &CameraInfo::focal_y)
-    .def("center_x", &CameraInfo::center_x)
-    .def("center_y", &CameraInfo::center_y)
-    .def("intrinsic_matrix", &CameraInfo::intrinsic_matrix);
 
-  auto def_camera_ports = [](auto* ppy_class) {
+  auto def_camera_ports = [](auto* ppy_class, auto cls_doc) {
     auto& py_class = *ppy_class;
     using PyClass = std::decay_t<decltype(py_class)>;
     using Class = typename PyClass::type;
     py_class
-      .def("state_input_port",
-           &Class::state_input_port, py_reference_internal)
-      .def("color_image_output_port",
-           &Class::color_image_output_port, py_reference_internal)
-      .def("depth_image_output_port",
-           &Class::depth_image_output_port, py_reference_internal)
-      .def("label_image_output_port",
-           &Class::label_image_output_port, py_reference_internal)
-      .def("camera_base_pose_output_port",
-           &Class::camera_base_pose_output_port, py_reference_internal);
+        .def("query_object_input_port", &Class::query_object_input_port,
+            py_reference_internal, cls_doc.query_object_input_port.doc)
+        .def("color_image_output_port", &Class::color_image_output_port,
+            py_reference_internal, cls_doc.color_image_output_port.doc)
+        .def("depth_image_32F_output_port", &Class::depth_image_32F_output_port,
+            py_reference_internal, cls_doc.depth_image_32F_output_port.doc)
+        .def("depth_image_16U_output_port", &Class::depth_image_16U_output_port,
+            py_reference_internal, cls_doc.depth_image_16U_output_port.doc)
+        .def("label_image_output_port", &Class::label_image_output_port,
+            py_reference_internal, cls_doc.label_image_output_port.doc)
+        .def("X_WB_output_port", &Class::X_WB_output_port,
+            py_reference_internal, cls_doc.X_WB_output_port.doc);
   };
 
-  // TODO(eric.cousineau): Use something like `RenderingConfig`, per (#8123).
-  py::class_<RgbdCamera, LeafSystem<T>> rgbd_camera(m, "RgbdCamera");
-  rgbd_camera
-    .def(
-      py::init<
-        string, const RigidBodyTree<T>&, const RigidBodyFrame<T>&,
-        double, double, double, bool, int, int>(),
-      py::arg("name"), py::arg("tree"), py::arg("frame"),
-      py::arg("z_near") = 0.5, py::arg("z_far") = 5.0,
-      py::arg("fov_y") = M_PI_4,
-      py::arg("show_window") = bool{RenderingConfig::kDefaultShowWindow},
-      py::arg("width") = int{RenderingConfig::kDefaultWidth},
-      py::arg("height") = int{RenderingConfig::kDefaultHeight},
-      // Keep alive, reference: `this` keeps  `RigidBodyTree` alive.
-      py::keep_alive<1, 3>())
-    .def("color_camera_info", &RgbdCamera::color_camera_info,
-         py_reference_internal)
-    .def("depth_camera_info", &RgbdCamera::depth_camera_info,
-         py_reference_internal)
-    .def("color_camera_optical_pose", &RgbdCamera::color_camera_optical_pose)
-    .def("depth_camera_optical_pose", &RgbdCamera::depth_camera_optical_pose)
-    .def("frame", &RgbdCamera::frame, py_reference_internal)
-    .def("tree", &RgbdCamera::tree, py_reference);
-  def_camera_ports(&rgbd_camera);
+  py::class_<RgbdSensor, LeafSystem<T>> rgbd_sensor(
+      m, "RgbdSensor", doc.RgbdSensor.doc);
 
-  py::class_<RgbdCameraDiscrete, Diagram<T>> rgbd_camera_discrete(
-      m, "RgbdCameraDiscrete");
+  py::class_<RgbdSensor::CameraPoses>(
+      rgbd_sensor, "CameraPoses", doc.RgbdSensor.CameraPoses.doc)
+      .def(ParamInit<RgbdSensor::CameraPoses>())
+      .def_readwrite("X_BC", &RgbdSensor::CameraPoses::X_BC)
+      .def_readwrite("X_BD", &RgbdSensor::CameraPoses::X_BD);
+
+  rgbd_sensor
+      .def(py::init<FrameId, const RigidTransformd&, const CameraProperties&,
+               const DepthCameraProperties&, const RgbdSensor::CameraPoses&,
+               bool>(),
+          py::arg("parent_id"), py::arg("X_PB"), py::arg("color_properties"),
+          py::arg("depth_properties"),
+          py::arg("camera_poses") = RgbdSensor::CameraPoses{},
+          py::arg("show_window") = false, doc.RgbdSensor.ctor.doc_6args)
+      .def(py::init<FrameId, const RigidTransformd&,
+               const DepthCameraProperties&, const RgbdSensor::CameraPoses&,
+               bool>(),
+          py::arg("parent_id"), py::arg("X_PB"), py::arg("properties"),
+          py::arg("camera_poses") = RgbdSensor::CameraPoses{},
+          py::arg("show_window") = false, doc.RgbdSensor.ctor.doc_5args)
+      .def("color_camera_info", &RgbdSensor::color_camera_info,
+          py_reference_internal, doc.RgbdSensor.color_camera_info.doc)
+      .def("depth_camera_info", &RgbdSensor::depth_camera_info,
+          py_reference_internal, doc.RgbdSensor.depth_camera_info.doc)
+      .def("X_BC", &RgbdSensor::X_BC, doc.RgbdSensor.X_BC.doc)
+      .def("X_BD", &RgbdSensor::X_BD, doc.RgbdSensor.X_BD.doc)
+      .def("parent_frame_id", &RgbdSensor::parent_frame_id,
+          py_reference_internal, doc.RgbdSensor.parent_frame_id.doc);
+  def_camera_ports(&rgbd_sensor, doc.RgbdSensor);
+
+  py::class_<RgbdSensorDiscrete, Diagram<T>> rgbd_camera_discrete(
+      m, "RgbdSensorDiscrete", doc.RgbdSensorDiscrete.doc);
   rgbd_camera_discrete
-    .def(
-      py::init<unique_ptr<RgbdCamera>, double, bool>(),
-      py::arg("camera"),
-      py::arg("period") = double{RgbdCameraDiscrete::kDefaultPeriod},
-      py::arg("render_label_image") = true,
-      // Keep alive, ownership: `RgbdCamera` keeps `this` alive.
-      py::keep_alive<2, 1>())
-    // N.B. Since `camera` is already connected, we do not need additional
-    // `keep_alive`s.
-    .def("camera", &RgbdCameraDiscrete::camera)
-    .def("mutable_camera", &RgbdCameraDiscrete::mutable_camera)
-    .def("period", &RgbdCameraDiscrete::period);
-  def_camera_ports(&rgbd_camera_discrete);
+      .def(py::init<unique_ptr<RgbdSensor>, double, bool>(), py::arg("sensor"),
+          py::arg("period") = double{RgbdSensorDiscrete::kDefaultPeriod},
+          py::arg("render_label_image") = true,
+          // Keep alive, ownership: `sensor` keeps `self` alive.
+          py::keep_alive<2, 1>(), doc.RgbdSensorDiscrete.ctor.doc)
+      // N.B. Since `camera` is already connected, we do not need additional
+      // `keep_alive`s.
+      .def("sensor", &RgbdSensorDiscrete::sensor, py_reference_internal,
+          doc.RgbdSensorDiscrete.sensor.doc)
+      .def("period", &RgbdSensorDiscrete::period,
+          doc.RgbdSensorDiscrete.period.doc);
+  def_camera_ports(&rgbd_camera_discrete, doc.RgbdSensorDiscrete);
   rgbd_camera_discrete.attr("kDefaultPeriod") =
-      double{RgbdCameraDiscrete::kDefaultPeriod};
+      double{RgbdSensorDiscrete::kDefaultPeriod};
+
+  {
+    using Class = CameraInfo;
+    constexpr auto& cls_doc = doc.CameraInfo;
+    py::class_<Class> cls(m, "CameraInfo", cls_doc.doc);
+    cls  // BR
+        .def(py::init<int, int, double>(), py::arg("width"), py::arg("height"),
+            py::arg("fov_y"), cls_doc.ctor.doc_3args)
+        .def(py::init<int, int, double, double, double, double>(),
+            py::arg("width"), py::arg("height"), py::arg("focal_x"),
+            py::arg("focal_y"), py::arg("center_x"), py::arg("center_y"),
+            cls_doc.ctor.doc_6args)
+        .def("width", &Class::width, cls_doc.width.doc)
+        .def("height", &Class::height, cls_doc.height.doc)
+        .def("focal_x", &Class::focal_x, cls_doc.focal_x.doc)
+        .def("focal_y", &Class::focal_y, cls_doc.focal_y.doc)
+        .def("center_x", &Class::center_x, cls_doc.center_x.doc)
+        .def("center_y", &Class::center_y, cls_doc.center_y.doc)
+        .def("intrinsic_matrix", &Class::intrinsic_matrix,
+            cls_doc.intrinsic_matrix.doc)
+        .def(py::pickle(
+            [](const Class& self) {
+              return py::make_tuple(self.width(), self.height(), self.focal_x(),
+                  self.focal_y(), self.center_x(), self.center_y());
+            },
+            [](py::tuple t) {
+              DRAKE_DEMAND(t.size() == 6);
+              return Class(t[0].cast<int>(), t[1].cast<int>(),
+                  t[2].cast<double>(), t[3].cast<double>(), t[4].cast<double>(),
+                  t[5].cast<double>());
+            }));
+  }
+
+  {
+    using Class = ImageToLcmImageArrayT;
+    constexpr auto& cls_doc = doc.ImageToLcmImageArrayT;
+    py::class_<Class, LeafSystem<T>> cls(
+        m, "ImageToLcmImageArrayT", cls_doc.doc);
+    cls  // BR
+        .def(py::init<const string&, const string&, const string&, bool>(),
+            py::arg("color_frame_name"), py::arg("depth_frame_name"),
+            py::arg("label_frame_name"), py::arg("do_compress") = false,
+            cls_doc.ctor.doc_4args)
+        .def(py::init<bool>(), py::arg("do_compress") = false,
+            cls_doc.ctor.doc_1args)
+        .def("color_image_input_port", &Class::color_image_input_port,
+            py_reference_internal, cls_doc.color_image_input_port.doc)
+        .def("depth_image_input_port", &Class::depth_image_input_port,
+            py_reference_internal, cls_doc.depth_image_input_port.doc)
+        .def("label_image_input_port", &Class::label_image_input_port,
+            py_reference_internal, cls_doc.label_image_input_port.doc)
+        .def("image_array_t_msg_output_port",
+            &Class::image_array_t_msg_output_port, py_reference_internal,
+            cls_doc.image_array_t_msg_output_port.doc);
+    // Because the public interface requires templates and it's hard to
+    // reproduce the logic publicly (e.g. no overload that just takes
+    // `AbstractValue` and the pixel type), go ahead and bind the templated
+    // methods.
+    auto def_image_input_port = [&cls, cls_doc](auto param) {
+      constexpr PixelType kPixelType =
+          decltype(param)::template type_at<0>::value;
+      AddTemplateMethod(cls, "DeclareImageInputPort",
+          &Class::DeclareImageInputPort<kPixelType>, GetPyParam(param),
+          py::arg("name"), py_reference_internal,
+          cls_doc.DeclareImageInputPort.doc);
+    };
+    type_visit(def_image_input_port, PixelTypeList{});
+  }
 }
 
 }  // namespace pydrake

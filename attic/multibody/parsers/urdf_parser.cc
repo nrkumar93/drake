@@ -14,8 +14,8 @@
 #include "drake/multibody/joints/floating_base_types.h"
 #include "drake/multibody/material_map.h"
 #include "drake/multibody/parsers/model_instance_id_table.h"
-#include "drake/multibody/parsers/parser_path_utils.h"
 #include "drake/multibody/parsers/xml_util.h"
+#include "drake/multibody/parsing/detail_path_utils.h"
 #include "drake/multibody/rigid_body_plant/compliant_material.h"
 
 namespace drake {
@@ -44,6 +44,8 @@ using tinyxml2::XMLDocument;
 using tinyxml2::XMLElement;
 
 using drake::parsers::ModelInstanceIdTable;
+using drake::multibody::internal::GetFullPath;
+using drake::multibody::internal::ResolveUri;
 using drake::multibody::joints::FloatingBaseType;
 using drake::multibody::joints::kRollPitchYaw;
 
@@ -279,7 +281,7 @@ bool ParseGeometry(XMLElement* node, const PackageMap& package_map,
     // This method will return an empty string if the file is not found or
     // resolved within a ROS package.
     string resolved_filename =
-        ResolveFilename(filename, package_map, root_dir);
+        ResolveUri(filename, package_map, root_dir);
 
     if (resolved_filename.empty()) {
       throw runtime_error(string(__FILE__) + ": " + __func__ + ": ERROR: "
@@ -1131,12 +1133,6 @@ ModelInstanceIdTable AddModelInstanceFromUrdfStringWithRpyJointToWorld(
           urdf_string, package_map, do_compile, tree);
 }
 
-// TODO(liang.fok) Remove this deprecated method prior to Release 1.0.
-ModelInstanceIdTable AddModelInstanceFromUrdfString(
-    const string& urdf_string, RigidBodyTree<double>* tree) {
-  return AddModelInstanceFromUrdfStringWithRpyJointToWorld(urdf_string, tree);
-}
-
 ModelInstanceIdTable
 AddModelInstanceFromUrdfStringWithRpyJointToWorldSearchingInRosPackages(
     const string& urdf_string, const PackageMap& package_map,
@@ -1154,27 +1150,6 @@ AddModelInstanceFromUrdfStringWithRpyJointToWorldSearchingInRosPackages(
   return AddModelInstanceFromUrdfStringSearchingInRosPackages(
       urdf_string, package_map, root_dir, kRollPitchYaw,
       nullptr /* weld_to_frame */, do_compile, tree);
-}
-
-// TODO(liang.fok) Remove this deprecated method prior to Release 1.0.
-ModelInstanceIdTable AddModelInstanceFromUrdfString(
-    const string& urdf_string, const PackageMap& package_map,
-    RigidBodyTree<double>* tree) {
-  return
-      AddModelInstanceFromUrdfStringWithRpyJointToWorldSearchingInRosPackages(
-          urdf_string, package_map, tree);
-}
-
-ModelInstanceIdTable AddModelInstanceFromUrdfString(
-    const string& urdf_string,
-    const PackageMap& package_map,
-    const string& root_dir,
-    const drake::multibody::joints::FloatingBaseType floating_base_type,
-    std::shared_ptr<RigidBodyFrame<double>> weld_to_frame,
-    RigidBodyTree<double>* tree) {
-  return AddModelInstanceFromUrdfStringSearchingInRosPackages(
-      urdf_string, package_map, root_dir, floating_base_type,
-      weld_to_frame, tree);
 }
 
 ModelInstanceIdTable AddModelInstanceFromUrdfString(
@@ -1234,12 +1209,6 @@ ModelInstanceIdTable AddModelInstanceFromUrdfFileWithRpyJointToWorld(
       nullptr /* weld_to_frame */, do_compile, tree);
 }
 
-// TODO(liang.fok) Remove this deprecated method prior to Release 1.0.
-ModelInstanceIdTable AddModelInstanceFromUrdfFile(const string& filename,
-                                                  RigidBodyTree<double>* tree) {
-  return AddModelInstanceFromUrdfFileWithRpyJointToWorld(filename, tree);
-}
-
 ModelInstanceIdTable AddModelInstanceFromUrdfFileToWorld(
     const string& filename, const FloatingBaseType floating_base_type,
     RigidBodyTree<double>* tree) {
@@ -1257,14 +1226,6 @@ ModelInstanceIdTable AddModelInstanceFromUrdfFileToWorld(
   return AddModelInstanceFromUrdfFileSearchingInRosPackages(
       full_path_filename, package_map, floating_base_type,
       nullptr /*weld_to_frame*/, do_compile, tree);
-}
-
-// TODO(liang.fok) Remove this deprecated method prior to Release 1.0.
-ModelInstanceIdTable AddModelInstanceFromUrdfFile(
-    const string& filename, const FloatingBaseType floating_base_type,
-    RigidBodyTree<double>* tree) {
-  return AddModelInstanceFromUrdfFileToWorld(filename, floating_base_type,
-                                             tree);
 }
 
 ModelInstanceIdTable AddModelInstanceFromUrdfFile(
@@ -1322,16 +1283,6 @@ ModelInstanceIdTable AddModelInstanceFromUrdfFileSearchingInRosPackages(
 
   return ParseUrdf(&xml_doc, package_map, root_dir, floating_base_type,
                    weld_to_frame, do_compile, tree);
-}
-
-// TODO(liang.fok) Remove this deprecated method prior to Release 1.0.
-ModelInstanceIdTable AddModelInstanceFromUrdfFile(
-    const string& filename, const PackageMap& package_map,
-    const FloatingBaseType floating_base_type,
-    std::shared_ptr<RigidBodyFrame<double>> weld_to_frame,
-    RigidBodyTree<double>* tree) {
-  return AddModelInstanceFromUrdfFileSearchingInRosPackages(
-      filename, package_map, floating_base_type, weld_to_frame, tree);
 }
 
 std::shared_ptr<RigidBodyFrame<double>> MakeRigidBodyFrameFromUrdfNode(

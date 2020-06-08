@@ -12,9 +12,9 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
+#include "drake/attic_warning.h"
 #include "drake/common/constants.h"
 #include "drake/common/drake_assert.h"
-#include "drake/common/drake_deprecated.h"
 #include "drake/common/eigen_types.h"
 #include "drake/multibody/joints/drake_joint.h"
 #include "drake/multibody/kinematic_path.h"
@@ -86,8 +86,10 @@ class KinematicsCache {
   bool inertias_cached;
 
  public:
-  /// Preallocated scratch pad variables. These variables are used to prevent
-  /// dynamic memory allocation during runtime.
+  /// @name Preallocated scratch pad variables.
+  /// These variables are used to prevent dynamic memory allocation during
+  /// runtime.
+  /// @{
 
   /// Preallocated variables used in GeometricJacobian. Preallocated as the size
   /// of the path is dependent on the base body/frame and end effector
@@ -111,6 +113,8 @@ class KinematicsCache {
   };
   mutable DataInCalcFrameSpatialVelocityJacobianInWorldFrame
     spatial_velocity_jacobian_temp;
+
+  /// @}
 
   /// Constructor for a KinematicsCache given the number of positions and
   /// velocities per body in the vectors @p num_joint_positions and
@@ -194,15 +198,7 @@ class KinematicsCache {
 
   int get_num_positions() const;
 
-// TODO(liang.fok): Remove this deprecated method prior to Release 1.0.
-  DRAKE_DEPRECATED("Please use get_num_positions().")
-  int getNumPositions() const;
-
   int get_num_velocities() const;
-
-// TODO(liang.fok): Remove this deprecated method prior to Release 1.0.
-  DRAKE_DEPRECATED("Please use get_num_velocities().")
-  int getNumVelocities() const;
 
  private:
   void invalidate();

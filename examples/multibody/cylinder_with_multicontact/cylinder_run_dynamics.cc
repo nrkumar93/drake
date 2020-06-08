@@ -3,12 +3,11 @@
 #include <gflags/gflags.h>
 
 #include "drake/common/drake_assert.h"
-#include "drake/common/text_logging_gflags.h"
 #include "drake/examples/multibody/cylinder_with_multicontact/make_cylinder_plant.h"
 #include "drake/geometry/geometry_visualization.h"
 #include "drake/geometry/scene_graph.h"
 #include "drake/lcm/drake_lcm.h"
-#include "drake/multibody/multibody_tree/multibody_plant/contact_results_to_lcm.h"
+#include "drake/multibody/plant/contact_results_to_lcm.h"
 #include "drake/systems/analysis/simulator.h"
 #include "drake/systems/framework/diagram_builder.h"
 #include "drake/systems/lcm/lcm_publisher_system.h"
@@ -51,18 +50,14 @@ DEFINE_double(time_step, 1.0e-3,
               "for the plant modeled as a discrete system."
               "This parameter must be non-negative.");
 
-using Eigen::Isometry3d;
-using Eigen::Matrix3d;
 using Eigen::Vector3d;
 using geometry::SceneGraph;
 using lcm::DrakeLcm;
-using systems::lcm::LcmPublisherSystem;
 
 // "multibody" namespace is ambiguous here without "drake::".
-using drake::multibody::multibody_plant::CoulombFriction;
-using drake::multibody::multibody_plant::ContactResultsToLcmSystem;
-using drake::multibody::multibody_plant::MultibodyPlant;
-using drake::multibody::MultibodyTree;
+using drake::multibody::CoulombFriction;
+using drake::multibody::ConnectContactResultsToDrakeVisualizer;
+using drake::multibody::MultibodyPlant;
 using drake::multibody::SpatialVelocity;
 
 int do_main() {
@@ -83,7 +78,6 @@ int do_main() {
   MultibodyPlant<double>& plant = *builder.AddSystem(MakeCylinderPlant(
       radius, length, mass, coulomb_friction, -g * Vector3d::UnitZ(),
       FLAGS_time_step, &scene_graph));
-  const MultibodyTree<double>& tree = plant.tree();
   // Set how much penetration (in meters) we are willing to accept.
   plant.set_penetration_allowance(FLAGS_penetration_allowance);
   plant.set_stiction_tolerance(FLAGS_stiction_tolerance);
@@ -106,44 +100,33 @@ int do_main() {
       scene_graph.get_source_pose_port(plant.get_source_id().value()));
 
   // Publish contact results for visualization.
-  const auto& contact_results_to_lcm =
-      *builder.AddSystem<ContactResultsToLcmSystem>(plant);
-  const auto& contact_results_publisher = *builder.AddSystem(
-      LcmPublisherSystem::Make<lcmt_contact_results_for_viz>(
-          "CONTACT_RESULTS", &lcm));
-  // Contact results to lcm msg.
-  builder.Connect(plant.get_contact_results_output_port(),
-                  contact_results_to_lcm.get_input_port(0));
-  builder.Connect(contact_results_to_lcm.get_output_port(0),
-                  contact_results_publisher.get_input_port());
+  ConnectContactResultsToDrakeVisualizer(&builder, plant, &lcm);
 
   auto diagram = builder.Build();
 
   // Create a context for this system:
   std::unique_ptr<systems::Context<double>> diagram_context =
       diagram->CreateDefaultContext();
+  diagram_context->EnableCaching();
   systems::Context<double>& plant_context =
       diagram->GetMutableSubsystemContext(plant, diagram_context.get());
 
   // Set at height z0.
-  tree.SetDefaultContext(&plant_context);
-  Isometry3d X_WB = Isometry3d::Identity();
-  X_WB.translation() = Vector3d(0.0, 0.0, FLAGS_z0);
-  const auto& cylinder = tree.GetBodyByName("Cylinder");
-  tree.SetFreeBodyPoseOrThrow(
-      cylinder, X_WB, &plant_context);
-  tree.SetFreeBodySpatialVelocityOrThrow(
-      cylinder,
+  math::RigidTransformd X_WB(Vector3d(0.0, 0.0, FLAGS_z0));
+  const auto& cylinder = plant.GetBodyByName("Cylinder");
+  plant.SetFreeBodyPose(&plant_context, cylinder, X_WB);
+  plant.SetFreeBodySpatialVelocity(
+      &plant_context, cylinder,
       SpatialVelocity<double>(
           Vector3<double>(FLAGS_wx0, 0.0, 0.0),
-          Vector3<double>(FLAGS_vx0, 0.0, 0.0)), &plant_context);
+          Vector3<double>(FLAGS_vx0, 0.0, 0.0)));
 
   systems::Simulator<double> simulator(*diagram, std::move(diagram_context));
 
   simulator.set_publish_every_time_step(true);
   simulator.set_target_realtime_rate(FLAGS_target_realtime_rate);
   simulator.Initialize();
-  simulator.StepTo(FLAGS_simulation_time);
+  simulator.AdvanceTo(FLAGS_simulation_time);
 
   return 0;
 }
@@ -160,6 +143,5 @@ int main(int argc, char* argv[]) {
       "MultibodyPlant, with SceneGraph contact handling and visualization. "
       "Launch drake-visualizer before running this example.");
   gflags::ParseCommandLineFlags(&argc, &argv, true);
-  drake::logging::HandleSpdlogGflags();
   return drake::examples::multibody::cylinder_with_multicontact::do_main();
 }

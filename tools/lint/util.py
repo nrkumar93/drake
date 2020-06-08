@@ -5,7 +5,6 @@ import os
 import sys
 
 
-# TODO(jwnimmer-tri) Port clang-format-includes & cpplint_wrapper to use this.
 def find_all_sources(workspace_name):
     """Return [workspace, paths] list, where `workspace` is a path to the root
     of the given `workspace_name`, and `paths` are relative paths under it that
@@ -23,6 +22,8 @@ def find_all_sources(workspace_name):
     # top-level .bazelproject file.)
     workspace_root = None
     for entry in sys.path:
+        if workspace_root is not None:
+            break
         if not entry.endswith(".runfiles"):
             continue
         manifest = os.path.join(entry, "MANIFEST")
@@ -34,14 +35,21 @@ def find_all_sources(workspace_name):
             if not one_line.startswith(workspace_name + "/.bazelproject"):
                 continue
             _, source_sentinel = one_line.split(" ")
-            workspace_root = os.path.dirname(source_sentinel)
+            workspace_root = os.path.dirname(os.path.realpath(source_sentinel))
+            assert workspace_root.startswith("/"), workspace_root
+            assert os.path.isdir(workspace_root), workspace_root
             break
     if not workspace_root:
         raise RuntimeError("Cannot find .bazelproject in MANIFEST")
     # Make sure we found the right place.
     workspace_file = os.path.join(workspace_root, "WORKSPACE")
     if not os.path.exists(workspace_file):
-        raise RuntimeError("Cannot find WORKSPACE at " + workspace_root)
+        raise RuntimeError(f"Cannot find WORKSPACE at {workspace_root}")
+    required_line = f'workspace(name = "{workspace_name}")'
+    with open(workspace_file, "r") as f:
+        if (required_line + "\n") not in f.readlines():
+            raise RuntimeError(
+                f"Cannot find {required_line} in {workspace_file}")
     # Walk the tree (ignoring symlinks), and collect a list of all workspace-
     # relative filenames, but excluding a few specific items.
     relpaths = []
@@ -57,8 +65,11 @@ def find_all_sources(workspace_name):
         if abs_dirpath.endswith("/third_party"):
             dirs[:] = ()
             continue
-        # Don't recurse into dotfile directories (such as ".git").
+        # Don't recurse into dotfile directories (such as ".git"), nor into
+        # build directories.
         for i, one_dir in reversed(list(enumerate(list(dirs)))):
             if one_dir.startswith("."):
+                dirs.pop(i)
+            elif rel_dirpath == "" and one_dir.startswith("bazel-"):
                 dirs.pop(i)
     return workspace_root, sorted(relpaths)

@@ -32,7 +32,8 @@ namespace drake {
 /// // Expected: true
 /// @endcode
 template <typename ToType, typename FromType>
-::testing::AssertionResult is_dynamic_castable(const FromType* ptr) {
+[[nodiscard]] ::testing::AssertionResult is_dynamic_castable(
+    const FromType* ptr) {
   if (ptr == nullptr) {
     const std::string from_name{NiceTypeName::Get<FromType>()};
     const std::string to_name{NiceTypeName::Get<ToType>()};
@@ -56,7 +57,8 @@ template <typename ToType, typename FromType>
 /// provide a good diagnostic for what @p ptr _actually_ was when the test
 /// fails.
 template <typename ToType, typename FromType>
-::testing::AssertionResult is_dynamic_castable(std::shared_ptr<FromType> ptr) {
+[[nodiscard]] ::testing::AssertionResult is_dynamic_castable(
+    std::shared_ptr<FromType> ptr) {
   return is_dynamic_castable<ToType, FromType>(ptr.get());
 }
 
@@ -65,8 +67,8 @@ template <typename ToType, typename FromType>
 /// provide a good diagnostic for what @p ptr _actually_ was when the test
 /// fails.
 template <typename ToType, typename FromType>
-::testing::AssertionResult is_dynamic_castable(
-     const std::unique_ptr<FromType>& ptr) {
+[[nodiscard]] ::testing::AssertionResult is_dynamic_castable(
+    const std::unique_ptr<FromType>& ptr) {
   return is_dynamic_castable<ToType, FromType>(ptr.get());
 }
 

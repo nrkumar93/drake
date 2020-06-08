@@ -14,6 +14,7 @@
 #include "drake/solvers/mathematical_program.h"
 #include "drake/solvers/mosek_solver.h"
 #include "drake/solvers/rotation_constraint.h"
+#include "drake/solvers/solve.h"
 
 using Eigen::Vector3d;
 using Eigen::Matrix3d;
@@ -27,14 +28,14 @@ namespace drake {
 namespace solvers {
 namespace {
 bool IsFeasibleCheck(
-    MathematicalProgram* prog,
+    const MathematicalProgram& prog,
     const std::shared_ptr<LinearEqualityConstraint>& feasibility_constraint,
     const Eigen::Ref<const Matrix3d>& R_sample) {
   Eigen::Map<const Eigen::Matrix<double, 9, 1>> R_sample_vec(R_sample.data());
   feasibility_constraint->UpdateLowerBound(R_sample_vec);
   feasibility_constraint->UpdateUpperBound(R_sample_vec);
 
-  return prog->Solve() == kSolutionFound;
+  return Solve(prog).is_success();
 }
 
 class TestMixedIntegerRotationConstraint {
@@ -56,7 +57,7 @@ class TestMixedIntegerRotationConstraint {
                                     .evaluator()} {}
 
   bool IsFeasible(const Eigen::Ref<const Eigen::Matrix3d>& R_to_check) {
-    return IsFeasibleCheck(&prog_, feasibility_constraint_, R_to_check);
+    return IsFeasibleCheck(prog_, feasibility_constraint_, R_to_check);
   }
 
   bool IsFeasible(const RotationMatrixd& R_to_check) {
@@ -200,8 +201,7 @@ TEST_P(TestMixedIntegerRotationConstraintGenerator, TestConstructor) {
 }
 
 TEST_P(TestMixedIntegerRotationConstraintGenerator, TestBinaryAssignment) {
-  const Eigen::Matrix3d R_test =
-      Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+  const RotationMatrixd R_test = RotationMatrixd::MakeZRotation(0.1);
   auto b_constraint = prog_.AddBoundingBoxConstraint(0, 0, ret.B_[0][0]);
   auto UpdateBConstraint =
       [&b_constraint](const Eigen::Ref<const Eigen::VectorXd>& b_val) {
@@ -260,7 +260,7 @@ TEST_P(TestMixedIntegerRotationConstraintGenerator, InexactRotationMatrix) {
   TestInexactRotationMatrix();
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     RotationTest, TestMixedIntegerRotationConstraintGenerator,
     ::testing::Combine(
         ::testing::ValuesIn<
@@ -300,7 +300,7 @@ TEST_P(TestRotationMatrixBoxSphereIntersection, InexactRotationMatrix) {
   TestInexactRotationMatrix();
 }
 
-INSTANTIATE_TEST_CASE_P(RotationTest, TestRotationMatrixBoxSphereIntersection,
+INSTANTIATE_TEST_SUITE_P(RotationTest, TestRotationMatrixBoxSphereIntersection,
                         ::testing::ValuesIn<std::vector<int>>({1, 2}));
 
 // Make sure that no two row or column vectors in R, which satisfies the
@@ -380,7 +380,9 @@ class TestOrthant
 TEST_P(TestOrthant, test) {
   GurobiSolver gurobi_solver;
   if (gurobi_solver.available()) {
-    SolutionResult sol_result = gurobi_solver.Solve(prog_);
+    MathematicalProgramResult result;
+    gurobi_solver.Solve(prog_, {}, {}, &result);
+    SolutionResult sol_result = result.get_solution_result();
     // Since no two row or column vectors in R can lie in either the same of the
     // opposite orthant, the program should be infeasible.
     EXPECT_TRUE(sol_result == SolutionResult::kInfeasible_Or_Unbounded ||
@@ -393,7 +395,7 @@ std::array<std::pair<int, int>, 3> vector_indices() {
   return idx;
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     RotationTest, TestOrthant,
     ::testing::Combine(
         ::testing::ValuesIn<std::vector<int>>(
